@@ -299,9 +299,539 @@
             }
         }
 
-        function evalGenerator(type, tx, ty, sx, sy, p, cymaticsSources = null) {
+        function hexToRgb(hex) {
+            const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+            return result ? { r: parseInt(result[1], 16), g: parseInt(result[2], 16), b: parseInt(result[3], 16) } : { r: 255, g: 255, b: 255 };
+        }
+
+        function ensureLayerPaintCanvas(lay) {
+            if (!lay.paintCanvas || typeof lay.paintCanvas.getContext !== 'function') {
+                lay.paintCanvas = document.createElement('canvas');
+                lay.paintCanvas.width = 1024;
+                lay.paintCanvas.height = 1024;
+                let ctx = lay.paintCanvas.getContext('2d');
+                ctx.fillStyle = lay.isMask ? '#ffffff' : '#000000';
+                ctx.fillRect(0, 0, 1024, 1024);
+                
+                if (lay.params && lay.params.paintDataUrl) {
+                    let img = new Image();
+                    img.onload = () => {
+                        ctx.clearRect(0, 0, 1024, 1024);
+                        ctx.drawImage(img, 0, 0);
+                        updatePaintBuffer(lay);
+                        lay.isDirty = true;
+                        requestRender();
+                    };
+                    img.src = lay.params.paintDataUrl;
+                } else {
+                    updatePaintBuffer(lay);
+                }
+            } else if (!lay.paintBuffer) {
+                updatePaintBuffer(lay);
+            }
+        }
+
+        function updatePaintBuffer(lay) {
+            if (!lay.paintCanvas) return;
+            let w = lay.paintCanvas.width;
+            let h = lay.paintCanvas.height;
+            let ctx = lay.paintCanvas.getContext('2d');
+            let imgData = ctx.getImageData(0, 0, w, h);
+            let data = imgData.data;
+            if (!lay.paintBuffer || lay.paintBuffer.length !== w * h) {
+                lay.paintBuffer = new Float32Array(w * h);
+            }
+            for (let i = 0; i < w * h; i++) {
+                let r = data[i * 4];
+                let g = data[i * 4 + 1];
+                let b = data[i * 4 + 2];
+                let a = data[i * 4 + 3] / 255;
+                let lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+                lay.paintBuffer[i] = lum * a;
+            }
+        }
+
+        function drawBrushDot(lay, x, y, pressure = 1, targetCtx = null) {
+            ensureLayerPaintCanvas(lay);
+            let lp = lay.params;
+            let size = lp.brushSize || 20;
+            let softness = lp.brushSoftness !== undefined ? lp.brushSoftness : 0.5;
+            let tool = lp.brushTool || 'brush';
+
+            const dynamicPressure = Math.pow(pressure, 0.5);
+            const finalSize = size * (0.1 + 0.9 * dynamicPressure);
+
+            let pCtx = targetCtx || lay.paintCanvas.getContext('2d');
+
+            pCtx.save();
+            pCtx.globalAlpha = 1.0;
+
+            let color = tool === 'eraser' ? '#ffffff' : (lp.brushColor || '#ffffff');
+            pCtx.fillStyle = color;
+
+            const effectiveSoftness = softness <= 0.05 ? 0 : softness;
+            if (effectiveSoftness > 0) {
+                pCtx.shadowColor = color;
+                pCtx.shadowBlur = finalSize * effectiveSoftness;
+            }
+
+            pCtx.beginPath();
+            pCtx.arc(x, y, finalSize, 0, Math.PI * 2);
+            pCtx.fill();
+            pCtx.restore();
+            
+            lay.isDirty = true;
+        }
+
+        function drawBrushLineSegment(lay, x0, y0, x1, y1, cpX, cpY, pressure = 1, targetCtx = null) {
+            ensureLayerPaintCanvas(lay);
+            let lp = lay.params;
+            let size = lp.brushSize || 20;
+            let softness = lp.brushSoftness !== undefined ? lp.brushSoftness : 0.5;
+            let tool = lp.brushTool || 'brush';
+
+            const dynamicPressure = Math.pow(pressure, 0.5);
+            const finalSize = size * (0.1 + 0.9 * dynamicPressure);
+
+            let pCtx = targetCtx || lay.paintCanvas.getContext('2d');
+
+            pCtx.save();
+            
+            pCtx.lineCap = 'round';
+            pCtx.lineJoin = 'round';
+            pCtx.globalAlpha = 1.0;
+
+            let color = tool === 'eraser' ? '#ffffff' : (lp.brushColor || '#ffffff');
+            
+            pCtx.strokeStyle = color;
+            pCtx.lineWidth = finalSize * 2; // radius to diameter
+
+            const effectiveSoftness = softness <= 0.05 ? 0 : softness;
+            if (effectiveSoftness > 0) {
+                pCtx.shadowColor = color;
+                pCtx.shadowBlur = finalSize * effectiveSoftness;
+            }
+
+            pCtx.beginPath();
+            pCtx.moveTo(x0, y0);
+            if (cpX !== undefined && cpY !== undefined) {
+                pCtx.quadraticCurveTo(cpX, cpY, x1, y1);
+            } else {
+                pCtx.lineTo(x1, y1);
+            }
+            pCtx.stroke();
+            
+            pCtx.restore();
+            
+            lay.isDirty = true;
+        }
+
+        function getPaintCanvasCoordinates(clientX, clientY) {
+            const rect = $('canvasWrapper').getBoundingClientRect();
+            const viewX = clientX - rect.left;
+            const viewY = clientY - rect.top;
+
+            const wrapperW = rect.width;
+            const wrapperH = rect.height;
+            const canvasW = $('canvas').width;
+            const canvasH = $('canvas').height;
+            
+            const cx = wrapperW / 2;
+            const cy = wrapperH / 2;
+            
+            let x1 = viewX - cx - viewport.x;
+            let y1 = viewY - cy - viewport.y;
+            
+            let rad = -viewport.angle * Math.PI / 180;
+            let x2 = x1 * Math.cos(rad) - y1 * Math.sin(rad);
+            let y2 = x1 * Math.sin(rad) + y1 * Math.cos(rad);
+            
+            x2 /= viewport.scale;
+            y2 /= viewport.scale;
+            
+            let canvasX = x2 + canvasW / 2;
+            let canvasY = y2 + canvasH / 2;
+            
+            let rx = (canvasX / canvasW) * 1024;
+            let ry = (canvasY / canvasH) * 1024;
+            
+            return { x: rx, y: ry };
+        }
+
+        window.clearPaintCanvas = function() {
+            let lay = state.layers.find(l => l.id === state.selectedLayerId);
+            if (!lay || lay.generatorType !== 'paint') return;
+            
+            ensureLayerPaintCanvas(lay);
+            let pCanvas = lay.paintCanvas;
+            let pCtx = pCanvas.getContext('2d');
+            pCtx.fillStyle = '#000000';
+            pCtx.fillRect(0, 0, 1024, 1024);
+            
+            updatePaintBuffer(lay);
+            lay.isDirty = true;
+            requestRender();
+            commitHistorySnapshot();
+        };
+
+        window.updateBrushPreview = function() {
+            let lay = state.layers.find(l => l.id === state.selectedLayerId);
+            if (!lay || lay.generatorType !== 'paint') return;
+            let previewCanvas = $('brushPreview');
+            if (!previewCanvas) return;
+            let pCtx = previewCanvas.getContext('2d');
+            pCtx.clearRect(0, 0, previewCanvas.width, previewCanvas.height);
+            
+            let lp = lay.params;
+            let size = lp.brushSize || 20;
+            let opacity = (lp.brushOpacity !== undefined ? lp.brushOpacity : 100) / 100;
+            let softness = lp.brushSoftness !== undefined ? lp.brushSoftness : 0.5;
+            let falloff = lp.brushFalloff !== undefined ? lp.brushFalloff : 1.0;
+            let angle = (lp.brushAngle || 0) * (Math.PI / 180);
+            let squash = lp.brushSquash !== undefined ? lp.brushSquash : 1.0;
+            let spacingVal = (lp.brushSpacing !== undefined ? lp.brushSpacing : 10) / 100;
+            let color = lp.brushColor || '#ffffff';
+            let tool = lp.brushTool || 'brush';
+            
+            if (softness <= 0.05 && spacingVal < 0.1) {
+                spacingVal = 0.1;
+            }
+            
+            const centerX = previewCanvas.width / 2;
+            const centerY = previewCanvas.height / 2;
+            
+            pCtx.save();
+            if (size > 30) {
+                const scale = 30 / size;
+                pCtx.translate(centerX, centerY);
+                pCtx.scale(scale, scale);
+                pCtx.translate(-centerX, -centerY);
+            }
+
+            const startX = centerX - 25;
+            const startY = centerY + 25;
+            const endX = centerX + 25;
+            const endY = centerY - 25;
+            
+            const dx = endX - startX;
+            const dy = endY - startY;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+            
+            const step = Math.max(1, size * spacingVal);
+            const stampAngle = Math.atan2(dy, dx);
+            
+            for (let i = 0; i <= distance; i += step) {
+                const x = startX + Math.cos(stampAngle) * i;
+                const y = startY + Math.sin(stampAngle) * i;
+                
+                pCtx.save();
+                pCtx.translate(x, y);
+                pCtx.rotate(angle);
+                pCtx.scale(1, squash);
+                
+                pCtx.globalAlpha = opacity;
+                pCtx.beginPath();
+                
+                const effectiveSoftness = softness <= 0.05 ? 0 : softness;
+                if (effectiveSoftness > 0) {
+                    let rgb = hexToRgb(color);
+                    const innerRadius = Math.max(0.001, size * (1 - effectiveSoftness));
+                    const grad = pCtx.createRadialGradient(0, 0, innerRadius, 0, 0, size);
+                    grad.addColorStop(0, `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 1)`);
+                    const steps = 5;
+                    for (let j = 1; j < steps; j++) {
+                        const stepPos = j / steps;
+                        const stopOpacity = Math.pow(1 - stepPos, falloff);
+                        grad.addColorStop(stepPos, `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${stopOpacity.toFixed(3)})`);
+                    }
+                    grad.addColorStop(1, `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0)`);
+                    pCtx.fillStyle = grad;
+                } else {
+                    pCtx.fillStyle = color;
+                }
+                pCtx.arc(0, 0, size, 0, Math.PI * 2);
+                pCtx.fill();
+                pCtx.restore();
+            }
+            pCtx.restore();
+        };
+
+        function prepareStateForSerialization() {
+            state.layers.forEach(lay => {
+                if (lay.generatorType === 'paint') {
+                    ensureLayerPaintCanvas(lay);
+                    if (lay.paintCanvas && typeof lay.paintCanvas.toDataURL === 'function') {
+                        lay.params.paintDataUrl = lay.paintCanvas.toDataURL();
+                    }
+                }
+            });
+        }
+
+        function serializeState(s) {
+            prepareStateForSerialization();
+            return JSON.stringify(s, (key, value) => {
+                if (key === 'paintCanvas' || key === 'paintBuffer') {
+                    return undefined;
+                }
+                return value;
+            });
+        }
+
+        function initImportedPaintCanvases() {
+            state.layers.forEach(lay => {
+                if (lay.generatorType === 'paint') {
+                    if (lay.paintCanvas) {
+                        delete lay.paintCanvas;
+                    }
+                    ensureLayerPaintCanvas(lay);
+                }
+            });
+        }
+
+        let isPainting = false;
+        let lastPaintX = 0, lastPaintY = 0;
+        let smoothedPressure = 1;
+        let paintMoved = false;
+        let paintPoints = []; // Stores raw pointer coordinates of the current stroke
+        let paintQueue = [];  // Queue for processing inputs in requestAnimationFrame
+        let paintAnimationFrameId = null;
+
+        let strokeCanvas = null;
+        let strokeBackupCanvas = null;
+
+        function getStrokeCanvas() {
+            if (!strokeCanvas) {
+                strokeCanvas = document.createElement('canvas');
+                strokeCanvas.width = 1024;
+                strokeCanvas.height = 1024;
+            }
+            return strokeCanvas;
+        }
+
+        function getStrokeBackupCanvas() {
+            if (!strokeBackupCanvas) {
+                strokeBackupCanvas = document.createElement('canvas');
+                strokeBackupCanvas.width = 1024;
+                strokeBackupCanvas.height = 1024;
+            }
+            return strokeBackupCanvas;
+        }
+
+        function combineStrokeAndBackup(lay, opacity) {
+            let pCanvas = lay.paintCanvas;
+            let pCtx = pCanvas.getContext('2d');
+            pCtx.clearRect(0, 0, 1024, 1024);
+            pCtx.drawImage(getStrokeBackupCanvas(), 0, 0);
+
+            pCtx.save();
+            pCtx.globalAlpha = opacity;
+            let lp = lay.params;
+            let tool = lp.brushTool || 'brush';
+            if (tool === 'eraser') {
+                pCtx.globalCompositeOperation = 'destination-out';
+            } else {
+                pCtx.globalCompositeOperation = 'source-over';
+            }
+            pCtx.drawImage(getStrokeCanvas(), 0, 0);
+            pCtx.restore();
+            
+            lay.isDirty = true;
+        }
+
+        function handleCanvasPointerDown(e) {
+            let lay = state.layers.find(l => l.id === state.selectedLayerId);
+            if (!lay || lay.generatorType !== 'paint' || !lay.visible) return;
+
+            if (e.button !== 0 || e.shiftKey) return;
+
+            viewport.isDragging = false;
+
+            isPainting = true;
+            paintMoved = false;
+
+            ensureLayerPaintCanvas(lay);
+
+            let pos = getPaintCanvasCoordinates(e.clientX, e.clientY);
+            lastPaintX = pos.x;
+            lastPaintY = pos.y;
+
+            let rawPressure = (e.pointerType === 'pen' && e.pressure > 0) ? e.pressure : 1;
+            smoothedPressure = rawPressure;
+
+            // Initialize point history with start point
+            paintPoints = [{ x: pos.x, y: pos.y, pressure: rawPressure }];
+            paintQueue = [];
+
+            // Prepare offscreen stroke canvases
+            let sCanvas = getStrokeCanvas();
+            let sCtx = sCanvas.getContext('2d');
+            sCtx.clearRect(0, 0, 1024, 1024);
+
+            let bCanvas = getStrokeBackupCanvas();
+            let bCtx = bCanvas.getContext('2d');
+            bCtx.clearRect(0, 0, 1024, 1024);
+            bCtx.drawImage(lay.paintCanvas, 0, 0);
+
+            // Draw a single dot immediately on press onto stroke canvas
+            drawBrushDot(lay, pos.x, pos.y, rawPressure, sCtx);
+            
+            // Combine stroke and backup onto the active layer
+            let lp = lay.params;
+            let opacity = (lp.brushOpacity !== undefined ? lp.brushOpacity : 100) / 100;
+            combineStrokeAndBackup(lay, opacity);
+
+            // Queue immediate render of the dot
+            updatePaintBuffer(lay);
+            requestRender();
+
+            // Start processing the paint movement queue in animation frames
+            if (!paintAnimationFrameId) {
+                paintAnimationFrameId = requestAnimationFrame(processPaintQueue);
+            }
+
+            e.stopPropagation();
+            e.preventDefault();
+        }
+
+        function handleCanvasPointerMove(e) {
+            if (!isPainting) return;
+            let lay = state.layers.find(l => l.id === state.selectedLayerId);
+            if (!lay || lay.generatorType !== 'paint') {
+                isPainting = false;
+                return;
+            }
+
+            let pos = getPaintCanvasCoordinates(e.clientX, e.clientY);
+            paintMoved = true;
+
+            let rawPressure = e.pointerType === 'pen' ? e.pressure : 1;
+            if (e.pointerType === 'pen' && rawPressure <= 0) rawPressure = 0.1;
+
+            // Smooth pressure values
+            smoothedPressure = smoothedPressure * 0.88 + rawPressure * 0.12;
+
+            // Push event into the queue to be processed on requestAnimationFrame
+            paintQueue.push({ x: pos.x, y: pos.y, pressure: smoothedPressure });
+
+            e.stopPropagation();
+            e.preventDefault();
+        }
+
+        function processPaintQueue() {
+            if (!isPainting && paintQueue.length === 0) {
+                paintAnimationFrameId = null;
+                return;
+            }
+
+            let lay = state.layers.find(l => l.id === state.selectedLayerId);
+            if (!lay || lay.generatorType !== 'paint') {
+                paintQueue = [];
+                paintAnimationFrameId = null;
+                return;
+            }
+
+            let updated = false;
+            let sCtx = getStrokeCanvas().getContext('2d');
+
+            while (paintQueue.length > 0) {
+                let pt = paintQueue.shift();
+                let lastPt = paintPoints[paintPoints.length - 1];
+
+                // Ignore points that are extremely close to the last one
+                if (lastPt && Math.hypot(pt.x - lastPt.x, pt.y - lastPt.y) < 0.5) {
+                    continue;
+                }
+
+                paintPoints.push(pt);
+                updated = true;
+
+                if (paintPoints.length === 2) {
+                    // Two points: simple line segment between first and second point
+                    drawBrushLineSegment(lay, lastPt.x, lastPt.y, pt.x, pt.y, undefined, undefined, pt.pressure, sCtx);
+                } else if (paintPoints.length > 2) {
+                    // Three or more points: draw smooth quadratic curve between midpoints
+                    let p2 = paintPoints[paintPoints.length - 1]; // current point
+                    let p1 = paintPoints[paintPoints.length - 2]; // control point
+                    let p0 = paintPoints[paintPoints.length - 3]; // previous point
+
+                    let midX0 = (p0.x + p1.x) / 2;
+                    let midY0 = (p0.y + p1.y) / 2;
+                    let midX1 = (p1.x + p2.x) / 2;
+                    let midY1 = (p1.y + p2.y) / 2;
+
+                    drawBrushLineSegment(lay, midX0, midY0, midX1, midY1, p1.x, p1.y, p1.pressure, sCtx);
+                }
+            }
+
+            if (updated) {
+                let lp = lay.params;
+                let opacity = (lp.brushOpacity !== undefined ? lp.brushOpacity : 100) / 100;
+                combineStrokeAndBackup(lay, opacity);
+                updatePaintBuffer(lay);
+                requestRender();
+            }
+
+            if (isPainting) {
+                paintAnimationFrameId = requestAnimationFrame(processPaintQueue);
+            } else {
+                paintAnimationFrameId = null;
+            }
+        }
+
+        function handleCanvasPointerUp(e) {
+            if (!isPainting) return;
+            isPainting = false;
+            
+            let lay = state.layers.find(l => l.id === state.selectedLayerId);
+            if (lay && lay.generatorType === 'paint') {
+                let sCtx = getStrokeCanvas().getContext('2d');
+                // Connect the last midpoint to the final point to complete the line beautifully
+                if (paintPoints.length > 1) {
+                    let lastPt = paintPoints[paintPoints.length - 1];
+                    let prevPt = paintPoints[paintPoints.length - 2];
+                    let midX = (prevPt.x + lastPt.x) / 2;
+                    let midY = (prevPt.y + lastPt.y) / 2;
+                    drawBrushLineSegment(lay, midX, midY, lastPt.x, lastPt.y, undefined, undefined, lastPt.pressure, sCtx);
+                }
+                
+                let lp = lay.params;
+                let opacity = (lp.brushOpacity !== undefined ? lp.brushOpacity : 100) / 100;
+                combineStrokeAndBackup(lay, opacity);
+                updatePaintBuffer(lay);
+                commitHistorySnapshot();
+            }
+
+            paintPoints = [];
+            paintQueue = [];
+        }
+
+        function evalGenerator(type, tx, ty, sx, sy, p, cymaticsSources = null, lay = null) {
             let v = 0.5;
             switch(type){
+                case 'paint': {
+                    if (lay && lay.paintBuffer) {
+                        let px = (tx % 1 + 1) % 1;
+                        let py = (ty % 1 + 1) % 1;
+                        let pw = 1024;
+                        let ph = 1024;
+                        let x = px * (pw - 1);
+                        let y = py * (ph - 1);
+                        let x0 = Math.floor(x);
+                        let y0 = Math.floor(y);
+                        let x1 = Math.min(pw - 1, x0 + 1);
+                        let y1 = Math.min(ph - 1, y0 + 1);
+                        let fx = x - x0;
+                        let fy = y - y0;
+                        let v00 = lay.paintBuffer[y0 * pw + x0];
+                        let v10 = lay.paintBuffer[y0 * pw + x1];
+                        let v01 = lay.paintBuffer[y1 * pw + x0];
+                        let v11 = lay.paintBuffer[y1 * pw + x1];
+                        v = (1 - fy) * ((1 - fx) * v00 + fx * v10) + fy * ((1 - fx) * v01 + fx * v11);
+                    } else {
+                        v = 0;
+                    }
+                    break;
+                }
                 case 'cymatics': v = Cymatics.noise(tx, ty, p, cymaticsSources); break;
                 case 'simplex': v=(Simplex.noise(tx*sx,ty*sy)+1)/2; break;
                 case 'perlin': v=(Perlin.noise(tx*sx,ty*sy)+1)/2; break;
@@ -434,6 +964,10 @@
                 let lay = state.layers[lIdx]; if(!lay.visible) continue;
                 let op = lay.opacity/100, bFn = Blend[lay.blendMode] || Blend.normal, p = lay.params;
                 let lScale = p.layerScale || 1;
+
+                if (lay.generatorType === 'paint') {
+                    ensureLayerPaintCanvas(lay);
+                }
 
                 if (hasDisplacement && !dispBufferPopulated) {
                     for(let i=0; i<w*h; i++) {
@@ -568,10 +1102,10 @@
                             if (p.seamless || gForceSeamless) {
                                 let tx0 = tx % 1.0; if (tx0 < 0) tx0 += 1.0;
                                 let ty0 = ty % 1.0; if (ty0 < 0) ty0 += 1.0;
-                                let v00 = evalGenerator(lay.generatorType, tx0, ty0, sx, sy, p, activeCymaticsSources);
-                                let v10 = evalGenerator(lay.generatorType, tx0 - 1, ty0, sx, sy, p, activeCymaticsSources);
-                                let v01 = evalGenerator(lay.generatorType, tx0, ty0 - 1, sx, sy, p, activeCymaticsSources);
-                                let v11 = evalGenerator(lay.generatorType, tx0 - 1, ty0 - 1, sx, sy, p, activeCymaticsSources);
+                                let v00 = evalGenerator(lay.generatorType, tx0, ty0, sx, sy, p, activeCymaticsSources, lay);
+                                let v10 = evalGenerator(lay.generatorType, tx0 - 1, ty0, sx, sy, p, activeCymaticsSources, lay);
+                                let v01 = evalGenerator(lay.generatorType, tx0, ty0 - 1, sx, sy, p, activeCymaticsSources, lay);
+                                let v11 = evalGenerator(lay.generatorType, tx0 - 1, ty0 - 1, sx, sy, p, activeCymaticsSources, lay);
                                 let softness = gForceSeamless ? Math.max(0, Math.min(1, gForceSoftness)) : Math.max(0, Math.min(1, p.seamlessSoftness ?? 1));
                                 let curveX = gBlendCurve === 'linear' ? tx0 : Perlin.fade(tx0);
                                 let curveY = gBlendCurve === 'linear' ? ty0 : Perlin.fade(ty0);
@@ -579,9 +1113,10 @@
                                 let v_blend = Perlin.lerp(softness, ty0, curveY);
                                 v = Perlin.lerp(v_blend, Perlin.lerp(u, v00, v10), Perlin.lerp(u, v01, v11));
                             } else {
-                                v = evalGenerator(lay.generatorType, tx, ty, sx, sy, p, activeCymaticsSources);
+                                v = evalGenerator(lay.generatorType, tx, ty, sx, sy, p, activeCymaticsSources, lay);
                             }
 
+                            if(p.brightness!==undefined) v=v*p.brightness;
                             if(p.contrast!==undefined) v=(v-0.5)*p.contrast+0.5;
                             if(p.invert) v=1-v;
 
@@ -686,9 +1221,9 @@
                 let isMasked = !!clippedByMasks[i]; // цей шар кліпається маскою(ами), що йдуть над ним
                 let maskHasNoTarget = l.isMask && maskTargetIndex[i] === -1; // маска в самому низу — не відображається
                 return `
-                <div class="layer-card ${l.id===state.selectedLayerId?'active':''} ${l.isMask?'is-mask':''} ${maskHasNoTarget?'is-mask-empty':''} ${isMasked?'is-masked-target':''}" onclick="state.selectedLayerId='${l.id}';switchRightTab('layer');renderLayers();renderProps();">
+                <div class="layer-card ${l.id===state.selectedLayerId?'active':''} ${l.isMask?'is-mask':''} ${maskHasNoTarget?'is-mask-empty':''} ${isMasked?'is-masked-target':''} ${!l.visible?'is-hidden':''}" onclick="state.selectedLayerId='${l.id}';switchRightTab('layer');renderLayers();renderProps();">
                     <div class="layer-row-top">
-                        <div class="layer-info">${isMasked?'<span class="mask-link-icon" title="Кліпується маскою зверху">⤷</span>':''}<span class="layer-btn" style="padding:0;">${l.visible?'👁':'🕶'}</span><span class="layer-name">${l.name}</span>${l.isMask?`<span class="mask-badge" title="${maskHasNoTarget?'Маска: немає шару знизу — не відображається':'Цей шар працює як маска для шару знизу'}">МАСКА</span>`:''}</div>
+                        <div class="layer-info">${isMasked?'<span class="mask-link-icon" title="Кліпується маскою зверху">⤷</span>':''}<button onclick="event.stopPropagation(); toggleLayerVisibility(${i})" class="layer-btn ${l.visible?'layer-visible':'layer-hidden'}" title="${l.visible?'Приховати шар':'Показати шар'}" style="padding:0; margin-right:4px;">${l.visible?'👁':'🕶'}</button><span class="layer-name">${l.name}</span>${l.isMask?`<span class="mask-badge" title="${maskHasNoTarget?'Маска: немає шару знизу — не відображається':'Цей шар працює як маска для шару знизу'}">МАСКА</span>`:''}</div>
                         <div class="layer-controls">
                             <button onclick="event.stopPropagation(); toggleMask(${i})" class="layer-btn ${l.isMask?'layer-btn-mask-active':''}" title="Використати як маску">🎭</button>
                             <button onclick="event.stopPropagation(); duplicateLayer(${i})" class="layer-btn" title="Дублювати шар">📋</button>
@@ -702,13 +1237,23 @@
             }).join('');
         }
 
+        function toggleLayerVisibility(i) {
+            let lay = state.layers[i];
+            if (!lay) return;
+            lay.visible = !lay.visible;
+            lay.isDirty = true;
+            renderLayers();
+            renderProps();
+            requestRender();
+        }
+
         // Базові (спільні для всіх типів генератора) параметри нового/скинутого шару.
         // Параметри, специфічні для конкретного алгоритму (frequency, radialCount,
         // metric, octaves...), свідомо ВІДСУТНІ тут — вони підхоплюють власні
         // значення за замовчуванням через || / ?? у renderProps()/evalGenerator()
         // самі, щойно з'являються на екрані для свого типу генератора.
         function freshLayerParams() {
-            return { seamless:false, scale:10, scaleX:10, scaleY:10, lockScale:true, layerScale:1, contrast:1, angle:0, blur:0,
+            return { seamless:false, scale:10, scaleX:10, scaleY:10, lockScale:true, layerScale:1, contrast:1, brightness:1, angle:0, blur:0,
                 offsetX:0, offsetY:0, invert:false, warps:[],
                 useThreshold:false, thresholdVal:50, useLevels:false, levelMin:0, levelMax:100,
                 usePosterize:false, posterizeLevels:4, useFindEdges:false };
@@ -737,7 +1282,34 @@
             renderLayers(); switchRightTab('layer'); requestRender();
         }
         function moveLayer(i,d){ if(i+d>=0 && i+d<state.layers.length){ [state.layers[i],state.layers[i+d]]=[state.layers[i+d],state.layers[i]]; renderLayers(); requestRender(); } }
-        function toggleMask(i){ let lay=state.layers[i]; if(!lay) return; lay.isMask=!lay.isMask; renderLayers(); requestRender(); }
+        function toggleMask(i) {
+            let lay = state.layers[i];
+            if (!lay) return;
+            lay.isMask = !lay.isMask;
+            
+            if (lay.isMask && lay.generatorType === 'paint') {
+                ensureLayerPaintCanvas(lay);
+                let pCanvas = lay.paintCanvas;
+                let pCtx = pCanvas.getContext('2d');
+                
+                // Check if the canvas is completely black or empty
+                let imgData = pCtx.getImageData(0, 0, 1024, 1024);
+                let isAllBlack = true;
+                for (let j = 0; j < imgData.data.length; j += 4) {
+                    if (imgData.data[j] !== 0 || imgData.data[j+1] !== 0 || imgData.data[j+2] !== 0) {
+                        isAllBlack = false;
+                        break;
+                    }
+                }
+                if (isAllBlack) {
+                    pCtx.fillStyle = '#ffffff';
+                    pCtx.fillRect(0, 0, 1024, 1024);
+                    updatePaintBuffer(lay);
+                }
+            }
+            renderLayers();
+            requestRender();
+        }
 
         // --- Скидання (Reset) ---
         function resetLayer(i) {
@@ -767,7 +1339,7 @@
         }
 
         // --- Рандомізація ---
-        const GENERATOR_TYPES = ['simplex','perlin','voronoi','fbm','ridged','sine','radial','spiral','hexagon','pixel_noise','white_noise','checkerboard','dots','weave','value_noise','cellular','spider_web','cymatics'];
+        const GENERATOR_TYPES = ['simplex','perlin','voronoi','fbm','ridged','sine','radial','spiral','hexagon','pixel_noise','white_noise','checkerboard','dots','weave','value_noise','cellular','spider_web','cymatics', 'paint'];
 
         // Рандомізує ОДИН шар: випадковий тип генератора + всі його повзунки (в
         // межах їхніх власних min/max) + помірний шанс увімкнути локальні ефекти.
@@ -948,6 +1520,7 @@
             ['scaleX','scaleY'].forEach(k=>lp[k]=lp[k]||lp.scale||10);
             if(lp.layerScale===undefined) lp.layerScale=1;
             if(lp.lockScale===undefined) lp.lockScale=true;
+            if(lp.brightness===undefined) lp.brightness=1;
             if(!lp.warps) lp.warps = [];
 
             if (lay.generatorType === 'cymatics') {
@@ -966,6 +1539,50 @@
                         createSlider("Масштаб Шару (Zoom)", "layerScale", 0.1, 10, 0.1, lp.layerScale, false, 1) +
                         createSlider("Кут обертання (−180° … +180°)", "angle", -180, 180, 1, lp.angle, false, 0);
             
+            if (lay.generatorType === 'paint') {
+                ensureLayerPaintCanvas(lay);
+                lp.brushColor = lp.brushColor || '#ffffff';
+                lp.brushSize = lp.brushSize || 20;
+                lp.brushSpacing = lp.brushSpacing !== undefined ? lp.brushSpacing : 10;
+                lp.brushOpacity = lp.brushOpacity !== undefined ? lp.brushOpacity : 100;
+                lp.brushSoftness = lp.brushSoftness !== undefined ? lp.brushSoftness : 0.5;
+                lp.brushFalloff = lp.brushFalloff !== undefined ? lp.brushFalloff : 1.0;
+                lp.brushAngle = lp.brushAngle !== undefined ? lp.brushAngle : 0;
+                lp.brushSquash = lp.brushSquash !== undefined ? lp.brushSquash : 1.0;
+                lp.brushTool = lp.brushTool || 'brush';
+
+                genHTML += `
+                <div class="section-title">Малювання (Brush Canvas)</div>
+                <div class="property-group">
+                    <label class="property-label">Інструмент</label>
+                    <div class="gen-grid" style="grid-template-columns:repeat(2,1fr);">
+                        <button onclick="upd('brushTool','brush')" class="gen-btn ${lp.brushTool==='brush'?'active':''}">Пензель</button>
+                        <button onclick="upd('brushTool','eraser')" class="gen-btn ${lp.brushTool==='eraser'?'active':''}">Гумка</button>
+                    </div>
+                </div>
+                <div class="property-group">
+                    <label class="property-label">Колір пензля (висота/маска)</label>
+                    <input type="color" value="${lp.brushColor}" oninput="upd('brushColor', this.value)" style="width:100%; height:32px; background:none; border:1px solid var(--border-color); border-radius:4px; cursor:pointer;">
+                </div>
+                ${createSlider("Розмір пензля", "brushSize", 1, 200, 1, lp.brushSize, false, 20)}
+                ${createSlider("Інтервал (Крок)", "brushSpacing", 1, 200, 1, lp.brushSpacing, false, 10)}
+                ${createSlider("Сила (Непрозорість %)", "brushOpacity", 1, 100, 1, lp.brushOpacity, false, 100)}
+                ${createSlider("Зона м'якості", "brushSoftness", 0, 1, 0.01, lp.brushSoftness, false, 0.5)}
+                ${createSlider("Спад градієнта", "brushFalloff", 0.1, 4, 0.1, lp.brushFalloff, false, 1.0)}
+                ${createSlider("Кут нахилу пензля", "brushAngle", -180, 180, 1, lp.brushAngle, false, 0)}
+                ${createSlider("Форма (Стиснення)", "brushSquash", 0.1, 1, 0.05, lp.brushSquash, false, 1.0)}
+                
+                <div style="margin-top:12px; display:flex; gap:10px;">
+                    <button onclick="clearPaintCanvas()" class="btn btn-secondary" style="color:#ef4444; border-color:rgba(239,68,68,0.2); width:100%;">Очистити полотно</button>
+                </div>
+                <div class="info-text" style="margin-top:12px; font-size:11px; color:var(--text-muted); line-height:1.4;">
+                    💡 <b>Інструкція:</b> Малюйте лівою кнопкою миші або стилусом прямо на головному вікні перегляду канвасу! Використовуйте колір від чорного (0.0) до білого (1.0) для керування рельєфом текстури. Натисніть Shift + ліва кнопка або коліщатко для панорамування.
+                </div>
+                `;
+
+                setTimeout(() => { updateBrushPreview(); }, 0);
+            }
+
             if (lay.generatorType === 'cymatics') {
                 genHTML += `<div class="section-title">Cymatics</div>`;
                 genHTML += createSlider("Частота", "frequency", 1, 300, 1, lp.frequency, false, 50);
@@ -1019,16 +1636,29 @@
             `).join('');
 
             p.innerHTML = `
-                <div class="property-group"><label class="property-label">Назва</label><input type="text" value="${lay.name}" onchange="lay.name=this.value;renderLayers()" class="form-control"></div>
+                <div class="property-group">
+                    <label class="property-label">Алгоритм (Algorithm)</label>
+                    <div class="gen-grid" style="grid-template-columns:repeat(3,1fr);">
+                        ${['paint','simplex','perlin','voronoi','fbm','ridged','sine','radial','spiral','hexagon','pixel_noise','white_noise','checkerboard','dots','weave','value_noise','cellular','spider_web', 'cymatics'].map(t=>`<button onclick="upd('generatorType','${t}',true)" class="gen-btn ${lay.generatorType===t?'active':''}">${t}</button>`).join('')}
+                    </div>
+                </div>
+                <hr>
+
+                <div class="property-group"><label class="property-label">Назва шару</label><input type="text" value="${lay.name}" onchange="lay.name=this.value;renderLayers()" class="form-control"></div>
                 <div class="property-group grid-2">
                     <button onclick="randomizeLayer(state.layers.findIndex(l=>l.id==='${lay.id}'))" class="btn btn-secondary" title="Рандомізувати цей шар (тип, параметри, ефекти)">🎲 Рандом (шар)</button>
                     <button onclick="resetLayer(state.layers.findIndex(l=>l.id==='${lay.id}'))" class="btn btn-secondary" title="Скинути ВСІ параметри цього шару">↺ Скинути шар</button>
                 </div>
-                <div class="property-group grid-2">
-                    <div><label class="property-label">Видимість</label><button onclick="upd('visible',${!lay.visible},true)" class="btn btn-secondary" style="width:100%;height:34px;">${lay.visible?'👁 Активний':'🕶 Прихований'}</button></div>
-                    <div><label class="property-label">Режим</label><select onchange="upd('blendMode',this.value,true)" class="form-control" style="height:34px;">
+                <hr>
+
+                ${genHTML}
+                <hr>
+
+                <div class="property-group">
+                    <label class="property-label">Режим накладання (Blend Mode)</label>
+                    <select onchange="upd('blendMode',this.value,true)" class="form-control" style="height:34px; width: 100%;">
                         ${['normal','multiply','screen','overlay','difference','colorburn','colordodge','heightblend','exclusion','hardlight','lineardodge','linearburn'].map(o=>`<option value="${o}" ${lay.blendMode===o?'selected':''}>${o}</option>`).join('')}
-                    </select></div>
+                    </select>
                 </div>
                 ${createSlider("Непрозорість (%)", "opacity", 0, 100, 1, lay.opacity, true, 100, true)}
                 <hr>
@@ -1039,10 +1669,6 @@
                         <input type="checkbox" ${lp.seamless ? 'checked' : ''} onchange="upd('seamless', this.checked)">
                     </div>
                 </div>
-
-                <div class="property-group"><label class="property-label">Алгоритм</label><div class="gen-grid" style="grid-template-columns:repeat(2,1fr);">
-                    ${['simplex','perlin','voronoi','fbm','ridged','sine','radial','spiral','hexagon','pixel_noise','white_noise','checkerboard','dots','weave','value_noise','cellular','spider_web', 'cymatics'].map(t=>`<button onclick="upd('generatorType','${t}',true)" class="gen-btn ${lay.generatorType===t?'active':''}">${t}</button>`).join('')}
-                </div></div>${genHTML}
                 <hr>
                 
                 <div class="section-title">Локальні ефекти</div>
@@ -1061,6 +1687,10 @@
                 <div class="property-group">
                     <label class="property-label"><input type="checkbox" ${lp.useFindEdges?'checked':''} onchange="upd('useFindEdges',this.checked)"> Find Edges (Знайти краї)</label>
                 </div>
+                <div class="property-group">
+                    <label class="property-label"><input type="checkbox" ${lp.invert?'checked':''} onchange="upd('invert',this.checked)"> Інверсія кольорів (Invert)</label>
+                </div>
+                ${createSlider("Яскравість шару", "brightness", 0, 2, 0.05, lp.brightness, false, 1)}
                 ${createSlider("Контраст шару", "contrast", 0.1, 3, 0.05, lp.contrast, false, 1)}
                 ${createSlider("Розмиття (px)", "blur", 0, 15, 1, lp.blur||0, false, 0)}
                 <hr>
@@ -1168,7 +1798,7 @@
         const HISTORY_DEBOUNCE_MS = 450;
 
         function initHistory() {
-            history = [JSON.stringify(state)];
+            history = [serializeState(state)];
             historyIndex = 0;
             historyReady = true;
             updateHistoryButtons();
@@ -1181,7 +1811,7 @@
         }
 
         function commitHistorySnapshot() {
-            let snap = JSON.stringify(state);
+            let snap = serializeState(state);
             if (history[historyIndex] === snap) return;
             history = history.slice(0, historyIndex + 1);
             history.push(snap);
@@ -1195,7 +1825,7 @@
             clearTimeout(historyTimer);
             // Спочатку фіксуємо ще не закомічену (debounced) зміну як поточний крок,
             // щоб undo відкочував саме її, а не губив останню правку користувача.
-            let liveSnap = JSON.stringify(state);
+            let liveSnap = serializeState(state);
             if (history[historyIndex] !== liveSnap) {
                 history = history.slice(0, historyIndex + 1);
                 history.push(liveSnap);
@@ -1220,6 +1850,14 @@
             if (!state.layers.find(l => l.id === state.selectedLayerId)) {
                 state.selectedLayerId = state.layers.length ? state.layers[0].id : null;
             }
+            state.layers.forEach(lay => {
+                if (lay.generatorType === 'paint') {
+                    if (lay.paintCanvas) {
+                        delete lay.paintCanvas;
+                    }
+                    ensureLayerPaintCanvas(lay);
+                }
+            });
             invalidateCaches();
             renderLayers();
             if (currentTab === 'global') renderGlobal(); else renderProps();
@@ -1305,7 +1943,8 @@
                     if(k==='visible'||k==='generatorType') { renderProps(); renderLayers(); }
                 } else {
                     lay.params[k]=val;
-                    if(k==='seamless'||k==='useThreshold'||k==='useLevels'||k==='useFindEdges'||k==='usePosterize') renderProps();
+                    if(k==='seamless'||k==='useThreshold'||k==='useLevels'||k==='useFindEdges'||k==='usePosterize'||k==='brushTool') renderProps();
+                    if(String(k).startsWith('brush')) updateBrushPreview();
                 }
                 if(!suppressRender) requestRender();
             }
@@ -1329,10 +1968,10 @@
                 $('exportRenderingIndicator').style.display = 'none';
             }, 30);
         }
-        function openSaveModal(){ $('projectJsonText').value=JSON.stringify(state); $('copyJsonBtn').innerText="Скопіювати"; showModal('saveModal'); }
+        function openSaveModal(){ $('projectJsonText').value=serializeState(state); $('copyJsonBtn').innerText="Скопіювати"; showModal('saveModal'); }
         function copyProjectCode(){ let t=$('projectJsonText'); t.select(); navigator.clipboard.writeText(t.value).then(()=>{$('copyJsonBtn').innerText="Скопійовано!";}); }
-        function loadProjectFromText(){ try{ let p=JSON.parse($('importJsonText').value.trim()); if(p.layers){ state=p; if(!state.global) state.global=freshGlobalSettings(); if(!state.layers.find(l=>l.id===state.selectedLayerId)) state.selectedLayerId = state.layers.length?state.layers[0].id:null; $('importTextModal').style.display='none'; invalidateCaches(); renderLayers(); switchRightTab('layer'); requestRender(); initHistory(); } }catch(e){alert("Помилка JSON")} }
-        function importProject(e){ let r=new FileReader(); r.onload=ev=>{try{let p=JSON.parse(ev.target.result); if(p.layers){ state=p; if(!state.global) state.global=freshGlobalSettings(); if(!state.layers.find(l=>l.id===state.selectedLayerId)) state.selectedLayerId = state.layers.length?state.layers[0].id:null; invalidateCaches(); renderLayers(); switchRightTab('layer'); requestRender(); initHistory(); }}catch(er){}}; r.readAsText(e.target.files[0]); }
+        function loadProjectFromText(){ try{ let p=JSON.parse($('importJsonText').value.trim()); if(p.layers){ state=p; if(!state.global) state.global=freshGlobalSettings(); initImportedPaintCanvases(); if(!state.layers.find(l=>l.id===state.selectedLayerId)) state.selectedLayerId = state.layers.length?state.layers[0].id:null; $('importTextModal').style.display='none'; invalidateCaches(); renderLayers(); switchRightTab('layer'); requestRender(); initHistory(); } }catch(e){alert("Помилка JSON")} }
+        function importProject(e){ let r=new FileReader(); r.onload=ev=>{try{let p=JSON.parse(ev.target.result); if(p.layers){ state=p; if(!state.global) state.global=freshGlobalSettings(); initImportedPaintCanvases(); if(!state.layers.find(l=>l.id===state.selectedLayerId)) state.selectedLayerId = state.layers.length?state.layers[0].id:null; invalidateCaches(); renderLayers(); switchRightTab('layer'); requestRender(); initHistory(); }}catch(er){} }; r.readAsText(e.target.files[0]); }
 
         // --- Розтяжні панелі (Шари / Властивості) ---
         // Тягнути за смужку між панеллю та канвасом — ширина зберігається між
@@ -1410,6 +2049,16 @@
             canvas=$('canvas'); 
             ctx=canvas.getContext('2d'); 
             initCanvasControlsUI();
+
+            // Register pointer events for painting
+            let wrapper = $('canvasWrapper');
+            if (wrapper) {
+                wrapper.addEventListener('pointerdown', handleCanvasPointerDown);
+                wrapper.addEventListener('pointermove', handleCanvasPointerMove);
+                window.addEventListener('pointerup', handleCanvasPointerUp);
+                window.addEventListener('pointercancel', handleCanvasPointerUp);
+            }
+
             renderLayers(); 
             switchRightTab('layer'); 
             requestRender(); 
