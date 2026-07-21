@@ -8,8 +8,8 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = 3000;
 
-// Serve static files from the root directory
-app.use(express.static(__dirname));
+// Serve static files from the assets directory
+app.use('/assets', express.static(path.join(__dirname, 'assets')));
 
 // Handle all requests by serving index.html
 app.get('*', (req, res) => {
