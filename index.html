@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Veil Studio — Процедурний Генератор Текстур</title>
-    <link rel="stylesheet" href="/assets/css/styles.css">
+    <link rel="stylesheet" href="assets/css/styles.css">
 </head>
 <body>
     <header>
@@ -84,6 +84,22 @@
     </div>
 
     <!-- Модалки -->
+    <div id="confirmModal" class="modal-overlay">
+        <div class="modal-card" style="max-width: 380px;">
+            <div class="modal-header">
+                <h3 class="modal-title" id="confirmModalTitle">Підтвердження</h3>
+                <button class="modal-close" onclick="$('confirmModal').style.display='none'">✕</button>
+            </div>
+            <div class="modal-body" style="text-align: center;">
+                <p id="confirmModalMessage" style="font-size: 13px; color: var(--text-color); margin-bottom: 10px;"></p>
+                <div style="display: flex; gap: 12px; justify-content: center; margin-top: 10px;">
+                    <button class="btn btn-secondary" onclick="$('confirmModal').style.display='none'">Скасувати</button>
+                    <button id="confirmModalBtn" class="btn btn-primary" style="min-width: 100px;">Підтвердити</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <div id="pngModal" class="modal-overlay">
         <div class="modal-card">
             <div class="modal-header">
@@ -131,6 +147,6 @@
             </div>
         </div>
     </div>
-    <script src="/assets/js/app.js"></script>
+    <script src="assets/js/app.js"></script>
 </body>
 </html>

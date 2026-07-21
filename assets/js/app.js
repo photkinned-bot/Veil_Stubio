@@ -1311,31 +1311,68 @@
             requestRender();
         }
 
+        // --- Custom Confirm Modal & State Management ---
+        function customConfirm(message, onConfirm) {
+            console.log("customConfirm called with message:", message);
+            const msgEl = $('confirmModalMessage');
+            const btnEl = $('confirmModalBtn');
+            const modalEl = $('confirmModal');
+            if (msgEl && btnEl && modalEl) {
+                msgEl.innerText = message;
+                btnEl.onclick = function() {
+                    modalEl.style.display = 'none';
+                    if (onConfirm) onConfirm();
+                };
+                modalEl.style.display = 'flex';
+            } else {
+                if (confirm(message)) {
+                    if (onConfirm) onConfirm();
+                }
+            }
+        }
+
+        function setState(v) {
+            state = v;
+            window.state = state;
+        }
+
         // --- Скидання (Reset) ---
         function resetLayer(i) {
+            console.log("resetLayer called for index:", i);
             let lay = state.layers[i];
-            if (!lay) return;
-            if (!confirm(`Скинути всі параметри шару "${lay.name}" до значень за замовчуванням?`)) return;
-            lay.params = freshLayerParams();
-            lay.isDirty = true;
-            renderProps(); requestRender();
+            if (!lay) {
+                console.error("resetLayer error: Layer not found at index", i);
+                return;
+            }
+            customConfirm(`Скинути всі параметри шару "${lay.name}" до значень за замовчуванням?`, () => {
+                console.log("resetLayer confirmed for:", lay.name);
+                lay.params = freshLayerParams();
+                lay.isDirty = true;
+                renderProps(); requestRender();
+            });
         }
         function resetGlobalSettings() {
-            if (!confirm("Скинути всі глобальні налаштування (корекції, трансформацію, тайлінг) до значень за замовчуванням?")) return;
-            state.global = freshGlobalSettings();
-            invalidateCaches();
-            renderGlobal(); requestRender();
+            console.log("resetGlobalSettings called");
+            customConfirm("Скинути всі глобальні налаштування (корекції, трансформацію, тайлінг) до значень за замовчуванням?", () => {
+                console.log("resetGlobalSettings confirmed");
+                state.global = freshGlobalSettings();
+                invalidateCaches();
+                renderGlobal(); requestRender();
+            });
         }
         function resetProject() {
-            if (!confirm("Скинути ВЕСЬ проєкт до початкового стану? Усі шари та глобальні налаштування буде втрачено.")) return;
-            let id = 'l'+Date.now();
-            state = {
-                layers: [{ id, name:'Шар 1', visible:true, opacity:100, blendMode:'normal', generatorType:'simplex', isMask:false, params: freshLayerParams() }],
-                selectedLayerId: id,
-                global: freshGlobalSettings()
-            };
-            invalidateCaches();
-            renderLayers(); switchRightTab('layer'); requestRender();
+            console.log("resetProject called");
+            customConfirm("Скинути ВЕСЬ проєкт до початкового стану? Усі шари та глобальні налаштування буде втрачено.", () => {
+                console.log("resetProject confirmed");
+                let id = 'l'+Date.now();
+                setState({
+                    layers: [{ id, name:'Шар 1', visible:true, opacity:100, blendMode:'normal', generatorType:'simplex', isMask:false, params: freshLayerParams() }],
+                    selectedLayerId: id,
+                    global: freshGlobalSettings()
+                });
+                invalidateCaches();
+                renderLayers(); switchRightTab('layer'); requestRender();
+            });
         }
 
         // --- Рандомізація ---
@@ -1347,14 +1384,15 @@
         // skipRender=true — для пакетного виклику з randomizeAllLayers(), щоб не
         // тригерити повний рендер після кожного окремого шару в циклі.
         function randomizeLayer(idx, skipRender) {
+            console.log("randomizeLayer called for index:", idx, "skipRender:", skipRender);
             let lay = state.layers[idx];
             if (!lay) return;
-            lay.generatorType = GENERATOR_TYPES[Math.floor(Math.random() * GENERATOR_TYPES.length)];
+            // Keep the current generatorType unchanged
             lay.params.useThreshold = Math.random() < 0.25;
             lay.params.useLevels = Math.random() < 0.2;
             lay.params.usePosterize = Math.random() < 0.2;
             lay.params.useFindEdges = Math.random() < 0.15;
-            lay.params.invert = Math.random() < 0.2;
+            lay.params.invert = Math.random() < 0.25;
             lay.isDirty = true;
             state.selectedLayerId = lay.id;
             renderProps();
@@ -1362,11 +1400,40 @@
             if (!skipRender) { renderProps(); renderLayers(); requestRender(); }
         }
 
+        function randomizeGlobalSettings() {
+            console.log("randomizeGlobalSettings called");
+            let g = state.global;
+            g.gamma = 0.5 + Math.random() * 1.5;
+            g.contrast = 0.7 + Math.random() * 0.8;
+            g.vignette = Math.random() < 0.5 ? 0 : Math.random() * 0.6;
+            g.grain = Math.random() < 0.3 ? 0 : Math.round(Math.random() * 25);
+            g.blur = Math.random() < 0.75 ? 0 : Math.round(Math.random() * 5);
+            
+            g.globalZoom = 0.8 + Math.random() * 1.7;
+            g.globalRotation = Math.round((Math.random() - 0.5) * 180);
+            g.globalOffsetX = (Math.random() - 0.5) * 1.0;
+            g.globalOffsetY = (Math.random() - 0.5) * 1.0;
+            
+            if (g.tileMode !== 'off') {
+                g.tileRepeatX = 1 + Math.floor(Math.random() * 4);
+                g.tileRepeatY = 1 + Math.floor(Math.random() * 4);
+                g.tileSeamOffsetX = (Math.random() - 0.5) * 0.5;
+                g.tileSeamOffsetY = (Math.random() - 0.5) * 0.5;
+                g.forceSeamless = Math.random() < 0.4;
+                g.forceSeamlessSoftness = 0.2 + Math.random() * 0.8;
+            }
+        }
+
         function randomizeAllLayers() {
+            console.log("randomizeAllLayers called");
             if (!state.layers.length) return;
-            if (!confirm(`Рандомізувати ВСІ шари проєкту (${state.layers.length})?`)) return;
-            state.layers.forEach((_, i) => randomizeLayer(i, true));
-            renderProps(); renderLayers(); requestRender();
+            customConfirm(`Рандомізувати ВСІ шари проєкту (${state.layers.length}) та глобальні налаштування?`, () => {
+                console.log("randomizeAllLayers confirmed");
+                state.layers.forEach((_, i) => randomizeLayer(i, true));
+                randomizeGlobalSettings();
+                invalidateCaches();
+                renderProps(); renderLayers(); requestRender();
+            });
         }
 
         // Шар-маска (Clipping Mask): для кожної маски знаходить перший ВИДИМИЙ
@@ -1834,7 +1901,7 @@
             }
             if (historyIndex <= 0) { updateHistoryButtons(); return; }
             historyIndex--;
-            state = JSON.parse(history[historyIndex]);
+            setState(JSON.parse(history[historyIndex]));
             afterHistoryRestore();
         }
 
@@ -1842,7 +1909,7 @@
             if (!historyReady) return;
             if (historyIndex >= history.length - 1) return;
             historyIndex++;
-            state = JSON.parse(history[historyIndex]);
+            setState(JSON.parse(history[historyIndex]));
             afterHistoryRestore();
         }
 
@@ -1970,8 +2037,8 @@
         }
         function openSaveModal(){ $('projectJsonText').value=serializeState(state); $('copyJsonBtn').innerText="Скопіювати"; showModal('saveModal'); }
         function copyProjectCode(){ let t=$('projectJsonText'); t.select(); navigator.clipboard.writeText(t.value).then(()=>{$('copyJsonBtn').innerText="Скопійовано!";}); }
-        function loadProjectFromText(){ try{ let p=JSON.parse($('importJsonText').value.trim()); if(p.layers){ state=p; if(!state.global) state.global=freshGlobalSettings(); initImportedPaintCanvases(); if(!state.layers.find(l=>l.id===state.selectedLayerId)) state.selectedLayerId = state.layers.length?state.layers[0].id:null; $('importTextModal').style.display='none'; invalidateCaches(); renderLayers(); switchRightTab('layer'); requestRender(); initHistory(); } }catch(e){alert("Помилка JSON")} }
-        function importProject(e){ let r=new FileReader(); r.onload=ev=>{try{let p=JSON.parse(ev.target.result); if(p.layers){ state=p; if(!state.global) state.global=freshGlobalSettings(); initImportedPaintCanvases(); if(!state.layers.find(l=>l.id===state.selectedLayerId)) state.selectedLayerId = state.layers.length?state.layers[0].id:null; invalidateCaches(); renderLayers(); switchRightTab('layer'); requestRender(); initHistory(); }}catch(er){} }; r.readAsText(e.target.files[0]); }
+        function loadProjectFromText(){ try{ let p=JSON.parse($('importJsonText').value.trim()); if(p.layers){ setState(p); if(!state.global) state.global=freshGlobalSettings(); initImportedPaintCanvases(); if(!state.layers.find(l=>l.id===state.selectedLayerId)) state.selectedLayerId = state.layers.length?state.layers[0].id:null; $('importTextModal').style.display='none'; invalidateCaches(); renderLayers(); switchRightTab('layer'); requestRender(); initHistory(); } }catch(e){alert("Помилка JSON")} }
+        function importProject(e){ let r=new FileReader(); r.onload=ev=>{try{let p=JSON.parse(ev.target.result); if(p.layers){ setState(p); if(!state.global) state.global=freshGlobalSettings(); initImportedPaintCanvases(); if(!state.layers.find(l=>l.id===state.selectedLayerId)) state.selectedLayerId = state.layers.length?state.layers[0].id:null; invalidateCaches(); renderLayers(); switchRightTab('layer'); requestRender(); initHistory(); }}catch(er){} }; r.readAsText(e.target.files[0]); }
 
         // --- Розтяжні панелі (Шари / Властивості) ---
         // Тягнути за смужку між панеллю та канвасом — ширина зберігається між
@@ -2036,6 +2103,34 @@
             if ($('chkLowRes')) $('chkLowRes').checked = val;
             requestRender();
         };
+
+        // Expose all state and action handlers to window globally
+        window.state = state;
+        window.viewport = viewport;
+        window.undo = undo;
+        window.redo = redo;
+        window.randomizeAllLayers = randomizeAllLayers;
+        window.resetProject = resetProject;
+        window.resetGlobalSettings = resetGlobalSettings;
+        window.addLayer = addLayer;
+        window.switchRightTab = switchRightTab;
+        window.openSaveModal = openSaveModal;
+        window.openPNGExportModal = openPNGExportModal;
+        window.renderExportPreview = renderExportPreview;
+        window.loadProjectFromText = loadProjectFromText;
+        window.copyProjectCode = copyProjectCode;
+        window.importProject = importProject;
+        window.toggleLayerVisibility = toggleLayerVisibility;
+        window.toggleMask = toggleMask;
+        window.duplicateLayer = duplicateLayer;
+        window.moveLayer = moveLayer;
+        window.randomizeLayer = randomizeLayer;
+        window.resetLayer = resetLayer;
+        window.upd = upd;
+        window.showModal = showModal;
+        window.renderLayers = renderLayers;
+        window.renderProps = renderProps;
+        window.requestRender = requestRender;
 
         function initCanvasControlsUI() {
             if ($('chkLowRes')) $('chkLowRes').checked = lowResOnEdit;
