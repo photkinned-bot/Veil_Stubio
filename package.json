@@ -1,0 +1,15 @@
+{
+  "name": "veil-studio",
+  "version": "1.0.0",
+  "description": "Veil Studio — Procedural Texture Generator",
+  "type": "module",
+  "scripts": {
+    "dev": "node server.js",
+    "build": "echo 'Build complete'",
+    "lint": "echo 'No lint script defined'",
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "name": "Veil Studio",
+  "description": "A procedural texture generator that allows you to create, modify, and export seamless procedural textures and patterns.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
