@@ -234,6 +234,8 @@
         const mirrorFold = t => { t = t % 2; if (t < 0) t += 2; if (t > 1) t = 2 - t; return t; };
 
         let currentTab = 'layer', canvas, ctx;
+        let canvasResolution = parseInt(localStorage.getItem('veil_canvas_resolution')) || 512;
+        let lowResOnEdit = localStorage.getItem('veil_low_res_on_edit') === 'true';
         let b_width=0, b_height=0, blendBuffer, layerBuffer, blurTemp, dispBuffer, pendingMaskTargetBuffer, pendingMaskAlphaBuffer;
 
         function ensureBuffers(w,h){
@@ -1253,15 +1255,15 @@
             requestAnimationFrame(() => {
                 renderRequested = false;
                 if (!suppressRender) {
-                    if (isInteracting) {
+                    if (isInteracting && lowResOnEdit) {
                         if (canvas.width !== 256) {
                             canvas.width = 256;
                             canvas.height = 256;
                         }
                     } else {
-                        if (canvas.width !== 512) {
-                            canvas.width = 512;
-                            canvas.height = 512;
+                        if (canvas.width !== canvasResolution) {
+                            canvas.width = canvasResolution;
+                            canvas.height = canvasResolution;
                         }
                     }
                 }
@@ -1379,4 +1381,39 @@
             } catch(e) {}
         }
 
-        document.addEventListener('DOMContentLoaded', () => { canvas=$('canvas'); ctx=canvas.getContext('2d'); renderLayers(); switchRightTab('layer'); requestRender(); initHistory(); setupResizeHandle('resizeLeft', document.querySelector('aside:not(.right-panel)'), 'left'); setupResizeHandle('resizeRight', document.querySelector('.right-panel'), 'right'); });
+        window.setCanvasResolution = function(res) {
+            canvasResolution = res;
+            try { localStorage.setItem('veil_canvas_resolution', res); } catch(e) {}
+            ['512', '1024'].forEach(r => {
+                let btn = $('resBtn' + r);
+                if (btn) btn.classList.toggle('active', parseInt(r) === res);
+            });
+            requestRender();
+        };
+
+        window.setLowResOnEdit = function(val) {
+            lowResOnEdit = val;
+            try { localStorage.setItem('veil_low_res_on_edit', val); } catch(e) {}
+            if ($('chkLowRes')) $('chkLowRes').checked = val;
+            requestRender();
+        };
+
+        function initCanvasControlsUI() {
+            if ($('chkLowRes')) $('chkLowRes').checked = lowResOnEdit;
+            ['512', '1024'].forEach(r => {
+                let btn = $('resBtn' + r);
+                if (btn) btn.classList.toggle('active', parseInt(r) === canvasResolution);
+            });
+        }
+
+        document.addEventListener('DOMContentLoaded', () => { 
+            canvas=$('canvas'); 
+            ctx=canvas.getContext('2d'); 
+            initCanvasControlsUI();
+            renderLayers(); 
+            switchRightTab('layer'); 
+            requestRender(); 
+            initHistory(); 
+            setupResizeHandle('resizeLeft', document.querySelector('aside:not(.right-panel)'), 'left'); 
+            setupResizeHandle('resizeRight', document.querySelector('.right-panel'), 'right'); 
+        });

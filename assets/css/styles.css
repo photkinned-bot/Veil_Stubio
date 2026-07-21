@@ -87,3 +87,60 @@
         .btn:disabled:hover{background-color:transparent;}
         .header-buttons{flex-wrap:wrap;row-gap:6px;justify-content:flex-end;}
 
+        /* Canvas Controls & Resolutions Overlay */
+        .control-divider {
+            width: 1px;
+            height: 18px;
+            background-color: var(--border-color);
+            margin: 0 4px;
+        }
+        .res-selector {
+            display: flex;
+            gap: 2px;
+            background-color: #09090b;
+            padding: 2px;
+            border-radius: 6px;
+            border: 1px solid var(--border-color);
+        }
+        .res-btn {
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            font-size: 10px;
+            font-weight: 700;
+            padding: 3px 6px;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: var(--transition);
+        }
+        .res-btn.active {
+            background-color: var(--primary-color);
+            color: #fff;
+        }
+        .res-btn:hover:not(.active) {
+            background-color: rgba(255, 255, 255, 0.05);
+            color: var(--text-color);
+        }
+        .lowres-toggle-label {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--text-muted);
+            cursor: pointer;
+            user-select: none;
+            padding: 0 4px;
+        }
+        .lowres-toggle-label input[type="checkbox"] {
+            accent-color: var(--primary-color);
+            cursor: pointer;
+            width: 13px;
+            height: 13px;
+            margin: 0;
+        }
+        .lowres-toggle-label:hover {
+            color: var(--text-color);
+        }
+
+

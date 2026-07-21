@@ -53,6 +53,20 @@
                 <button class="viewport-btn" onclick="viewport.rotate(-15)" title="Повернути вліво">↺</button>
                 <button class="viewport-btn" onclick="viewport.rotate(15)" title="Повернути вправо">↻</button>
                 <button class="viewport-btn" onclick="viewport.reset()" title="Скинути перегляд" style="font-size:11px; width:auto; padding:0 8px;">Reset</button>
+                
+                <div class="control-divider"></div>
+                
+                <div class="res-selector" title="Роздільна здатність канвасу">
+                    <button id="resBtn512" class="res-btn active" onclick="setCanvasResolution(512)">512</button>
+                    <button id="resBtn1024" class="res-btn" onclick="setCanvasResolution(1024)">1024</button>
+                </div>
+                
+                <div class="control-divider"></div>
+                
+                <label class="lowres-toggle-label" title="Тимчасово знижувати якість до 256x256 при перетягуванні повзунків">
+                    <input type="checkbox" id="chkLowRes" onchange="setLowResOnEdit(this.checked)">
+                    <span>Швидкий прев'ю</span>
+                </label>
             </div>
         </main>
 
