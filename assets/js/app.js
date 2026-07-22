@@ -1176,8 +1176,12 @@
             switch(type){
                 case 'paint': {
                     if (lay && lay.paintBuffer) {
-                        let px = (tx % 1 + 1) % 1;
-                        let py = (ty % 1 + 1) % 1;
+                        let scaleFactorX = (sx || 10) / 10;
+                        let scaleFactorY = (sy || 10) / 10;
+                        let stx = (tx - 0.5) * scaleFactorX + 0.5;
+                        let sty = (ty - 0.5) * scaleFactorY + 0.5;
+                        let px = (stx % 1 + 1) % 1;
+                        let py = (sty % 1 + 1) % 1;
                         let pw = 1024;
                         let ph = 1024;
                         let x = px * (pw - 1);
@@ -1886,6 +1890,29 @@
             let lay = state.layers.find(l=>l.id===state.selectedLayerId);
             if (!lay || !lay.params || !lay.params.warps || !lay.params.warps[idx]) return;
             lay.params.warps[idx].visible = lay.params.warps[idx].visible === false ? true : false;
+            lay.isDirty = true;
+            renderProps();
+            requestRender();
+            commitHistorySnapshot();
+        };
+
+        window.moveWarp = function(idx, direction) {
+            let lay = state.layers.find(l=>l.id===state.selectedLayerId);
+            if (!lay || !lay.params || !lay.params.warps) return;
+            moveDeformer(lay.id, idx, direction);
+        };
+
+        window.moveDeformer = function(layerId, index, direction) {
+            let lay = state.layers.find(l=>l.id===layerId);
+            if (!lay || !lay.params || !lay.params.warps) return;
+            let warps = lay.params.warps;
+            let targetIdx = index + direction;
+            if (targetIdx < 0 || targetIdx >= warps.length) return;
+
+            let temp = warps[index];
+            warps[index] = warps[targetIdx];
+            warps[targetIdx] = temp;
+
             lay.isDirty = true;
             renderProps();
             requestRender();
