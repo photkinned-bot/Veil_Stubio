@@ -22,27 +22,51 @@
         $('canvasWrapper').addEventListener('contextmenu', e => e.preventDefault());
 
         // --- iPad-жести на канвасі: pinch=zoom, 2 пальці=пан, поворот=обертання ---
-        // Плюс тап двома пальцями = Undo, тап трьома пальцями = Redo (п.1 ТЗ).
-        // Усе це — лише ПЕРЕГЛЯД (viewport, CSS transform), не впливає на сам
-        // згенерований контент/експорт — так само, як кнопки ➕➖↺↻ нижче канваса.
+        let activeTouchCount = 0;
+
         const touchGesture = { active:false, maxTouches:0, startTime:0, moved:false,
             startCenter:{x:0,y:0}, startDist:0, startAngle:0, startScale:1, startViewAngle:0, startViewX:0, startViewY:0 };
+
+        function resetTouchGesture() {
+            touchGesture.active = false;
+            touchGesture.maxTouches = 0;
+            touchGesture.moved = false;
+            touchGesture.startTime = 0;
+            activeTouchCount = 0;
+        }
 
         function tCenter(touches){ let x=0,y=0; for(const t of touches){ x+=t.clientX; y+=t.clientY; } return {x:x/touches.length, y:y/touches.length}; }
         function tDist(touches){ if(touches.length<2) return 0; let dx=touches[0].clientX-touches[1].clientX, dy=touches[0].clientY-touches[1].clientY; return Math.hypot(dx,dy); }
         function tAngle(touches){ if(touches.length<2) return 0; return Math.atan2(touches[1].clientY-touches[0].clientY, touches[1].clientX-touches[0].clientX)*180/Math.PI; }
 
         const canvasWrapperEl = $('canvasWrapper');
+
+        window.addEventListener('touchstart', e => {
+            activeTouchCount = e.touches ? e.touches.length : 0;
+            if (activeTouchCount > 1) cancelPainting();
+        }, {passive: true, capture: true});
+
+        window.addEventListener('touchmove', e => {
+            activeTouchCount = e.touches ? e.touches.length : 0;
+            if (activeTouchCount > 1) cancelPainting();
+        }, {passive: true, capture: true});
+
         canvasWrapperEl.addEventListener('touchstart', e => {
-            if(e.touches.length >= 2) e.preventDefault(); // не дати сторінці зробити свій pinch-zoom/scroll
-            touchGesture.maxTouches = Math.max(touchGesture.maxTouches, e.touches.length);
-            if(e.touches.length === 1){
-                touchGesture.active = true; touchGesture.maxTouches = 1; touchGesture.moved = false;
+            activeTouchCount = e.touches ? e.touches.length : 0;
+            if (activeTouchCount >= 2) e.preventDefault(); // не дати сторінці зробити свій pinch-zoom/scroll
+            if (activeTouchCount > 1) cancelPainting();
+
+            if (!touchGesture.active || touchGesture.maxTouches === 0) {
+                touchGesture.active = true;
+                touchGesture.maxTouches = activeTouchCount;
+                touchGesture.moved = false;
                 touchGesture.startTime = Date.now();
                 touchGesture.startCenter = tCenter(e.touches);
-            } else if(e.touches.length >= 2){
-                touchGesture.active = true; touchGesture.moved = false;
-                touchGesture.startTime = Date.now();
+            } else {
+                touchGesture.maxTouches = Math.max(touchGesture.maxTouches, activeTouchCount);
+            }
+
+            if (e.touches.length >= 2) {
                 touchGesture.startDist = tDist(e.touches);
                 touchGesture.startAngle = tAngle(e.touches);
                 touchGesture.startScale = viewport.scale;
@@ -53,45 +77,51 @@
         }, {passive:false});
 
         canvasWrapperEl.addEventListener('touchmove', e => {
-            if(!touchGesture.active) return;
-            if(e.touches.length >= 2){
+            activeTouchCount = e.touches ? e.touches.length : 0;
+            if (!touchGesture.active) return;
+            if (e.touches.length >= 2) {
                 e.preventDefault();
+                cancelPainting();
                 const c = tCenter(e.touches);
                 const dx = c.x - touchGesture.startCenter.x, dy = c.y - touchGesture.startCenter.y;
-                if(Math.hypot(dx,dy) > 6) touchGesture.moved = true;
+                if (Math.hypot(dx,dy) > 8) touchGesture.moved = true;
 
                 const dist = tDist(e.touches);
-                if(touchGesture.startDist > 0){
+                if (touchGesture.startDist > 0) {
                     const factor = dist / touchGesture.startDist;
-                    if(Math.abs(factor-1) > 0.02) touchGesture.moved = true;
+                    if (Math.abs(factor-1) > 0.03) touchGesture.moved = true;
                     viewport.scale = Math.max(0.1, Math.min(10, touchGesture.startScale * factor));
                 }
                 const angle = tAngle(e.touches);
                 const angleDelta = angle - touchGesture.startAngle;
-                if(Math.abs(angleDelta) > 2) touchGesture.moved = true;
+                if (Math.abs(angleDelta) > 3) touchGesture.moved = true;
                 viewport.angle = touchGesture.startViewAngle + angleDelta;
 
                 viewport.x = touchGesture.startViewX + dx;
                 viewport.y = touchGesture.startViewY + dy;
                 viewport.update();
-            } else if(e.touches.length === 1){
+            } else if (e.touches.length === 1) {
                 const c = tCenter(e.touches);
                 const dx = c.x - touchGesture.startCenter.x, dy = c.y - touchGesture.startCenter.y;
-                if(Math.hypot(dx,dy) > 6) touchGesture.moved = true;
+                if (Math.hypot(dx,dy) > 8) touchGesture.moved = true;
             }
         }, {passive:false});
 
-        canvasWrapperEl.addEventListener('touchend', e => {
-            if(!touchGesture.active) return;
-            if(e.touches.length === 0){
-                const duration = Date.now() - touchGesture.startTime;
-                if(!touchGesture.moved && duration < 350){
-                    if(touchGesture.maxTouches === 2) undo();
-                    else if(touchGesture.maxTouches === 3) redo();
-                }
-                touchGesture.active = false; touchGesture.maxTouches = 0;
+        const handleCanvasTouchEnd = e => {
+            activeTouchCount = e.touches ? e.touches.length : 0;
+            if (activeTouchCount > 0) {
+                if (activeTouchCount > 1) cancelPainting();
+                return;
             }
-        }, {passive:true});
+
+            if (touchGesture.active) {
+                cancelPainting();
+                resetTouchGesture();
+            }
+        };
+
+        window.addEventListener('touchend', handleCanvasTouchEnd, {passive:true});
+        window.addEventListener('touchcancel', handleCanvasTouchEnd, {passive:true});
 
         const Perlin = {
             p: new Uint8Array(512),
@@ -304,13 +334,13 @@
             return result ? { r: parseInt(result[1], 16), g: parseInt(result[2], 16), b: parseInt(result[3], 16) } : { r: 255, g: 255, b: 255 };
         }
 
-        function ensureLayerPaintCanvas(lay) {
+        function ensureLayerPaintCanvas(lay, forceReloadFromDataUrl = false) {
             if (!lay.paintCanvas || typeof lay.paintCanvas.getContext !== 'function') {
                 lay.paintCanvas = document.createElement('canvas');
                 lay.paintCanvas.width = 1024;
                 lay.paintCanvas.height = 1024;
                 let ctx = lay.paintCanvas.getContext('2d');
-                ctx.fillStyle = lay.isMask ? '#ffffff' : '#000000';
+                ctx.fillStyle = '#000000';
                 ctx.fillRect(0, 0, 1024, 1024);
                 
                 if (lay.params && lay.params.paintDataUrl) {
@@ -320,11 +350,48 @@
                         ctx.drawImage(img, 0, 0);
                         updatePaintBuffer(lay);
                         lay.isDirty = true;
+                        invalidateCaches();
                         requestRender();
                     };
                     img.src = lay.params.paintDataUrl;
+                    if (img.complete && img.naturalWidth) {
+                        ctx.clearRect(0, 0, 1024, 1024);
+                        ctx.drawImage(img, 0, 0);
+                        updatePaintBuffer(lay);
+                        lay.isDirty = true;
+                        invalidateCaches();
+                    }
                 } else {
                     updatePaintBuffer(lay);
+                }
+            } else if (forceReloadFromDataUrl) {
+                let ctx = lay.paintCanvas.getContext('2d');
+                ctx.clearRect(0, 0, 1024, 1024);
+                if (lay.params && lay.params.paintDataUrl) {
+                    let img = new Image();
+                    img.onload = () => {
+                        ctx.clearRect(0, 0, 1024, 1024);
+                        ctx.drawImage(img, 0, 0);
+                        updatePaintBuffer(lay);
+                        lay.isDirty = true;
+                        invalidateCaches();
+                        requestRender();
+                    };
+                    img.src = lay.params.paintDataUrl;
+                    if (img.complete && img.naturalWidth) {
+                        ctx.clearRect(0, 0, 1024, 1024);
+                        ctx.drawImage(img, 0, 0);
+                        updatePaintBuffer(lay);
+                        lay.isDirty = true;
+                        invalidateCaches();
+                    }
+                } else {
+                    ctx.fillStyle = '#000000';
+                    ctx.fillRect(0, 0, 1024, 1024);
+                    updatePaintBuffer(lay);
+                    lay.isDirty = true;
+                    invalidateCaches();
+                    requestRender();
                 }
             } else if (!lay.paintBuffer) {
                 updatePaintBuffer(lay);
@@ -426,37 +493,117 @@
             lay.isDirty = true;
         }
 
-        function getPaintCanvasCoordinates(clientX, clientY) {
-            const rect = $('canvasWrapper').getBoundingClientRect();
-            const viewX = clientX - rect.left;
-            const viewY = clientY - rect.top;
+        // --- PaintModule Centralized Class ---
+        class PaintModule {
+            constructor() {
+                this.wrapper = null;
+                this.canvas = null;
+            }
 
-            const wrapperW = rect.width;
-            const wrapperH = rect.height;
-            const canvasW = $('canvas').width;
-            const canvasH = $('canvas').height;
-            
-            const cx = wrapperW / 2;
-            const cy = wrapperH / 2;
-            
-            let x1 = viewX - cx - viewport.x;
-            let y1 = viewY - cy - viewport.y;
-            
-            let rad = -viewport.angle * Math.PI / 180;
-            let x2 = x1 * Math.cos(rad) - y1 * Math.sin(rad);
-            let y2 = x1 * Math.sin(rad) + y1 * Math.cos(rad);
-            
-            x2 /= viewport.scale;
-            y2 /= viewport.scale;
-            
-            let canvasX = x2 + canvasW / 2;
-            let canvasY = y2 + canvasH / 2;
-            
-            let rx = (canvasX / canvasW) * 1024;
-            let ry = (canvasY / canvasH) * 1024;
-            
-            return { x: rx, y: ry };
+            init(wrapperElem, canvasElem) {
+                this.wrapper = wrapperElem;
+                this.canvas = canvasElem;
+            }
+
+            getCoordinates(input, param2, param3) {
+                let clientX, clientY, targetCanvas;
+                if (typeof input === 'object' && input !== null) {
+                    clientX = input.clientX;
+                    clientY = input.clientY;
+                    if (input.touches && input.touches.length > 0) {
+                        clientX = input.touches[0].clientX;
+                        clientY = input.touches[0].clientY;
+                    }
+                    targetCanvas = param2;
+                } else {
+                    clientX = input;
+                    clientY = param2;
+                    targetCanvas = param3;
+                }
+
+                const canvas = targetCanvas || this.canvas || $('canvas');
+                if (!canvas) return { x: 0, y: 0 };
+
+                // Get exact current physical bounding rect of the preview canvas element on screen
+                const rect = canvas.getBoundingClientRect();
+                if (!rect || rect.width === 0 || rect.height === 0) return { x: 0, y: 0 };
+
+                // Target paint bitmap dimensions (lay.paintCanvas is 1024x1024)
+                let targetW = 1024;
+                let targetH = 1024;
+                if (typeof state !== 'undefined' && state && state.layers) {
+                    let lay = state.layers.find(l => l.id === state.selectedLayerId);
+                    if (lay && lay.paintCanvas) {
+                        targetW = lay.paintCanvas.width || 1024;
+                        targetH = lay.paintCanvas.height || 1024;
+                    }
+                }
+
+                let normX = 0;
+                let normY = 0;
+
+                // 1. Direct normalized position for unrotated viewport
+                if (!viewport || !viewport.angle) {
+                    normX = (clientX - rect.left) / rect.width;
+                    normY = (clientY - rect.top) / rect.height;
+                } else {
+                    // 2. Vector offset relative to canvas center for rotated viewport
+                    const centerX = rect.left + rect.width / 2;
+                    const centerY = rect.top + rect.height / 2;
+
+                    const dx = clientX - centerX;
+                    const dy = clientY - centerY;
+
+                    // Unrotate
+                    const rad = -viewport.angle * Math.PI / 180;
+                    const cos = Math.cos(rad);
+                    const sin = Math.sin(rad);
+                    const rotX = dx * cos - dy * sin;
+                    const rotY = dx * sin + dy * cos;
+
+                    const scale = (viewport && viewport.scale) || 1;
+                    const cssW = (canvas.offsetWidth || rect.width / scale || 512) * scale;
+                    const cssH = (canvas.offsetHeight || rect.height / scale || 512) * scale;
+
+                    normX = rotX / cssW + 0.5;
+                    normY = rotY / cssH + 0.5;
+                }
+
+                // Map normalized canvas position [0..1] to paint layer bitmap coordinates [0..1024]
+                const rx = normX * targetW;
+                const ry = normY * targetH;
+
+                return { x: rx, y: ry };
+            }
+
+            getPaintCoordinates(input, param2, param3) {
+                return this.getCoordinates(input, param2, param3);
+            }
+
+            isValidPointer(e) {
+                if (e.touches && e.touches.length > 1) return false;
+                if (e.targetTouches && e.targetTouches.length > 1) return false;
+                if (typeof activeTouchCount !== 'undefined' && activeTouchCount > 1) return false;
+                if (typeof touchGesture !== 'undefined' && touchGesture.maxTouches > 1) return false;
+                if (e.pointerType === 'touch' && !e.isPrimary) return false;
+                return true;
+            }
         }
+
+        const paintModule = new PaintModule();
+        window.PaintModule = PaintModule;
+        window.paintModule = paintModule;
+
+        function getPaintCoordinates(a, b, c) {
+            return paintModule.getCoordinates(a, b, c);
+        }
+
+        function getPaintCanvasCoordinates(a, b, c) {
+            return paintModule.getCoordinates(a, b, c);
+        }
+
+        window.getPaintCoordinates = getPaintCoordinates;
+        window.getPaintCanvasCoordinates = getPaintCanvasCoordinates;
 
         window.clearPaintCanvas = function() {
             let lay = state.layers.find(l => l.id === state.selectedLayerId);
@@ -583,7 +730,7 @@
                     if (lay.paintCanvas) {
                         delete lay.paintCanvas;
                     }
-                    ensureLayerPaintCanvas(lay);
+                    ensureLayerPaintCanvas(lay, true);
                 }
             });
         }
@@ -598,6 +745,36 @@
 
         let strokeCanvas = null;
         let strokeBackupCanvas = null;
+        let strokeBackupActive = false;
+
+        function cancelPainting() {
+            clearTimeout(historyTimer);
+            isPainting = false;
+            paintPoints = [];
+            paintQueue = [];
+            if (paintAnimationFrameId) {
+                cancelAnimationFrame(paintAnimationFrameId);
+                paintAnimationFrameId = null;
+            }
+            if (strokeBackupActive) {
+                strokeBackupActive = false;
+                let lay = state.layers.find(l => l.id === state.selectedLayerId);
+                if (lay && lay.generatorType === 'paint' && lay.paintCanvas) {
+                    let pCtx = lay.paintCanvas.getContext('2d');
+                    pCtx.clearRect(0, 0, 1024, 1024);
+                    pCtx.drawImage(getStrokeBackupCanvas(), 0, 0);
+                    let sCtx = getStrokeCanvas().getContext('2d');
+                    sCtx.clearRect(0, 0, 1024, 1024);
+                    if (lay.params) {
+                        lay.params.paintDataUrl = lay.paintCanvas.toDataURL();
+                    }
+                    updatePaintBuffer(lay);
+                    lay.isDirty = true;
+                    invalidateCaches();
+                    requestRender();
+                }
+            }
+        }
 
         function getStrokeCanvas() {
             if (!strokeCanvas) {
@@ -644,9 +821,20 @@
 
             if (e.button !== 0 || e.shiftKey) return;
 
+            if (!paintModule.isValidPointer(e)) {
+                cancelPainting();
+                return;
+            }
+
+            if (isPainting) {
+                cancelPainting();
+                return;
+            }
+
             viewport.isDragging = false;
 
             isPainting = true;
+            strokeBackupActive = true;
             paintMoved = false;
 
             ensureLayerPaintCanvas(lay);
@@ -695,9 +883,15 @@
 
         function handleCanvasPointerMove(e) {
             if (!isPainting) return;
+
+            if (!paintModule.isValidPointer(e)) {
+                cancelPainting();
+                return;
+            }
+
             let lay = state.layers.find(l => l.id === state.selectedLayerId);
             if (!lay || lay.generatorType !== 'paint') {
-                isPainting = false;
+                cancelPainting();
                 return;
             }
 
@@ -723,10 +917,14 @@
                 return;
             }
 
+            if (activeTouchCount > 1 || touchGesture.maxTouches > 1) {
+                cancelPainting();
+                return;
+            }
+
             let lay = state.layers.find(l => l.id === state.selectedLayerId);
             if (!lay || lay.generatorType !== 'paint') {
-                paintQueue = [];
-                paintAnimationFrameId = null;
+                cancelPainting();
                 return;
             }
 
@@ -780,7 +978,14 @@
 
         function handleCanvasPointerUp(e) {
             if (!isPainting) return;
+
+            if (!paintModule.isValidPointer(e)) {
+                cancelPainting();
+                return;
+            }
+
             isPainting = false;
+            strokeBackupActive = false;
             
             let lay = state.layers.find(l => l.id === state.selectedLayerId);
             if (lay && lay.generatorType === 'paint') {
@@ -1204,7 +1409,6 @@
 
             cx.putImageData(imgData,0,0);
             if(!isExport) $('renderTime').textContent = `${(performance.now()-start).toFixed(1)} ms`;
-            if(!isExport && !suppressRender) scheduleHistorySnapshot();
         }
 
         function switchRightTab(tab) {
@@ -1229,7 +1433,7 @@
                             <button onclick="event.stopPropagation(); duplicateLayer(${i})" class="layer-btn" title="Дублювати шар">📋</button>
                             <button onclick="event.stopPropagation(); moveLayer(${i},-1)" class="layer-btn">▲</button>
                             <button onclick="event.stopPropagation(); moveLayer(${i},1)" class="layer-btn">▼</button>
-                            <button onclick="event.stopPropagation(); state.layers.splice(${i},1); renderLayers(); requestRender();" class="layer-btn layer-btn-delete">✕</button>
+                            <button onclick="event.stopPropagation(); deleteLayer(${i})" class="layer-btn layer-btn-delete">✕</button>
                         </div>
                     </div>
                     <div class="layer-meta"><span>${l.generatorType.toUpperCase()}</span><span>${l.blendMode.toUpperCase()} | ${l.opacity}%</span></div>
@@ -1245,6 +1449,7 @@
             renderLayers();
             renderProps();
             requestRender();
+            commitHistorySnapshot();
         }
 
         // Базові (спільні для всіх типів генератора) параметри нового/скинутого шару.
@@ -1270,45 +1475,47 @@
         function addLayer(){
             let id='l'+Date.now();
             state.layers.unshift({id, name:'Новий шар', visible:true, opacity:100, blendMode:'normal', generatorType:'simplex', isMask:false, params: freshLayerParams()});
-            state.selectedLayerId=id; renderLayers(); switchRightTab('layer'); requestRender();
+            state.selectedLayerId=id; 
+            commitHistorySnapshot();
+            renderLayers(); switchRightTab('layer'); requestRender();
         }
         function duplicateLayer(i){
+            prepareStateForSerialization();
             let orig = state.layers[i];
             let newL = JSON.parse(JSON.stringify(orig));
             newL.id = 'l' + Date.now();
             newL.name = orig.name + ' (Копія)';
             state.layers.splice(i, 0, newL);
             state.selectedLayerId = newL.id; 
+            commitHistorySnapshot();
             renderLayers(); switchRightTab('layer'); requestRender();
         }
-        function moveLayer(i,d){ if(i+d>=0 && i+d<state.layers.length){ [state.layers[i],state.layers[i+d]]=[state.layers[i+d],state.layers[i]]; renderLayers(); requestRender(); } }
+        function deleteLayer(i){
+            if (i >= 0 && i < state.layers.length) {
+                state.layers.splice(i, 1);
+                if (!state.layers.find(l => l.id === state.selectedLayerId)) {
+                    state.selectedLayerId = state.layers.length ? state.layers[0].id : null;
+                }
+                commitHistorySnapshot();
+                renderLayers();
+                renderProps();
+                requestRender();
+            }
+        }
+        function moveLayer(i,d){ 
+            if(i+d>=0 && i+d<state.layers.length){ 
+                [state.layers[i],state.layers[i+d]]=[state.layers[i+d],state.layers[i]]; 
+                commitHistorySnapshot();
+                renderLayers(); requestRender(); 
+            } 
+        }
         function toggleMask(i) {
             let lay = state.layers[i];
             if (!lay) return;
             lay.isMask = !lay.isMask;
-            
-            if (lay.isMask && lay.generatorType === 'paint') {
-                ensureLayerPaintCanvas(lay);
-                let pCanvas = lay.paintCanvas;
-                let pCtx = pCanvas.getContext('2d');
-                
-                // Check if the canvas is completely black or empty
-                let imgData = pCtx.getImageData(0, 0, 1024, 1024);
-                let isAllBlack = true;
-                for (let j = 0; j < imgData.data.length; j += 4) {
-                    if (imgData.data[j] !== 0 || imgData.data[j+1] !== 0 || imgData.data[j+2] !== 0) {
-                        isAllBlack = false;
-                        break;
-                    }
-                }
-                if (isAllBlack) {
-                    pCtx.fillStyle = '#ffffff';
-                    pCtx.fillRect(0, 0, 1024, 1024);
-                    updatePaintBuffer(lay);
-                }
-            }
             renderLayers();
             requestRender();
+            commitHistorySnapshot();
         }
 
         // --- Custom Confirm Modal & State Management ---
@@ -1432,6 +1639,7 @@
                 state.layers.forEach((_, i) => randomizeLayer(i, true));
                 randomizeGlobalSettings();
                 invalidateCaches();
+                commitHistorySnapshot();
                 renderProps(); renderLayers(); requestRender();
             });
         }
@@ -1494,33 +1702,48 @@
 
         window.addWarp = function() {
             let lay = state.layers.find(l=>l.id===state.selectedLayerId);
+            if (!lay) return;
             if(!lay.params.warps) lay.params.warps = [];
             lay.params.warps.push({type: 'none', strength: 10, freq: 4, visible: true});
             lay.isDirty = true;
             renderProps();
+            requestRender();
+            commitHistorySnapshot();
         };
 
         window.removeWarp = function(idx) {
             let lay = state.layers.find(l=>l.id===state.selectedLayerId);
+            if (!lay || !lay.params || !lay.params.warps) return;
             lay.params.warps.splice(idx, 1);
             lay.isDirty = true;
-            renderProps(); requestRender();
+            renderProps();
+            requestRender();
+            commitHistorySnapshot();
         };
 
         window.toggleWarp = function(idx) {
             let lay = state.layers.find(l=>l.id===state.selectedLayerId);
+            if (!lay || !lay.params || !lay.params.warps || !lay.params.warps[idx]) return;
             lay.params.warps[idx].visible = lay.params.warps[idx].visible === false ? true : false;
             lay.isDirty = true;
-            renderProps(); requestRender();
+            renderProps();
+            requestRender();
+            commitHistorySnapshot();
         };
 
         window.updateWarp = function(idx, key, val) {
             let lay = state.layers.find(l=>l.id===state.selectedLayerId);
+            if (!lay || !lay.params || !lay.params.warps || !lay.params.warps[idx]) return;
             triggerInteraction();
             lay.params.warps[idx][key] = (key==='type') ? val : parseFloat(val);
             lay.isDirty = true;
             if(key==='type') renderProps();
             if(!suppressRender) requestRender();
+            if (key === 'type') {
+                commitHistorySnapshot();
+            } else {
+                scheduleHistorySnapshot();
+            }
         };
 
         // label, key, min, max, step, val, isLay, def (за замовчуванням = val), noRandom (виключити з рандомізації)
@@ -1531,8 +1754,8 @@
             return `<div class="property-group">
                 <label class="property-label">${label}</label>
                 <div style="display:flex; gap:6px; align-items:center;">
-                    <input type="range" id="rng_${id}" min="${min}" max="${max}" step="${step}" value="${val}"${nr} oninput="$('num_${id}').value=this.value; upd('${key}',this.value,${isLay})" ondblclick="resetSliderEl(this,${def})">
-                    <input type="number" class="num-input" id="num_${id}" step="${step}" value="${val}" oninput="$('rng_${id}').value=this.value; upd('${key}',this.value,${isLay})" ondblclick="resetSliderEl(this,${def})">
+                    <input type="range" id="rng_${id}" min="${min}" max="${max}" step="${step}" value="${val}"${nr} oninput="$('num_${id}').value=this.value; upd('${key}',this.value,${isLay})" onchange="commitHistorySnapshot();" ondblclick="resetSliderEl(this,${def})">
+                    <input type="number" class="num-input" id="num_${id}" step="${step}" value="${val}" oninput="$('rng_${id}').value=this.value; upd('${key}',this.value,${isLay})" onchange="commitHistorySnapshot();" ondblclick="resetSliderEl(this,${def})">
                     <button type="button" class="reset-btn" title="Скинути за замовчуванням (${def})" onclick="resetSliderEl($('rng_${id}'),${def})">↺</button>
                 </div>
             </div>`;
@@ -1542,8 +1765,8 @@
         // де inline-обробник вже сам синхронізує пару range/number через сусідні елементи.
         function sliderRow(min, max, step, val, def, onInputExpr) {
             return `<div style="display:flex; gap:6px; align-items:center;">
-                <input type="range" min="${min}" max="${max}" step="${step}" value="${val}" oninput="this.nextElementSibling.value=this.value; ${onInputExpr}" ondblclick="resetSliderEl(this,${def})">
-                <input type="number" class="num-input" step="${step}" value="${val}" oninput="this.previousElementSibling.value=this.value; ${onInputExpr}" ondblclick="resetSliderEl(this,${def})">
+                <input type="range" min="${min}" max="${max}" step="${step}" value="${val}" oninput="this.nextElementSibling.value=this.value; ${onInputExpr}" onchange="commitHistorySnapshot();" ondblclick="resetSliderEl(this,${def})">
+                <input type="number" class="num-input" step="${step}" value="${val}" oninput="this.previousElementSibling.value=this.value; ${onInputExpr}" onchange="commitHistorySnapshot();" ondblclick="resetSliderEl(this,${def})">
                 <button type="button" class="reset-btn" title="Скинути за замовчуванням (${def})" onclick="resetSliderEl(this.parentElement.querySelector('input[type=range]'),${def})">↺</button>
             </div>`;
         }
@@ -1641,9 +1864,6 @@
                 
                 <div style="margin-top:12px; display:flex; gap:10px;">
                     <button onclick="clearPaintCanvas()" class="btn btn-secondary" style="color:#ef4444; border-color:rgba(239,68,68,0.2); width:100%;">Очистити полотно</button>
-                </div>
-                <div class="info-text" style="margin-top:12px; font-size:11px; color:var(--text-muted); line-height:1.4;">
-                    💡 <b>Інструкція:</b> Малюйте лівою кнопкою миші або стилусом прямо на головному вікні перегляду канвасу! Використовуйте колір від чорного (0.0) до білого (1.0) для керування рельєфом текстури. Натисніть Shift + ліва кнопка або коліщатко для панорамування.
                 </div>
                 `;
 
@@ -1852,37 +2072,93 @@
         }
 
         // --- Історія (Undo/Redo) ---
-        // Знімок стану (JSON) фіксується з невеликою затримкою (debounce) після
-        // кожного renderProject(), тому безперервне тягнення повзунка складається
-        // в ОДИН крок історії, а не в сотню. Дискретні дії (додати/видалити шар,
-        // рандомізація, скидання...) так само проходять через renderProject(),
-        // тож окремо їх позначати не треба.
-        let history = [];
+        let history = []; // Array of { snap: string, paintData: { [layerId]: ImageData } }
         let historyIndex = -1;
         let historyTimer = null;
         let historyReady = false;
+        let isRestoringHistory = false;
         const MAX_HISTORY = 60;
         const HISTORY_DEBOUNCE_MS = 450;
 
+        function capturePaintCanvasesForHistory() {
+            let data = {};
+            if (state && state.layers) {
+                state.layers.forEach(lay => {
+                    if (lay.generatorType === 'paint') {
+                        ensureLayerPaintCanvas(lay);
+                        if (lay.paintCanvas) {
+                            let pCtx = lay.paintCanvas.getContext('2d');
+                            data[lay.id] = pCtx.getImageData(0, 0, 1024, 1024);
+                            if (lay.params) {
+                                lay.params.paintDataUrl = lay.paintCanvas.toDataURL();
+                            }
+                        }
+                    }
+                });
+            }
+            return data;
+        }
+
+        function restorePaintCanvasesFromHistory(entry) {
+            if (!state || !state.layers || !entry) return;
+            state.layers.forEach(lay => {
+                if (lay.generatorType === 'paint') {
+                    ensureLayerPaintCanvas(lay);
+                    let pCtx = lay.paintCanvas.getContext('2d');
+                    if (entry.paintData && entry.paintData[lay.id]) {
+                        pCtx.putImageData(entry.paintData[lay.id], 0, 0);
+                        updatePaintBuffer(lay);
+                        lay.isDirty = true;
+                    } else if (lay.params && lay.params.paintDataUrl) {
+                        let img = new Image();
+                        img.onload = () => {
+                            pCtx.clearRect(0, 0, 1024, 1024);
+                            pCtx.drawImage(img, 0, 0);
+                            updatePaintBuffer(lay);
+                            lay.isDirty = true;
+                            invalidateCaches();
+                            requestRender();
+                        };
+                        img.src = lay.params.paintDataUrl;
+                    } else {
+                        pCtx.clearRect(0, 0, 1024, 1024);
+                        updatePaintBuffer(lay);
+                        lay.isDirty = true;
+                    }
+                }
+            });
+        }
+
         function initHistory() {
-            history = [serializeState(state)];
+            let snap = serializeState(state);
+            let paintData = capturePaintCanvasesForHistory();
+            history = [{ snap, paintData }];
             historyIndex = 0;
             historyReady = true;
             updateHistoryButtons();
         }
 
         function scheduleHistorySnapshot() {
-            if (!historyReady) return;
+            if (!historyReady || isPainting || strokeBackupActive || isRestoringHistory) return;
             clearTimeout(historyTimer);
-            historyTimer = setTimeout(commitHistorySnapshot, HISTORY_DEBOUNCE_MS);
+            historyTimer = setTimeout(() => {
+                if (!isPainting && !strokeBackupActive && !isRestoringHistory) {
+                    commitHistorySnapshot();
+                }
+            }, HISTORY_DEBOUNCE_MS);
         }
 
         function commitHistorySnapshot() {
+            if (!historyReady || isPainting || strokeBackupActive || isRestoringHistory) return;
+            clearTimeout(historyTimer);
             let snap = serializeState(state);
-            if (history[historyIndex] === snap) return;
+            if (history[historyIndex] && history[historyIndex].snap === snap) return;
+
             history = history.slice(0, historyIndex + 1);
-            history.push(snap);
-            if (history.length > MAX_HISTORY) { history.shift(); } else { historyIndex++; }
+
+            let paintData = capturePaintCanvasesForHistory();
+            history.push({ snap, paintData });
+            if (history.length > MAX_HISTORY) { history.shift(); }
             historyIndex = history.length - 1;
             updateHistoryButtons();
         }
@@ -1890,41 +2166,48 @@
         function undo() {
             if (!historyReady) return;
             clearTimeout(historyTimer);
-            // Спочатку фіксуємо ще не закомічену (debounced) зміну як поточний крок,
-            // щоб undo відкочував саме її, а не губив останню правку користувача.
-            let liveSnap = serializeState(state);
-            if (history[historyIndex] !== liveSnap) {
-                history = history.slice(0, historyIndex + 1);
-                history.push(liveSnap);
-                historyIndex = history.length - 1;
-                if (history.length > MAX_HISTORY) { history.shift(); historyIndex--; }
+            if (isPainting || strokeBackupActive) {
+                cancelPainting();
             }
             if (historyIndex <= 0) { updateHistoryButtons(); return; }
+
+            isRestoringHistory = true;
             historyIndex--;
-            setState(JSON.parse(history[historyIndex]));
+            let entry = history[historyIndex];
+            setState(JSON.parse(entry.snap));
+            restorePaintCanvasesFromHistory(entry);
             afterHistoryRestore();
+            isRestoringHistory = false;
         }
 
         function redo() {
             if (!historyReady) return;
-            if (historyIndex >= history.length - 1) return;
+            clearTimeout(historyTimer);
+            if (isPainting || strokeBackupActive) {
+                cancelPainting();
+            }
+            if (historyIndex >= history.length - 1) { updateHistoryButtons(); return; }
+
+            isRestoringHistory = true;
             historyIndex++;
-            setState(JSON.parse(history[historyIndex]));
+            let entry = history[historyIndex];
+            setState(JSON.parse(entry.snap));
+            restorePaintCanvasesFromHistory(entry);
             afterHistoryRestore();
+            isRestoringHistory = false;
         }
 
         function afterHistoryRestore() {
             if (!state.layers.find(l => l.id === state.selectedLayerId)) {
                 state.selectedLayerId = state.layers.length ? state.layers[0].id : null;
             }
-            state.layers.forEach(lay => {
-                if (lay.generatorType === 'paint') {
-                    if (lay.paintCanvas) {
-                        delete lay.paintCanvas;
-                    }
-                    ensureLayerPaintCanvas(lay);
-                }
-            });
+            if (state.layers) {
+                state.layers.forEach(l => {
+                    l.isDirty = true;
+                    if (!l.params) l.params = freshLayerParams();
+                    if (!l.params.warps) l.params.warps = [];
+                });
+            }
             invalidateCaches();
             renderLayers();
             if (currentTab === 'global') renderGlobal(); else renderProps();
@@ -1933,8 +2216,8 @@
         }
 
         function updateHistoryButtons() {
-            if ($('btnUndo')) $('btnUndo').disabled = historyIndex <= 0;
-            if ($('btnRedo')) $('btnRedo').disabled = historyIndex >= history.length - 1;
+            if ($('btnUndo')) $('btnUndo').disabled = (historyIndex <= 0);
+            if ($('btnRedo')) $('btnRedo').disabled = (historyIndex >= history.length - 1 || historyIndex < 0);
         }
 
         document.addEventListener('keydown', e => {
@@ -1995,6 +2278,7 @@
                     invalidateCaches();
                 }
                 if(!suppressRender) requestRender();
+                scheduleHistorySnapshot();
                 return;
             }
             if(lay){
@@ -2014,6 +2298,7 @@
                     if(String(k).startsWith('brush')) updateBrushPreview();
                 }
                 if(!suppressRender) requestRender();
+                scheduleHistorySnapshot();
             }
         }
 
@@ -2105,6 +2390,8 @@
         };
 
         // Expose all state and action handlers to window globally
+        window.commitHistorySnapshot = commitHistorySnapshot;
+        window.scheduleHistorySnapshot = scheduleHistorySnapshot;
         window.state = state;
         window.viewport = viewport;
         window.undo = undo;
@@ -2123,6 +2410,7 @@
         window.toggleLayerVisibility = toggleLayerVisibility;
         window.toggleMask = toggleMask;
         window.duplicateLayer = duplicateLayer;
+        window.deleteLayer = deleteLayer;
         window.moveLayer = moveLayer;
         window.randomizeLayer = randomizeLayer;
         window.resetLayer = resetLayer;
@@ -2148,10 +2436,29 @@
             // Register pointer events for painting
             let wrapper = $('canvasWrapper');
             if (wrapper) {
+                paintModule.init(wrapper, canvas);
                 wrapper.addEventListener('pointerdown', handleCanvasPointerDown);
                 wrapper.addEventListener('pointermove', handleCanvasPointerMove);
                 window.addEventListener('pointerup', handleCanvasPointerUp);
                 window.addEventListener('pointercancel', handleCanvasPointerUp);
+
+                // Prevent text selection and drag highlights when painting with mouse
+                wrapper.addEventListener('mousedown', e => {
+                    let lay = state.layers.find(l => l.id === state.selectedLayerId);
+                    if (lay && lay.generatorType === 'paint' && lay.visible && e.button === 0) {
+                        e.preventDefault();
+                    }
+                });
+                wrapper.addEventListener('mousemove', e => {
+                    if (isPainting) e.preventDefault();
+                });
+                wrapper.addEventListener('selectstart', e => e.preventDefault());
+                wrapper.addEventListener('dragstart', e => e.preventDefault());
+            }
+
+            if (canvas) {
+                canvas.addEventListener('selectstart', e => e.preventDefault());
+                canvas.addEventListener('dragstart', e => e.preventDefault());
             }
 
             renderLayers(); 

@@ -12,10 +12,10 @@
         .right-panel{width:320px;border-right:none;border-left:1px solid var(--border-color);z-index: 5;display:flex;flex-direction:column;min-height:0;overflow:hidden;}
         .panel-header{padding:12px 16px;border-bottom:1px solid var(--border-color);display:flex;justify-content:space-between;align-items:center;background-color:rgba(0,0,0,0.15)}
         .panel-title{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-muted)}
-        main{flex:1;background-color:#141416;display:flex;flex-direction:column;align-items:center;justify-content:center;position:relative;overflow:hidden;}
-        #canvasWrapper {width:100%; height:100%; position:relative; display:flex; align-items:center; justify-content:center; cursor:grab;}
+        main{flex:1;background-color:#141416;display:flex;flex-direction:column;align-items:center;justify-content:center;position:relative;overflow:hidden;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;touch-action:none;}
+        #canvasWrapper {width:100%; height:100%; position:relative; display:flex; align-items:center; justify-content:center; cursor:grab;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;touch-action:none;}
         #canvasWrapper:active {cursor:grabbing;}
-        canvas{width: 512px; height: 512px; max-width:none;max-height:none;box-shadow:0 12px 36px rgba(0,0,0,0.7), 0 0 0 1px rgba(255,255,255,0.1);background-color:#000;border-radius:var(--radius);transform-origin:center;will-change:transform;border:3px solid #3f3f46;}
+        canvas{width: 512px; height: 512px; max-width:none;max-height:none;box-shadow:0 16px 48px rgba(0,0,0,0.85), 0 0 0 1px rgba(255,255,255,0.15), 0 0 20px rgba(59,130,246,0.15);background-color:#000;border-radius:var(--radius);transform-origin:center;will-change:transform;border:2px solid #52525b;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;touch-action:none;}
         .canvas-meta{position:absolute;top:12px;left:16px;font-size:11px;color:var(--text-muted);display:flex;gap:16px;pointer-events:none;z-index:10;background:rgba(0,0,0,0.6);padding:4px 8px;border-radius:4px;}
         .viewport-controls{position:absolute;bottom:20px;left:50%;transform:translateX(-50%);display:flex;gap:8px;z-index:10;background:rgba(24,24,28,0.85);padding:8px;border-radius:8px;border:1px solid var(--border-color);backdrop-filter:blur(4px);}
         .viewport-btn{background:#27272a;border:none;color:#fff;width:28px;height:28px;border-radius:4px;cursor:pointer;font-size:14px;display:flex;align-items:center;justify-content:center;}
@@ -25,6 +25,7 @@
         .btn-primary:hover{background-color:var(--primary-hover)}
         .btn-secondary{background-color:transparent;border-color:var(--border-color);color:var(--text-color)}
         .btn-secondary:hover{background-color:var(--border-color)}
+.btn-gesture-active{background-color:var(--primary-color) !important; border-color:var(--primary-hover) !important; color:#ffffff !important; transform:scale(1.08); box-shadow:0 0 10px rgba(59,130,246,0.7); transition:all 0.1s ease;}
         .layers-list{flex:1;overflow-y:auto;padding:10px;display:flex;flex-direction:column;gap:8px}
         .layer-card{background-color:rgba(255,255,255,0.02);border:1px solid var(--border-color);border-radius:var(--radius);padding:10px;cursor:pointer;transition:var(--transition)}
         .layer-card:hover{border-color:#3f3f46}
