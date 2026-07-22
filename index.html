@@ -16,13 +16,13 @@
         <div class="header-buttons">
             <button id="btnUndo" onclick="undo()" class="btn btn-secondary" title="Скасувати (Undo)" disabled>↶ Undo</button>
             <button id="btnRedo" onclick="redo()" class="btn btn-secondary" title="Повторити (Redo)" disabled>↷ Redo</button>
-            <button onclick="randomizeAllLayers()" class="btn btn-secondary" title="Рандомізувати всі шари проєкту">🎲 Рандом (всі)</button>
-            <button onclick="resetProject()" class="btn btn-secondary" title="Скинути весь проєкт до початкового стану">↺ Скинути все</button>
-            <button onclick="$('importFile').click()" class="btn btn-secondary">Відкрити (.json)</button>
-            <button onclick="showModal('importTextModal'); $('importJsonText').value='';" class="btn btn-secondary">Вставити код</button>
-            <input type="file" id="importFile" style="display:none;" accept=".json" onchange="importProject(event)">
-            <button onclick="openSaveModal()" class="btn btn-secondary">Зберегти проєкт</button>
+            <button onclick="randomizeAllLayers()" class="btn btn-secondary" title="Рандомізувати всі шари проєкту">🎲 Рандом</button>
+            <button onclick="resetProject()" class="btn btn-secondary" title="Скинути весь проєкт до початкового стану">↺ Скинути</button>
+            <button onclick="exportVeilFile()" class="btn btn-secondary" title="Завантажити проєкт у файл .veil">💾 Зберегти .veil</button>
+            <button onclick="triggerVeilImport()" class="btn btn-secondary" title="Відкрити файл проєкту (.veil / .json)">📂 Відкрити</button>
+            <button onclick="openProjectManagerModal()" class="btn btn-secondary" title="Управління проєктом та слотами IDB">⚙️ Проєкти</button>
             <button onclick="openPNGExportModal()" class="btn btn-primary">Експорт PNG</button>
+            <input type="file" id="importVeilFile" style="display:none;" accept=".veil,.json" onchange="importProjectFile(event)">
         </div>
     </header>
 
@@ -123,28 +123,82 @@
             </div>
         </div>
     </div>
-    <div id="saveModal" class="modal-overlay">
-        <div class="modal-card">
+    <div id="projectManagerModal" class="modal-overlay">
+        <div class="modal-card" style="max-width: 520px;">
             <div class="modal-header">
-                <h3 class="modal-title">Зберегти проєкт</h3>
-                <button class="modal-close" onclick="$('saveModal').style.display='none'">✕</button>
+                <h3 class="modal-title">Менеджер проєктів Veil Studio</h3>
+                <button class="modal-close" onclick="closeModal('projectManagerModal')">✕</button>
             </div>
             <div class="modal-body">
-                <textarea id="projectJsonText" class="modal-textarea" readonly onclick="this.select()"></textarea>
-                <button id="copyJsonBtn" class="btn btn-primary" onclick="copyProjectCode()">Скопіювати</button>
+                <div class="modal-tabs">
+                    <button id="tabBtnFile" class="modal-tab-btn active" onclick="switchProjectTab('file')">💾 Файл .veil</button>
+                    <button id="tabBtnIdb" class="modal-tab-btn" onclick="switchProjectTab('idb')">⚡ Локальні слоти</button>
+                    <button id="tabBtnText" class="modal-tab-btn" onclick="switchProjectTab('text')">📝 Текстовий код</button>
+                </div>
+
+                <!-- Tab 1: File (.veil) -->
+                <div id="projectTabFile" class="project-tab-content">
+                    <div style="background: rgba(59, 130, 246, 0.1); border: 1px solid rgba(59, 130, 246, 0.3); padding: 10px 12px; border-radius: var(--radius); margin-bottom: 12px;">
+                        <span style="font-size: 10px; font-weight: 800; color: var(--primary-color); letter-spacing: 0.05em; display: block; margin-bottom: 2px;">⭐ РЕКОМЕНДОВАНИЙ СПОСІБ</span>
+                        <p style="font-size: 11px; color: var(--text-color); margin: 0; line-height: 1.4;">
+                            Зберігайте проєкт у компактний файл <strong>.veil</strong> на диск. Всі шари, геометрія та намальовані маски зберігаються без втрат і завантажуються миттєво.
+                        </p>
+                    </div>
+
+                    <div style="display: flex; flex-direction: column; gap: 10px; margin-top: 8px;">
+                        <button class="btn btn-primary" style="padding: 10px; font-size: 13px; display: flex; align-items: center; justify-content: center; gap: 8px;" onclick="exportVeilFile()">
+                            <span>💾</span> <span>Завантажити файл проєкту (.veil)</span>
+                        </button>
+                        <button class="btn btn-secondary" style="padding: 10px; font-size: 13px; display: flex; align-items: center; justify-content: center; gap: 8px;" onclick="triggerVeilImport()">
+                            <span>📂</span> <span>Відкрити файл проєкту (.veil / .json)</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Tab 2: IDB Slots -->
+                <div id="projectTabIdb" class="project-tab-content" style="display: none;">
+                    <div style="display: flex; gap: 6px; margin-bottom: 12px;">
+                        <input type="text" id="idbSlotNameInput" class="form-control" placeholder="Назва слоту (необов'язково)...">
+                        <button onclick="saveCurrentProjectToIDB()" class="btn btn-primary" style="white-space: nowrap;">⚡ Швидке збереження</button>
+                    </div>
+
+                    <div class="section-title" style="display: flex; justify-content: space-between; align-items: center;">
+                        <span>Збережені слоти у браузері</span>
+                        <span id="idbSlotCountBadge" style="font-size: 10px; color: var(--text-muted); font-weight: normal;"></span>
+                    </div>
+
+                    <div id="idbSlotsContainer" style="display: flex; flex-direction: column; gap: 6px; max-height: 220px; overflow-y: auto; padding-right: 2px;">
+                        <!-- Rendered dynamically -->
+                    </div>
+                </div>
+
+                <!-- Tab 3: Text Code -->
+                <div id="projectTabText" class="project-tab-content" style="display: none;">
+                    <div style="margin-bottom: 12px;">
+                        <label class="property-label">Код поточного проєкту (JSON)</label>
+                        <textarea id="projectJsonText" class="modal-textarea" readonly onclick="this.select()"></textarea>
+                        <button id="copyJsonBtn" class="btn btn-primary" style="margin-top: 6px; width: 100%;" onclick="copyProjectCode()">Скопіювати у буфер</button>
+                    </div>
+
+                    <hr style="margin: 12px 0;">
+
+                    <div>
+                        <label class="property-label">Вставити код проєкту з буфера</label>
+                        <textarea id="importJsonText" class="modal-textarea" placeholder="Вставте JSON код сюди..."></textarea>
+                        <div style="display: flex; gap: 8px; margin-top: 6px;">
+                            <button class="btn btn-secondary" style="flex: 1;" onclick="pasteFromClipboardAndLoad()">📋 Читати з буфера</button>
+                            <button class="btn btn-primary" style="flex: 1;" onclick="loadProjectFromText()">Завантажити</button>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
-    <div id="importTextModal" class="modal-overlay">
-        <div class="modal-card">
-            <div class="modal-header">
-                <h3 class="modal-title">Імпорт</h3>
-                <button class="modal-close" onclick="$('importTextModal').style.display='none'">✕</button>
-            </div>
-            <div class="modal-body">
-                <textarea id="importJsonText" class="modal-textarea" placeholder="Вставте JSON..."></textarea>
-                <button class="btn btn-primary" onclick="loadProjectFromText()">Завантажити</button>
-            </div>
+    <div id="progressModal" class="modal-overlay" style="z-index: 9999;">
+        <div class="modal-card" style="max-width: 320px; text-align: center; padding: 24px;">
+            <div class="spinner" style="margin: 0 auto 12px auto;"></div>
+            <h3 class="modal-title" id="progressTitle" style="font-size: 15px; margin-bottom: 6px; color: var(--text-color);">Обробка...</h3>
+            <p id="progressSubtext" style="font-size: 12px; color: var(--text-muted); margin: 0;"></p>
         </div>
     </div>
     <script src="assets/js/app.js"></script>

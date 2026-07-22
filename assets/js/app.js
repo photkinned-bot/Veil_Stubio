@@ -703,12 +703,95 @@
             pCtx.restore();
         };
 
+        // --- Progress Loader UI Helpers ---
+        function showProgressLoader(title = "Обробка...", subtext = "") {
+            let modal = $('progressModal');
+            if (modal) {
+                let tEl = $('progressTitle');
+                let sEl = $('progressSubtext');
+                if (tEl) tEl.textContent = title;
+                if (sEl) sEl.textContent = subtext;
+                modal.style.display = 'flex';
+            }
+        }
+
+        function updateProgressLoaderSubtext(subtext = "") {
+            let sEl = $('progressSubtext');
+            if (sEl) sEl.textContent = subtext;
+        }
+
+        function hideProgressLoader() {
+            let modal = $('progressModal');
+            if (modal) {
+                modal.style.display = 'none';
+            }
+        }
+
+        // --- Data Compression: Crop Paint Canvas to Bounding Box & Convert to WebP ---
+        function compressPaintCanvas(canvas) {
+            if (!canvas) return { dataUrl: null, crop: null };
+            let w = canvas.width, h = canvas.height;
+            let ctx = canvas.getContext('2d');
+            let imgData = ctx.getImageData(0, 0, w, h);
+            let data = imgData.data;
+
+            let minX = w, minY = h, maxX = -1, maxY = -1;
+            let hasPixels = false;
+
+            // 4px step scan for ultra-fast bounding box estimation
+            for (let y = 0; y < h; y += 4) {
+                for (let x = 0; x < w; x += 4) {
+                    let idx = (y * w + x) * 4;
+                    if (data[idx + 3] > 0 && (data[idx] > 2 || data[idx + 1] > 2 || data[idx + 2] > 2)) {
+                        hasPixels = true;
+                        if (x < minX) minX = x;
+                        if (x > maxX) maxX = x;
+                        if (y < minY) minY = y;
+                        if (y > maxY) maxY = y;
+                    }
+                }
+            }
+
+            if (!hasPixels) {
+                return { dataUrl: null, crop: null };
+            }
+
+            // Expand bounding box slightly to avoid cutting smooth brush anti-aliasing edges
+            minX = Math.max(0, minX - 4);
+            minY = Math.max(0, minY - 4);
+            maxX = Math.min(w - 1, maxX + 4);
+            maxY = Math.min(h - 1, maxY + 4);
+
+            let bw = maxX - minX + 1;
+            let bh = maxY - minY + 1;
+
+            let temp = document.createElement('canvas');
+            temp.width = bw;
+            temp.height = bh;
+            let tCtx = temp.getContext('2d');
+            tCtx.drawImage(canvas, minX, minY, bw, bh, 0, 0, bw, bh);
+
+            let dataUrl = temp.toDataURL('image/webp', 0.85);
+            if (!dataUrl || !dataUrl.startsWith('data:image/webp')) {
+                dataUrl = temp.toDataURL('image/png');
+            }
+
+            let crop = (bw === w && bh === h && minX === 0 && minY === 0) ? null : { x: minX, y: minY, w: bw, h: bh };
+
+            return { dataUrl, crop };
+        }
+
         function prepareStateForSerialization() {
+            if (!state || !state.layers) return;
             state.layers.forEach(lay => {
                 if (lay.generatorType === 'paint') {
                     ensureLayerPaintCanvas(lay);
-                    if (lay.paintCanvas && typeof lay.paintCanvas.toDataURL === 'function') {
-                        lay.params.paintDataUrl = lay.paintCanvas.toDataURL();
+                    if (lay.paintCanvas) {
+                        let comp = compressPaintCanvas(lay.paintCanvas);
+                        if (lay.params) {
+                            lay.params.paintDataUrl = comp.dataUrl;
+                            lay.params.paintCrop = comp.crop;
+                        }
                     }
                 }
             });
@@ -724,15 +807,93 @@
             });
         }
 
-        function initImportedPaintCanvases() {
-            state.layers.forEach(lay => {
-                if (lay.generatorType === 'paint') {
-                    if (lay.paintCanvas) {
-                        delete lay.paintCanvas;
-                    }
-                    ensureLayerPaintCanvas(lay, true);
+        // --- Fast Re-hydration with createImageBitmap + Promise.all ---
+        async function loadImageBitmapFromDataUrl(dataUrl) {
+            if (!dataUrl) return null;
+            try {
+                if (typeof fetch === 'function' && typeof createImageBitmap === 'function') {
+                    const res = await fetch(dataUrl);
+                    const blob = await res.blob();
+                    return await createImageBitmap(blob);
                 }
+            } catch (e) {
+                // Fallback to standard Image
+            }
+            return new Promise(resolve => {
+                let img = new Image();
+                img.onload = () => resolve(img);
+                img.onerror = () => resolve(null);
+                img.src = dataUrl;
             });
+        }
+
+        async function rehydrateAllPaintLayersAsync(layers) {
+            if (!layers || !Array.isArray(layers)) return;
+            let paintLayers = layers.filter(l => l.generatorType === 'paint');
+            if (paintLayers.length === 0) return;
+
+            let promises = paintLayers.map(async (lay) => {
+                ensureLayerPaintCanvas(lay, false);
+                let pCtx = lay.paintCanvas.getContext('2d');
+                pCtx.fillStyle = '#000000';
+                pCtx.fillRect(0, 0, 1024, 1024);
+
+                if (lay.params && lay.params.paintDataUrl) {
+                    let dataUrl = lay.params.paintDataUrl;
+                    let crop = lay.params.paintCrop;
+                    let bitmap = await loadImageBitmapFromDataUrl(dataUrl);
+                    if (bitmap) {
+                        if (crop && typeof crop.x === 'number') {
+                            pCtx.drawImage(bitmap, crop.x, crop.y, crop.w, crop.h);
+                        } else {
+                            pCtx.drawImage(bitmap, 0, 0, 1024, 1024);
+                        }
+                        if (typeof bitmap.close === 'function') bitmap.close();
+                    }
+                }
+                updatePaintBuffer(lay);
+                lay.isDirty = true;
+            });
+
+            await Promise.all(promises);
+        }
+
+        // --- Non-blocking Asynchronous Project Loader ---
+        async function loadProjectObjectAsync(p) {
+            if (!p || !p.layers || !Array.isArray(p.layers)) {
+                throw new Error("Невірна структура файлу проєкту (відсутній масив layers)");
+            }
+
+            showProgressLoader("Завантаження проєкту...", "Підготовка шарів...");
+            await new Promise(res => setTimeout(res, 30));
+
+            setState(p);
+            if (!state.global) state.global = freshGlobalSettings();
+
+            state.layers.forEach(l => {
+                l.isDirty = true;
+                if (!l.params) l.params = freshLayerParams();
+                if (!l.params.warps) l.params.warps = [];
+            });
+
+            if (!state.layers.find(l => l.id === state.selectedLayerId)) {
+                state.selectedLayerId = state.layers.length ? state.layers[0].id : null;
+            }
+
+            updateProgressLoaderSubtext("Декодування растрових зображень...");
+            await new Promise(res => setTimeout(res, 20));
+            await rehydrateAllPaintLayersAsync(state.layers);
+
+            updateProgressLoaderSubtext("Оновлення рендеру...");
+            await new Promise(res => setTimeout(res, 20));
+
+            invalidateCaches();
+            renderLayers();
+            if (typeof currentTab !== 'undefined' && currentTab === 'global') renderGlobal(); else renderProps();
+            requestRender();
+            initHistory();
+
+            hideProgressLoader();
         }
 
         let isPainting = false;
@@ -2320,10 +2481,443 @@
                 $('exportRenderingIndicator').style.display = 'none';
             }, 30);
         }
-        function openSaveModal(){ $('projectJsonText').value=serializeState(state); $('copyJsonBtn').innerText="Скопіювати"; showModal('saveModal'); }
-        function copyProjectCode(){ let t=$('projectJsonText'); t.select(); navigator.clipboard.writeText(t.value).then(()=>{$('copyJsonBtn').innerText="Скопійовано!";}); }
-        function loadProjectFromText(){ try{ let p=JSON.parse($('importJsonText').value.trim()); if(p.layers){ setState(p); if(!state.global) state.global=freshGlobalSettings(); initImportedPaintCanvases(); if(!state.layers.find(l=>l.id===state.selectedLayerId)) state.selectedLayerId = state.layers.length?state.layers[0].id:null; $('importTextModal').style.display='none'; invalidateCaches(); renderLayers(); switchRightTab('layer'); requestRender(); initHistory(); } }catch(e){alert("Помилка JSON")} }
-        function importProject(e){ let r=new FileReader(); r.onload=ev=>{try{let p=JSON.parse(ev.target.result); if(p.layers){ setState(p); if(!state.global) state.global=freshGlobalSettings(); initImportedPaintCanvases(); if(!state.layers.find(l=>l.id===state.selectedLayerId)) state.selectedLayerId = state.layers.length?state.layers[0].id:null; invalidateCaches(); renderLayers(); switchRightTab('layer'); requestRender(); initHistory(); }}catch(er){} }; r.readAsText(e.target.files[0]); }
+        // --- .veil File Export & Import ---
+        async function exportVeilFile() {
+            showProgressLoader("Генерація файлу проєкту...", "Стиснення шарів...");
+            await new Promise(res => setTimeout(res, 20));
+            try {
+                let serialized = serializeState(state);
+                let blob = new Blob([serialized], { type: 'application/json' });
+                let url = URL.createObjectURL(blob);
+
+                let d = new Date();
+                let dateStr = d.getFullYear() +
+                    String(d.getMonth() + 1).padStart(2, '0') +
+                    String(d.getDate()).padStart(2, '0') + '_' +
+                    String(d.getHours()).padStart(2, '0') +
+                    String(d.getMinutes()).padStart(2, '0');
+                let fileName = `veil_project_${dateStr}.veil`;
+
+                let a = document.createElement('a');
+                a.href = url;
+                a.download = fileName;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                setTimeout(() => URL.revokeObjectURL(url), 1000);
+
+                hideProgressLoader();
+            } catch (e) {
+                hideProgressLoader();
+                alert("Помилка при експорті файлу .veil: " + e.message);
+            }
+        }
+
+        function triggerVeilImport() {
+            let fileInput = $('importVeilFile');
+            if (fileInput) {
+                fileInput.click();
+            }
+        }
+
+        function importProjectFile(e) {
+            let file = e.target.files && e.target.files[0];
+            if (!file) return;
+
+            showProgressLoader("Читання файлу...", file.name);
+
+            if (typeof file.text === 'function') {
+                file.text().then(async text => {
+                    try {
+                        updateProgressLoaderSubtext("Парсинг тексту проєкту...");
+                        await new Promise(res => setTimeout(res, 20));
+                        let p = JSON.parse(text);
+                        closeModal('projectManagerModal');
+                        await loadProjectObjectAsync(p);
+                    } catch (er) {
+                        hideProgressLoader();
+                        alert("Помилка зчитування файлу .veil / .json: " + er.message);
+                    }
+                    e.target.value = '';
+                }).catch(err => {
+                    hideProgressLoader();
+                    alert("Помилка роботи з файлом: " + err.message);
+                    e.target.value = '';
+                });
+            } else {
+                let r = new FileReader();
+                r.onload = async ev => {
+                    try {
+                        updateProgressLoaderSubtext("Парсинг тексту проєкту...");
+                        await new Promise(res => setTimeout(res, 20));
+                        let p = JSON.parse(ev.target.result);
+                        closeModal('projectManagerModal');
+                        await loadProjectObjectAsync(p);
+                    } catch (er) {
+                        hideProgressLoader();
+                        alert("Помилка зчитування файлу .veil / .json: " + er.message);
+                    }
+                    e.target.value = '';
+                };
+                r.readAsText(file);
+            }
+        }
+
+        // --- IndexedDB Local Fast Storage Service (VeilIDB) ---
+        const IDB_NAME = 'VeilStudioDB';
+        const IDB_VERSION = 1;
+        const IDB_STORE = 'projects';
+
+        function openVeilIDB() {
+            return new Promise((resolve, reject) => {
+                const req = indexedDB.open(IDB_NAME, IDB_VERSION);
+                req.onupgradeneeded = (e) => {
+                    const db = e.target.result;
+                    if (!db.objectStoreNames.contains(IDB_STORE)) {
+                        db.createObjectStore(IDB_STORE, { keyPath: 'id' });
+                    }
+                };
+                req.onsuccess = (e) => resolve(e.target.result);
+                req.onerror = (e) => reject(e.target.error);
+            });
+        }
+
+        function canvasToBlobAsync(canvas) {
+            return new Promise((resolve) => {
+                if (!canvas) { resolve(null); return; }
+                canvas.toBlob((blob) => resolve(blob), 'image/png');
+            });
+        }
+
+        async function saveCurrentProjectToIDB() {
+            let input = $('idbSlotNameInput');
+            let customName = input ? input.value.trim() : '';
+
+            showProgressLoader("Збереження у браузері...", "Обробка растрових даних...");
+            await new Promise(res => setTimeout(res, 20));
+
+            try {
+                const db = await openVeilIDB();
+                const paintBlobs = {};
+                const paintCrops = {};
+
+                if (state && state.layers) {
+                    for (const lay of state.layers) {
+                        if (lay.generatorType === 'paint') {
+                            ensureLayerPaintCanvas(lay);
+                            if (lay.paintCanvas) {
+                                const comp = compressPaintCanvas(lay.paintCanvas);
+                                if (comp.dataUrl) {
+                                    const blob = await canvasToBlobAsync(lay.paintCanvas);
+                                    if (blob) {
+                                        paintBlobs[lay.id] = blob;
+                                        paintCrops[lay.id] = comp.crop;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                const stateClean = JSON.parse(JSON.stringify(state, (key, value) => {
+                    if (key === 'paintCanvas' || key === 'paintBuffer' || key === 'paintDataUrl') {
+                        return undefined;
+                    }
+                    return value;
+                }));
+
+                const now = new Date();
+                const defaultName = `Проєкт ${now.toLocaleDateString('uk-UA')} ${now.toLocaleTimeString('uk-UA', {hour:'2-digit', minute:'2-digit'})}`;
+                const name = customName || defaultName;
+                const id = 'slot_' + Date.now();
+
+                const record = {
+                    id,
+                    name,
+                    updatedAt: Date.now(),
+                    dateStr: `${now.toLocaleDateString('uk-UA')} ${now.toLocaleTimeString('uk-UA', {hour:'2-digit', minute:'2-digit'})}`,
+                    layerCount: state.layers ? state.layers.length : 0,
+                    state: stateClean,
+                    paintBlobs,
+                    paintCrops
+                };
+
+                const tx = db.transaction(IDB_STORE, 'readwrite');
+                const store = tx.objectStore(IDB_STORE);
+                await new Promise((resolve, reject) => {
+                    const req = store.put(record);
+                    req.onsuccess = resolve;
+                    req.onerror = reject;
+                });
+
+                if (input) input.value = '';
+                hideProgressLoader();
+                await renderIDBSlotsList();
+            } catch (e) {
+                hideProgressLoader();
+                alert("Помилка збереження в IndexedDB: " + e.message);
+            }
+        }
+
+        async function getIDBSlotsList() {
+            try {
+                const db = await openVeilIDB();
+                const tx = db.transaction(IDB_STORE, 'readonly');
+                const store = tx.objectStore(IDB_STORE);
+                return new Promise((resolve, reject) => {
+                    const req = store.getAll();
+                    req.onsuccess = () => {
+                        const list = req.result || [];
+                        list.sort((a, b) => b.updatedAt - a.updatedAt);
+                        resolve(list);
+                    };
+                    req.onerror = reject;
+                });
+            } catch (e) {
+                return [];
+            }
+        }
+
+        async function renderIDBSlotsList() {
+            let container = $('idbSlotsContainer');
+            let badge = $('idbSlotCountBadge');
+            if (!container) return;
+
+            let slots = await getIDBSlotsList();
+            if (badge) badge.textContent = slots.length ? `(всього: ${slots.length})` : '';
+
+            if (slots.length === 0) {
+                container.innerHTML = `<div style="text-align:center; padding:16px; color:var(--text-muted); font-size:12px;">Немає збережених слотів у цьому браузері.</div>`;
+                return;
+            }
+
+            container.innerHTML = slots.map(slot => {
+                let layersText = `${slot.layerCount || 0} ${slot.layerCount === 1 ? 'шар' : (slot.layerCount >= 2 && slot.layerCount <= 4) ? 'шари' : 'шарів'}`;
+                return `
+                <div class="idb-slot-card">
+                    <div class="idb-slot-info">
+                        <div class="idb-slot-title">${slot.name}</div>
+                        <div class="idb-slot-meta">${slot.dateStr} | ${layersText}</div>
+                    </div>
+                    <div style="display:flex; gap:4px; flex-shrink:0;">
+                        <button class="btn btn-primary" style="padding:4px 8px; font-size:11px;" onclick="loadProjectFromIDB('${slot.id}')">Завантажити</button>
+                        <button class="btn btn-secondary" style="padding:4px 8px; font-size:11px; color:#ef4444;" onclick="deleteIDBSlot('${slot.id}')">🗑️</button>
+                    </div>
+                </div>`;
+            }).join('');
+        }
+
+        async function loadProjectFromIDB(id) {
+            showProgressLoader("Завантаження з IDB...", "Читання слоту...");
+            await new Promise(res => setTimeout(res, 20));
+
+            try {
+                const db = await openVeilIDB();
+                const tx = db.transaction(IDB_STORE, 'readonly');
+                const store = tx.objectStore(IDB_STORE);
+                const record = await new Promise((resolve, reject) => {
+                    const req = store.get(id);
+                    req.onsuccess = () => resolve(req.result);
+                    req.onerror = reject;
+                });
+
+                if (!record) throw new Error("Слот не знайдено");
+
+                setState(record.state);
+                if (!state.global) state.global = freshGlobalSettings();
+
+                state.layers.forEach(l => {
+                    l.isDirty = true;
+                    if (!l.params) l.params = freshLayerParams();
+                    if (!l.params.warps) l.params.warps = [];
+                });
+
+                if (!state.layers.find(l => l.id === state.selectedLayerId)) {
+                    state.selectedLayerId = state.layers.length ? state.layers[0].id : null;
+                }
+
+                if (record.paintBlobs) {
+                    updateProgressLoaderSubtext("Декодування растрових шарів...");
+                    const paintPromises = state.layers.filter(l => l.generatorType === 'paint').map(async (lay) => {
+                        ensureLayerPaintCanvas(lay, false);
+                        const pCtx = lay.paintCanvas.getContext('2d');
+                        pCtx.fillStyle = '#000000';
+                        pCtx.fillRect(0, 0, 1024, 1024);
+
+                        const blob = record.paintBlobs[lay.id];
+                        if (blob) {
+                            let bitmap = null;
+                            if (typeof createImageBitmap === 'function') {
+                                try { bitmap = await createImageBitmap(blob); } catch(e){}
+                            }
+                            if (bitmap) {
+                                const crop = record.paintCrops ? record.paintCrops[lay.id] : null;
+                                if (crop && typeof crop.x === 'number') {
+                                    pCtx.drawImage(bitmap, crop.x, crop.y, crop.w, crop.h);
+                                } else {
+                                    pCtx.drawImage(bitmap, 0, 0, 1024, 1024);
+                                }
+                                if (typeof bitmap.close === 'function') bitmap.close();
+                            } else {
+                                const url = URL.createObjectURL(blob);
+                                await new Promise((res) => {
+                                    const img = new Image();
+                                    img.onload = () => {
+                                        pCtx.drawImage(img, 0, 0, 1024, 1024);
+                                        URL.revokeObjectURL(url);
+                                        res();
+                                    };
+                                    img.onerror = () => { URL.revokeObjectURL(url); res(); };
+                                    img.src = url;
+                                });
+                            }
+                        }
+                        updatePaintBuffer(lay);
+                        lay.isDirty = true;
+                    });
+
+                    await Promise.all(paintPromises);
+                }
+
+                invalidateCaches();
+                renderLayers();
+                if (typeof currentTab !== 'undefined' && currentTab === 'global') renderGlobal(); else renderProps();
+                requestRender();
+                initHistory();
+
+                hideProgressLoader();
+                closeModal('projectManagerModal');
+            } catch (e) {
+                hideProgressLoader();
+                alert("Помилка завантаження слоту IDB: " + e.message);
+            }
+        }
+
+        async function deleteIDBSlot(id) {
+            if (!confirm("Видалити цей слот з локального сховища браузера?")) return;
+            try {
+                const db = await openVeilIDB();
+                const tx = db.transaction(IDB_STORE, 'readwrite');
+                const store = tx.objectStore(IDB_STORE);
+                await new Promise((resolve, reject) => {
+                    const req = store.delete(id);
+                    req.onsuccess = resolve;
+                    req.onerror = reject;
+                });
+                await renderIDBSlotsList();
+            } catch (e) {
+                alert("Помилка видалення: " + e.message);
+            }
+        }
+
+        // --- Modal & Navigation Helpers ---
+        function closeModal(id) {
+            let el = $(id);
+            if (el) el.style.display = 'none';
+        }
+
+        function openProjectManagerModal(tab = 'file') {
+            switchProjectTab(tab);
+            showModal('projectManagerModal');
+        }
+
+        function switchProjectTab(tab) {
+            ['file', 'idb', 'text'].forEach(t => {
+                let btn = $('tabBtn' + t.charAt(0).toUpperCase() + t.slice(1));
+                let content = $('projectTab' + t.charAt(0).toUpperCase() + t.slice(1));
+                if (btn) btn.classList.toggle('active', t === tab);
+                if (content) content.style.display = (t === tab) ? 'block' : 'none';
+            });
+            if (tab === 'idb') {
+                renderIDBSlotsList();
+            } else if (tab === 'text') {
+                try {
+                    let txtEl = $('projectJsonText');
+                    if (txtEl) txtEl.value = serializeState(state);
+                } catch(e){}
+            }
+        }
+
+        async function openSaveModal() {
+            openProjectManagerModal('file');
+        }
+
+        function copyProjectCode() {
+            let t = $('projectJsonText');
+            if (!t) return;
+            t.select();
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(t.value).then(() => {
+                    let b = $('copyJsonBtn');
+                    if (b) {
+                        b.innerText = "Скопійовано у буфер!";
+                        setTimeout(() => { if ($('copyJsonBtn')) $('copyJsonBtn').innerText = "Скопіювати у буфер"; }, 2000);
+                    }
+                }).catch(() => {
+                    document.execCommand('copy');
+                    let b = $('copyJsonBtn');
+                    if (b) b.innerText = "Скопійовано!";
+                });
+            } else {
+                document.execCommand('copy');
+                let b = $('copyJsonBtn');
+                if (b) b.innerText = "Скопійовано!";
+            }
+        }
+
+        async function loadProjectFromText() {
+            let textarea = $('importJsonText');
+            let text = textarea ? textarea.value.trim() : '';
+            if (!text) {
+                alert("Будь ласка, вставте JSON код проєкту в текстове поле");
+                return;
+            }
+
+            showProgressLoader("Імпорт проєкту...", "Парсинг JSON даних...");
+            await new Promise(res => setTimeout(res, 30));
+
+            try {
+                let p = JSON.parse(text);
+                closeModal('projectManagerModal');
+                if (textarea) textarea.value = '';
+                await loadProjectObjectAsync(p);
+            } catch (e) {
+                hideProgressLoader();
+                alert("Помилка JSON проєкту: " + e.message);
+            }
+        }
+
+        async function pasteFromClipboardAndLoad() {
+            try {
+                if (!navigator.clipboard || !navigator.clipboard.readText) {
+                    alert("Ваш браузер не підтримує читання з буфера обміну. Будь ласка, вставте код в текстове поле вручну.");
+                    return;
+                }
+
+                showProgressLoader("Зчитування з буфера...", "Отримання коду...");
+                let text = await navigator.clipboard.readText();
+                text = text ? text.trim() : '';
+                if (!text) {
+                    hideProgressLoader();
+                    alert("Буфер обміну порожній!");
+                    return;
+                }
+
+                updateProgressLoaderSubtext("Парсинг JSON даних...");
+                await new Promise(res => setTimeout(res, 20));
+
+                let p = JSON.parse(text);
+                closeModal('projectManagerModal');
+                await loadProjectObjectAsync(p);
+            } catch (e) {
+                hideProgressLoader();
+                alert("Не вдалося прочитати з буфера обміну або помилка JSON: " + e.message);
+            }
+        }
+
+        function importProject(e) {
+            importProjectFile(e);
+        }
 
         // --- Розтяжні панелі (Шари / Властивості) ---
         // Тягнути за смужку між панеллю та канвасом — ширина зберігається між
@@ -2390,6 +2984,15 @@
         };
 
         // Expose all state and action handlers to window globally
+        window.exportVeilFile = exportVeilFile;
+        window.triggerVeilImport = triggerVeilImport;
+        window.importProjectFile = importProjectFile;
+        window.saveCurrentProjectToIDB = saveCurrentProjectToIDB;
+        window.loadProjectFromIDB = loadProjectFromIDB;
+        window.deleteIDBSlot = deleteIDBSlot;
+        window.openProjectManagerModal = openProjectManagerModal;
+        window.switchProjectTab = switchProjectTab;
+        window.closeModal = closeModal;
         window.commitHistorySnapshot = commitHistorySnapshot;
         window.scheduleHistorySnapshot = scheduleHistorySnapshot;
         window.state = state;
@@ -2405,6 +3008,9 @@
         window.openPNGExportModal = openPNGExportModal;
         window.renderExportPreview = renderExportPreview;
         window.loadProjectFromText = loadProjectFromText;
+        window.pasteFromClipboardAndLoad = pasteFromClipboardAndLoad;
+        window.showProgressLoader = showProgressLoader;
+        window.hideProgressLoader = hideProgressLoader;
         window.copyProjectCode = copyProjectCode;
         window.importProject = importProject;
         window.toggleLayerVisibility = toggleLayerVisibility;
