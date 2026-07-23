@@ -243,6 +243,104 @@
             }
         };
 
+        const ProceduralGradient = {
+            eval(tx, ty, p, sx, sy) {
+                let gradType = p.gradType || 'linear';
+                let spreadMethod = p.spreadMethod || 'clamp';
+                let cx = p.centerX !== undefined ? p.centerX : 0.5;
+                let cy = p.centerY !== undefined ? p.centerY : 0.5;
+                let angleRad = ((p.angle || 0) * Math.PI) / 180;
+                let aspect = Math.max(0.01, p.aspectRatio || 1.0);
+                let scaleX = (sx || 10) / 10;
+                let scaleY = (sy || 10) / 10;
+
+                // Relative position centered at (cx, cy)
+                let dx = (tx - cx) * scaleX;
+                let dy = (ty - cy) * scaleY;
+
+                // Rotated coordinates
+                let cosA = Math.cos(-angleRad);
+                let sinA = Math.sin(-angleRad);
+                let rx = dx * cosA - dy * sinA;
+                let ry = dx * sinA + dy * cosA;
+
+                let u = 0;
+                switch (gradType) {
+                    case 'linear':
+                        u = rx + 0.5;
+                        break;
+                    case 'radial':
+                        u = Math.sqrt(rx * rx + ry * ry) * 2;
+                        break;
+                    case 'elliptical':
+                        u = Math.sqrt(rx * rx + (ry / aspect) * (ry / aspect)) * 2;
+                        break;
+                    case 'conical': {
+                        let ang = Math.atan2(ry, rx);
+                        u = (ang + Math.PI) / (2 * Math.PI);
+                        break;
+                    }
+                    case 'reflected':
+                        u = Math.abs(rx) * 2;
+                        break;
+                    case 'diamond':
+                        u = (Math.abs(rx) + Math.abs(ry) / aspect) * 2;
+                        break;
+                    default:
+                        u = rx + 0.5;
+                }
+
+                // Spread methods
+                let t = 0;
+                if (spreadMethod === 'clamp') {
+                    t = Math.max(0, Math.min(1, u));
+                } else if (spreadMethod === 'repeat') {
+                    t = u - Math.floor(u);
+                    if (t < 0) t += 1;
+                } else if (spreadMethod === 'reflect') {
+                    let fu = Math.abs(u);
+                    let m = Math.floor(fu);
+                    let rem = fu - m;
+                    t = (m % 2 === 0) ? rem : (1 - rem);
+                }
+
+                // Midpoint shift curve
+                let mid = p.midpoint !== undefined ? p.midpoint : 0.5;
+                if (mid !== 0.5 && mid > 0 && mid < 1) {
+                    let exp = Math.log(0.5) / Math.log(mid);
+                    t = Math.pow(Math.max(0, Math.min(1, t)), exp);
+                }
+
+                // Evaluate color stops or return t
+                if (p.stops && Array.isArray(p.stops) && p.stops.length > 0) {
+                    return this.evalStopsVal(t, p.stops);
+                }
+                return Math.max(0, Math.min(1, t));
+            },
+
+            evalStopsVal(t, stops) {
+                if (!stops || stops.length === 0) return t;
+                if (stops.length === 1) return stops[0].val !== undefined ? stops[0].val : 1;
+
+                let sorted = stops.slice().sort((a, b) => a.pos - b.pos);
+                if (t <= sorted[0].pos) return sorted[0].val !== undefined ? sorted[0].val : 0;
+                if (t >= sorted[sorted.length - 1].pos) return sorted[sorted.length - 1].val !== undefined ? sorted[sorted.length - 1].val : 1;
+
+                for (let i = 0; i < sorted.length - 1; i++) {
+                    let s1 = sorted[i];
+                    let s2 = sorted[i + 1];
+                    if (t >= s1.pos && t <= s2.pos) {
+                        let range = s2.pos - s1.pos;
+                        let factor = range > 0 ? (t - s1.pos) / range : 0;
+                        let v1 = s1.val !== undefined ? s1.val : s1.pos;
+                        let v2 = s2.val !== undefined ? s2.val : s2.pos;
+                        return v1 + (v2 - v1) * factor;
+                    }
+                }
+                return t;
+            }
+        };
+
         const fbm = (x,y,oct,lac=2,gain=0.5,t='perlin') => {
             let v=0, a=1, f=1, max=0, fn=t==='simplex'?Simplex.noise.bind(Simplex):Perlin.noise.bind(Perlin);
             for(let i=0;i<oct;i++){ v+=a*(fn(x*f,y*f)+1)/2; max+=a; a*=gain; f*=lac; }
@@ -1304,6 +1402,7 @@
                     }
                     break;
                 }
+                case 'gradient': v = ProceduralGradient.eval(tx, ty, p, sx, sy); break;
                 case 'cymatics': v = Cymatics.noise(tx, ty, p, cymaticsSources, sx, sy); break;
                 case 'simplex': v=(Simplex.noise(tx*sx,ty*sy)+1)/2; break;
                 case 'perlin': v=(Perlin.noise(tx*sx,ty*sy)+1)/2; break;
@@ -1866,7 +1965,7 @@
         }
 
         // --- Рандомізація ---
-        const GENERATOR_TYPES = ['simplex','perlin','voronoi','fbm','ridged','sine','radial','spiral','hexagon','pixel_noise','white_noise','checkerboard','dots','weave','value_noise','cellular','spider_web','cymatics', 'paint'];
+        const GENERATOR_TYPES = ['gradient','simplex','perlin','voronoi','fbm','ridged','sine','radial','spiral','hexagon','pixel_noise','white_noise','checkerboard','dots','weave','value_noise','cellular','spider_web','cymatics', 'paint'];
 
         // Рандомізує ОДИН шар: випадковий тип генератора + всі його повзунки (в
         // межах їхніх власних min/max) + помірний шанс увімкнути локальні ефекти.
@@ -2107,6 +2206,111 @@
             if(!suppressRender) requestRender();
         }
 
+        window.addGradientStop = function() {
+            let lay = state.layers.find(l => l.id === state.selectedLayerId);
+            if (!lay || !lay.params) return;
+            if (!lay.params.stops) lay.params.stops = [];
+            let newPos = 0.5;
+            if (lay.params.stops.length >= 2) {
+                let sorted = lay.params.stops.slice().sort((a, b) => a.pos - b.pos);
+                newPos = (sorted[0].pos + sorted[sorted.length - 1].pos) / 2;
+            }
+            lay.params.stops.push({ pos: newPos, color: '#888888', val: 0.5 });
+            lay.params.stops.sort((a, b) => a.pos - b.pos);
+            lay.isDirty = true;
+            renderProps();
+            requestRender();
+            commitHistorySnapshot();
+        };
+
+        window.removeGradientStop = function(idx) {
+            let lay = state.layers.find(l => l.id === state.selectedLayerId);
+            if (!lay || !lay.params || !lay.params.stops || lay.params.stops.length <= 2) return;
+            lay.params.stops.splice(idx, 1);
+            lay.isDirty = true;
+            renderProps();
+            requestRender();
+            commitHistorySnapshot();
+        };
+
+        window.updateGradientStop = function(idx, key, val) {
+            let lay = state.layers.find(l => l.id === state.selectedLayerId);
+            if (!lay || !lay.params || !lay.params.stops || !lay.params.stops[idx]) return;
+            triggerInteraction();
+            if (key === 'color') {
+                lay.params.stops[idx].color = val;
+            } else {
+                lay.params.stops[idx][key] = parseFloat(val);
+            }
+            if (key === 'pos') {
+                lay.params.stops.sort((a, b) => a.pos - b.pos);
+            }
+            lay.isDirty = true;
+            if (key === 'color' || key === 'pos') renderProps();
+            if (!suppressRender) requestRender();
+            scheduleHistorySnapshot();
+        };
+
+        window.applyGradientPreset = function(presetName) {
+            let lay = state.layers.find(l => l.id === state.selectedLayerId);
+            if (!lay || !lay.params) return;
+            switch (presetName) {
+                case 'bw':
+                    lay.params.stops = [
+                        { pos: 0.0, color: '#000000', val: 0.0 },
+                        { pos: 1.0, color: '#ffffff', val: 1.0 }
+                    ];
+                    break;
+                case 'chrome':
+                    lay.params.stops = [
+                        { pos: 0.0, color: '#111111', val: 0.0 },
+                        { pos: 0.25, color: '#ffffff', val: 1.0 },
+                        { pos: 0.48, color: '#222222', val: 0.1 },
+                        { pos: 0.5, color: '#ffffff', val: 1.0 },
+                        { pos: 0.75, color: '#333333', val: 0.2 },
+                        { pos: 1.0, color: '#eeeeee', val: 0.9 }
+                    ];
+                    break;
+                case 'gold':
+                    lay.params.stops = [
+                        { pos: 0.0, color: '#4a2c00', val: 0.1 },
+                        { pos: 0.35, color: '#ffd700', val: 0.8 },
+                        { pos: 0.5, color: '#fff8dc', val: 1.0 },
+                        { pos: 0.65, color: '#daa520', val: 0.7 },
+                        { pos: 1.0, color: '#3b2200', val: 0.1 }
+                    ];
+                    break;
+                case 'sunset':
+                    lay.params.stops = [
+                        { pos: 0.0, color: '#2d0b5a', val: 0.0 },
+                        { pos: 0.4, color: '#c72c61', val: 0.4 },
+                        { pos: 0.7, color: '#ff6b35', val: 0.7 },
+                        { pos: 1.0, color: '#f7c548', val: 1.0 }
+                    ];
+                    break;
+                case 'cyber':
+                    lay.params.stops = [
+                        { pos: 0.0, color: '#00f2fe', val: 0.0 },
+                        { pos: 0.5, color: '#4facfe', val: 0.5 },
+                        { pos: 1.0, color: '#000000', val: 1.0 }
+                    ];
+                    break;
+                case 'rainbow':
+                    lay.params.stops = [
+                        { pos: 0.0, color: '#ff0000', val: 0.0 },
+                        { pos: 0.2, color: '#ffff00', val: 0.2 },
+                        { pos: 0.4, color: '#00ff00', val: 0.4 },
+                        { pos: 0.6, color: '#00ffff', val: 0.6 },
+                        { pos: 0.8, color: '#0000ff', val: 0.8 },
+                        { pos: 1.0, color: '#ff00ff', val: 1.0 }
+                    ];
+                    break;
+            }
+            lay.isDirty = true;
+            renderProps();
+            requestRender();
+            commitHistorySnapshot();
+        };
 
         function renderProps() {
             let lay=state.layers.find(l=>l.id===state.selectedLayerId), p=$('propertiesPanel');
@@ -2125,6 +2329,21 @@
                 if (lp.sourcesCount === undefined) lp.sourcesCount = 4;
                 if (lp.symmetry === undefined) lp.symmetry = 1;
                 if (lp.isolineWidth === undefined) lp.isolineWidth = 0.5;
+            }
+
+            if (lay.generatorType === 'gradient') {
+                if (!lp.gradType) lp.gradType = 'linear';
+                if (!lp.spreadMethod) lp.spreadMethod = 'clamp';
+                if (lp.centerX === undefined) lp.centerX = 0.5;
+                if (lp.centerY === undefined) lp.centerY = 0.5;
+                if (lp.aspectRatio === undefined) lp.aspectRatio = 1.0;
+                if (lp.midpoint === undefined) lp.midpoint = 0.5;
+                if (!lp.stops || !Array.isArray(lp.stops) || lp.stops.length === 0) {
+                    lp.stops = [
+                        { pos: 0.0, color: '#000000', val: 0.0 },
+                        { pos: 1.0, color: '#ffffff', val: 1.0 }
+                    ];
+                }
             }
 
             let genHTML=createSlider("Зсув X", "offsetX", -2, 2, 0.05, lp.offsetX, false, 0) +
@@ -2201,6 +2420,79 @@
                 genHTML += createSlider("Частота променів (Sine)", "radSineFreq", 1, 20, 1, lp.radSineFreq || 10, false, 10);
             }
             
+            if (lay.generatorType === 'gradient') {
+                let sortedStops = lp.stops.slice().sort((a, b) => a.pos - b.pos);
+                let cssStopsStr = sortedStops.map(s => `${s.color || '#888888'} ${Math.round(s.pos * 100)}%`).join(', ');
+                let rampStyle = `background: linear-gradient(to right, ${cssStopsStr}); height: 28px; border-radius: 6px; border: 1px solid var(--border-color, #27272a); margin-bottom: 10px; position: relative; box-shadow: inset 0 1px 3px rgba(0,0,0,0.5);`;
+
+                let stopsHTML = sortedStops.map((s, idx) => {
+                    let rawIdx = lp.stops.indexOf(s);
+                    return `
+                    <div style="background: rgba(255,255,255,0.03); border: 1px solid var(--border-color, #27272a); border-radius: 6px; padding: 6px 8px; margin-bottom: 6px; display: grid; grid-template-columns: 28px 1fr 1fr 24px; gap: 6px; align-items: center;">
+                        <input type="color" value="${s.color || '#ffffff'}" oninput="updateGradientStop(${rawIdx}, 'color', this.value)" style="width:24px; height:24px; padding:0; border:none; background:none; cursor:pointer;" title="Колір точки">
+                        <div>
+                            <div style="font-size:9px; color:var(--text-muted, #a1a1aa);">Поз: ${Math.round(s.pos * 100)}%</div>
+                            <input type="range" min="0" max="1" step="0.01" value="${s.pos}" oninput="updateGradientStop(${rawIdx}, 'pos', this.value)" onchange="commitHistorySnapshot();" style="width:100%;">
+                        </div>
+                        <div>
+                            <div style="font-size:9px; color:var(--text-muted, #a1a1aa);">Вис: ${(s.val !== undefined ? s.val : s.pos).toFixed(2)}</div>
+                            <input type="range" min="0" max="1" step="0.01" value="${s.val !== undefined ? s.val : s.pos}" oninput="updateGradientStop(${rawIdx}, 'val', this.value)" onchange="commitHistorySnapshot();" style="width:100%;">
+                        </div>
+                        <button type="button" class="reset-btn" style="color:#ef4444; font-size:12px;" title="Видалити точку" onclick="removeGradientStop(${rawIdx})" ${lp.stops.length <= 2 ? 'disabled style="opacity:0.3; cursor:not-allowed;"' : ''}>✕</button>
+                    </div>`;
+                }).join('');
+
+                genHTML += `
+                <div class="section-title" style="margin-top:12px;">🎨 Градієнти (Procedural Gradients)</div>
+                <div class="property-group">
+                    <label class="property-label">Форма / Тип градієнта</label>
+                    <div class="gen-grid" style="grid-template-columns:repeat(3,1fr);">
+                        <button onclick="upd('gradType','linear')" class="gen-btn ${lp.gradType==='linear'?'active':''}">Лінійний</button>
+                        <button onclick="upd('gradType','radial')" class="gen-btn ${lp.gradType==='radial'?'active':''}">Радіальний</button>
+                        <button onclick="upd('gradType','elliptical')" class="gen-btn ${lp.gradType==='elliptical'?'active':''}">Овальний</button>
+                        <button onclick="upd('gradType','conical')" class="gen-btn ${lp.gradType==='conical'?'active':''}">Конічний</button>
+                        <button onclick="upd('gradType','reflected')" class="gen-btn ${lp.gradType==='reflected'?'active':''}">Відбитий</button>
+                        <button onclick="upd('gradType','diamond')" class="gen-btn ${lp.gradType==='diamond'?'active':''}">Ромбічний</button>
+                    </div>
+                </div>
+
+                <div class="property-group">
+                    <label class="property-label">Повторення (Spread Method)</label>
+                    <div class="gen-grid" style="grid-template-columns:repeat(3,1fr);">
+                        <button onclick="upd('spreadMethod','clamp')" class="gen-btn ${lp.spreadMethod==='clamp'?'active':''}">Clamp</button>
+                        <button onclick="upd('spreadMethod','repeat')" class="gen-btn ${lp.spreadMethod==='repeat'?'active':''}">Repeat</button>
+                        <button onclick="upd('spreadMethod','reflect')" class="gen-btn ${lp.spreadMethod==='reflect'?'active':''}">Reflect</button>
+                    </div>
+                </div>
+
+                ${createSlider("Центр X (Position X)", "centerX", 0, 1, 0.01, lp.centerX, false, 0.5)}
+                ${createSlider("Центр Y (Position Y)", "centerY", 0, 1, 0.01, lp.centerY, false, 0.5)}
+                ${createSlider("Пропорції / Еліпсис", "aspectRatio", 0.1, 5, 0.05, lp.aspectRatio, false, 1.0)}
+                ${createSlider("Середня точка (Midpoint)", "midpoint", 0.05, 0.95, 0.01, lp.midpoint, false, 0.5)}
+
+                <div class="property-group" style="margin-top:12px;">
+                    <label class="property-label">Пресети градієнта</label>
+                    <div class="gen-grid" style="grid-template-columns:repeat(3,1fr); gap:4px;">
+                        <button onclick="applyGradientPreset('bw')" class="gen-btn" style="font-size:10px;">Ч/Б (BW)</button>
+                        <button onclick="applyGradientPreset('chrome')" class="gen-btn" style="font-size:10px;">Хром</button>
+                        <button onclick="applyGradientPreset('gold')" class="gen-btn" style="font-size:10px;">Золото</button>
+                        <button onclick="applyGradientPreset('sunset')" class="gen-btn" style="font-size:10px;">Захід</button>
+                        <button onclick="applyGradientPreset('cyber')" class="gen-btn" style="font-size:10px;">Неон</button>
+                        <button onclick="applyGradientPreset('rainbow')" class="gen-btn" style="font-size:10px;">Веселка</button>
+                    </div>
+                </div>
+
+                <div class="property-group" style="margin-top:12px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                        <span class="property-label" style="margin:0;">Шкала кольорів (Color Ramp)</span>
+                        <button type="button" class="btn btn-primary" onclick="addGradientStop()" style="padding:2px 8px; font-size:10px;">+ Точка</button>
+                    </div>
+                    <div style="${rampStyle}"></div>
+                    ${stopsHTML}
+                </div>
+                `;
+            }
+
             if(['perlin','fbm','ridged','spiral'].includes(lay.generatorType)) genHTML+=createSlider(lay.generatorType==='spiral'?'Кількість рукавів (Arms)':'Октави', "octaves", 1, 10, 1, lp.octaves||3, false, 3);
             if(lay.generatorType==='voronoi') genHTML+=`<div class="property-group grid-2"><div><label class="property-label">Метрика</label><select class="form-control" onchange="upd('metric',this.value)"><option value="euclidean" ${lp.metric==='euclidean'?'selected':''}>Euclidean</option><option value="manhattan" ${lp.metric==='manhattan'?'selected':''}>Manhattan</option><option value="chebyshev" ${lp.metric==='chebyshev'?'selected':''}>Chebyshev</option></select></div><div><label class="property-label">Режим</label><select class="form-control" onchange="upd('mode',this.value)"><option value="f1" ${lp.mode==='f1'?'selected':''}>F1</option><option value="f2" ${lp.mode==='f2'?'selected':''}>F2</option><option value="f2_minus_f1" ${lp.mode==='f2_minus_f1'?'selected':''}>F2-F1</option></select></div></div>`;
             if(lay.generatorType==='sine') genHTML+=createSlider("Фаза зсуву", "phase", 0, 6.28, 0.1, lp.phase||0, false, 0);
@@ -2236,7 +2528,7 @@
                 <div class="property-group">
                     <label class="property-label">Алгоритм (Algorithm)</label>
                     <div class="gen-grid" style="grid-template-columns:repeat(3,1fr);">
-                        ${['paint','simplex','perlin','voronoi','fbm','ridged','sine','radial','spiral','hexagon','pixel_noise','white_noise','checkerboard','dots','weave','value_noise','cellular','spider_web', 'cymatics'].map(t=>`<button onclick="upd('generatorType','${t}',true)" class="gen-btn ${lay.generatorType===t?'active':''}">${t}</button>`).join('')}
+                        ${['gradient','paint','simplex','perlin','voronoi','fbm','ridged','sine','radial','spiral','hexagon','pixel_noise','white_noise','checkerboard','dots','weave','value_noise','cellular','spider_web', 'cymatics'].map(t=>`<button onclick="upd('generatorType','${t}',true)" class="gen-btn ${lay.generatorType===t?'active':''}">${t}</button>`).join('')}
                     </div>
                 </div>
                 <hr>
@@ -3811,6 +4103,9 @@
 
                 <div class="property-group">
                     <button onclick="resetTilingToDefaults()" class="btn btn-secondary" style="width:100%; font-size:11px;" title="Скинути всі налаштування тайлінгу">🔄 Скинути параметри тайлінгу</button>
+                    <div style="font-size:11px; color:var(--text-muted, #a1a1aa); margin-top:4px; text-align:center;">
+                        Експериментальна функція.<br>Функція може працювати дивно.
+                    </div>
                 </div>
 
                 <hr>
