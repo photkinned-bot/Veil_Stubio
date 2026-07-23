@@ -219,8 +219,11 @@
                 }
                 return s;
             },
-            noise(x, y, p, precalculatedSources = null) {
-                let sx = x * 2 - 1, sy = y * 2 - 1;
+            noise(x, y, p, precalculatedSources = null, scaleX = 10, scaleY = 10) {
+                let scaleFactorX = (scaleX !== undefined ? scaleX : (p && p.scaleX !== undefined ? p.scaleX : 10)) / 10;
+                let scaleFactorY = (scaleY !== undefined ? scaleY : (p && p.scaleY !== undefined ? p.scaleY : 10)) / 10;
+                let sx = (x - 0.5) * 2 * scaleFactorX;
+                let sy = (y - 0.5) * 2 * scaleFactorY;
                 const symParam = p.symmetry || 1;
                 if (symParam > 1) {
                     let angle = Math.atan2(sy, sx), radius = Math.sqrt(sx * sx + sy * sy), slice = (Math.PI * 2) / symParam;
@@ -1301,7 +1304,7 @@
                     }
                     break;
                 }
-                case 'cymatics': v = Cymatics.noise(tx, ty, p, cymaticsSources); break;
+                case 'cymatics': v = Cymatics.noise(tx, ty, p, cymaticsSources, sx, sy); break;
                 case 'simplex': v=(Simplex.noise(tx*sx,ty*sy)+1)/2; break;
                 case 'perlin': v=(Perlin.noise(tx*sx,ty*sy)+1)/2; break;
                 case 'voronoi': v=Voronoi.noise(tx*sx,ty*sy,p.mode||'f1',p.metric||'euclidean',p.distExp||2); break;
