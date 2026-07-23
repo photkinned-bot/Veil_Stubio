@@ -1964,8 +1964,8 @@
             return `<div class="property-group">
                 <label class="property-label">${label}</label>
                 <div style="display:flex; gap:6px; align-items:center;">
-                    <input type="range" id="rng_${id}" min="1" max="100" step="0.5" value="${val}" oninput="$('num_${id}').value=this.value; updateScaleAxis('${key}', this.value)" ondblclick="resetSliderEl(this,10)">
-                    <input type="number" class="num-input" id="num_${id}" min="1" max="100" step="0.5" value="${val}" oninput="$('rng_${id}').value=this.value; updateScaleAxis('${key}', this.value)" ondblclick="resetSliderEl(this,10)">
+                    <input type="range" id="rng_${id}" min="1" max="100" step="0.5" value="${val}" oninput="$('num_${id}').value=this.value; updateScaleAxis('${key}', this.value)" onchange="commitHistorySnapshot();" ondblclick="resetSliderEl(this,10)">
+                    <input type="number" class="num-input" id="num_${id}" min="1" max="100" step="0.5" value="${val}" oninput="$('rng_${id}').value=this.value; updateScaleAxis('${key}', this.value)" onchange="commitHistorySnapshot();" ondblclick="resetSliderEl(this,10)">
                     <button type="button" class="reset-btn" title="Скинути за замовчуванням (10)" onclick="resetSliderEl($('rng_${id}'),10)">↺</button>
                 </div>
             </div>`;
@@ -2089,10 +2089,14 @@
             
             let warpsHTML = lp.warps.map((w, idx) => `
                 <div class="warp-card" style="${w.visible===false?'opacity:0.5;':''}">
-                    <button class="warp-del" onclick="removeWarp(${idx})">✕</button>
-                    <button class="warp-toggle" onclick="toggleWarp(${idx})">${w.visible!==false?'👁':'🕶'}</button>
-                    <label class="property-label">Тип: ${idx+1}</label>
-                    <select onchange="updateWarp(${idx}, 'type', this.value)" class="form-control" style="margin-bottom:8px;">
+                    <div class="warp-controls">
+                        <button type="button" class="warp-btn" title="Перемістити вгору" onclick="moveWarp(${idx}, -1)" ${idx === 0 ? 'disabled style="opacity:0.3;cursor:not-allowed;"' : ''}>▲</button>
+                        <button type="button" class="warp-btn" title="Перемістити вниз" onclick="moveWarp(${idx}, 1)" ${idx === lp.warps.length - 1 ? 'disabled style="opacity:0.3;cursor:not-allowed;"' : ''}>▼</button>
+                        <button type="button" class="warp-toggle" onclick="toggleWarp(${idx})" title="${w.visible!==false?'Приховати':'Показати'}">${w.visible!==false?'👁':'🕶'}</button>
+                        <button type="button" class="warp-del" onclick="removeWarp(${idx})" title="Видалити">✕</button>
+                    </div>
+                    <label class="property-label" style="margin-top:2px;">Деформатор №${idx+1}</label>
+                    <select onchange="updateWarp(${idx}, 'type', this.value)" class="form-control" style="margin-bottom:8px; margin-top:4px;">
                         <option value="none" ${w.type==='none'?'selected':''}>Немає</option>
                         <option value="displacement" ${w.type==='displacement'?'selected':''}>Displacement</option>
                         <option value="vortex" ${w.type==='vortex'?'selected':''}>Vortex</option>
@@ -2124,26 +2128,22 @@
                     <button onclick="randomizeLayer(state.layers.findIndex(l=>l.id==='${lay.id}'))" class="btn btn-secondary" title="Рандомізувати цей шар (тип, параметри, ефекти)">🎲 Рандом (шар)</button>
                     <button onclick="resetLayer(state.layers.findIndex(l=>l.id==='${lay.id}'))" class="btn btn-secondary" title="Скинути ВСІ параметри цього шару">↺ Скинути шар</button>
                 </div>
-                <hr>
-
-                ${genHTML}
-                <hr>
-
-                <div class="property-group">
+                <div class="property-group" style="margin-top:8px;">
                     <label class="property-label">Режим накладання (Blend Mode)</label>
                     <select onchange="upd('blendMode',this.value,true)" class="form-control" style="height:34px; width: 100%;">
                         ${['normal','multiply','screen','overlay','difference','colorburn','colordodge','heightblend','exclusion','hardlight','lineardodge','linearburn'].map(o=>`<option value="${o}" ${lay.blendMode===o?'selected':''}>${o}</option>`).join('')}
                     </select>
                 </div>
                 ${createSlider("Непрозорість (%)", "opacity", 0, 100, 1, lay.opacity, true, 100, true)}
-                <hr>
-                
                 <div class="property-group">
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
                         <label class="property-label" style="margin:0;">Базова Безшовність (Tileable)</label>
                         <input type="checkbox" ${lp.seamless ? 'checked' : ''} onchange="upd('seamless', this.checked)">
                     </div>
                 </div>
+                <hr>
+
+                ${genHTML}
                 <hr>
                 
                 <div class="section-title">Локальні ефекти</div>

@@ -52,8 +52,11 @@
         .gen-btn{background-color:#09090b;border:1px solid var(--border-color);color:var(--text-muted);font-size:10px;padding:6px 2px;border-radius:4px;cursor:pointer;font-weight:600}
         .gen-btn.active{background-color:var(--primary-color);color:#fff;border-color:var(--primary-color)}
         .warp-card{background:#0f0f11; border:1px solid var(--border-color); padding:10px; margin-bottom:8px; border-radius:4px; position:relative;}
-        .warp-del{position:absolute; right:6px; top:6px; background:#ef4444; color:#fff; border:none; border-radius:3px; font-size:9px; padding:2px 5px; cursor:pointer;}
-        .warp-toggle{position:absolute; right:32px; top:6px; background:var(--border-color); color:#fff; border:none; border-radius:3px; font-size:10px; padding:1px 4px; cursor:pointer;}
+        .warp-controls{position:absolute; right:6px; top:6px; display:flex; gap:3px; align-items:center;}
+        .warp-btn{background:var(--border-color); color:#fff; border:none; border-radius:3px; font-size:10px; padding:2px 5px; cursor:pointer; line-height:1;}
+        .warp-btn:hover:not(:disabled){background:var(--primary-color);}
+        .warp-del{background:#ef4444; color:#fff; border:none; border-radius:3px; font-size:9px; padding:2px 5px; cursor:pointer; line-height:1;}
+        .warp-toggle{background:var(--border-color); color:#fff; border:none; border-radius:3px; font-size:10px; padding:2px 5px; cursor:pointer; line-height:1;}
         .modal-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background-color:rgba(0,0,0,0.85);z-index:1000;display:none;align-items:center;justify-content:center;padding:20px}
         .modal-card{background-color:var(--card-bg);border:1px solid var(--border-color);border-radius:8px;width:100%;max-width:450px;box-shadow:var(--shadow);display:flex;flex-direction:column;max-height:90vh}
         .modal-header{padding:14px 18px;border-bottom:1px solid var(--border-color);display:flex;justify-content:space-between;align-items:center}
