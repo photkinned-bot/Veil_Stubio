@@ -43,18 +43,18 @@
 
         window.addEventListener('touchstart', e => {
             activeTouchCount = e.touches ? e.touches.length : 0;
-            if (activeTouchCount > 1) cancelPainting();
+            if (activeTouchCount > 1) { cancelPainting(); cancelStamping(); cancelMaskBrushing(); }
         }, {passive: true, capture: true});
 
         window.addEventListener('touchmove', e => {
             activeTouchCount = e.touches ? e.touches.length : 0;
-            if (activeTouchCount > 1) cancelPainting();
+            if (activeTouchCount > 1) { cancelPainting(); cancelStamping(); cancelMaskBrushing(); }
         }, {passive: true, capture: true});
 
         canvasWrapperEl.addEventListener('touchstart', e => {
             activeTouchCount = e.touches ? e.touches.length : 0;
             if (activeTouchCount >= 2) e.preventDefault(); // не дати сторінці зробити свій pinch-zoom/scroll
-            if (activeTouchCount > 1) cancelPainting();
+            if (activeTouchCount > 1) { cancelPainting(); cancelStamping(); cancelMaskBrushing(); }
 
             if (!touchGesture.active || touchGesture.maxTouches === 0) {
                 touchGesture.active = true;
@@ -81,7 +81,7 @@
             if (!touchGesture.active) return;
             if (e.touches.length >= 2) {
                 e.preventDefault();
-                cancelPainting();
+                cancelPainting(); cancelStamping(); cancelMaskBrushing();
                 const c = tCenter(e.touches);
                 const dx = c.x - touchGesture.startCenter.x, dy = c.y - touchGesture.startCenter.y;
                 if (Math.hypot(dx,dy) > 8) touchGesture.moved = true;
@@ -110,12 +110,12 @@
         const handleCanvasTouchEnd = e => {
             activeTouchCount = e.touches ? e.touches.length : 0;
             if (activeTouchCount > 0) {
-                if (activeTouchCount > 1) cancelPainting();
+                if (activeTouchCount > 1) { cancelPainting(); cancelStamping(); cancelMaskBrushing(); }
                 return;
             }
 
             if (touchGesture.active) {
-                cancelPainting();
+                cancelPainting(); cancelStamping(); cancelMaskBrushing();
                 resetTouchGesture();
             }
         };
@@ -977,6 +977,54 @@
         }
 
         function handleCanvasPointerDown(e) {
+            if (currentTab === 'tiling') {
+                if (!paintModule.isValidPointer(e) || (e.touches && e.touches.length > 1) || (typeof activeTouchCount !== 'undefined' && activeTouchCount > 1) || (touchGesture && touchGesture.maxTouches > 1)) {
+                    cancelStamping();
+                    cancelMaskBrushing();
+                    return;
+                }
+                if (selectingStampSource || e.shiftKey || e.altKey) {
+                    let pos = getCanvasPos(e);
+                    initialStampSource = { x: pos.x, y: pos.y };
+                    stampSource = { x: pos.x, y: pos.y };
+                    selectingStampSource = false;
+                    renderTilingPanel();
+                    renderTilingView();
+                    e.stopPropagation();
+                    e.preventDefault();
+                    return;
+                }
+
+                if (tilingState.stamp_enable) {
+                    if (!stampSource && tilingState.stamp_mode !== 'erase') {
+                        alert('Спочатку оберіть джерело клонування! Натисніть кнопку "🎯 Обрати точку джерела" або затисніть SHIFT та торкніться полотна.');
+                        return;
+                    }
+                    isStamping = true;
+                    backupTilingStamp();
+                    let pos = getCanvasPos(e);
+                    lastDrawPos = { x: pos.x, y: pos.y };
+                    stampCursorX = pos.x; stampCursorY = pos.y;
+                    applyTilingStamp(pos.x, pos.y, stampSource ? stampSource.x : pos.x, stampSource ? stampSource.y : pos.y);
+                    renderTilingView();
+                    e.stopPropagation();
+                    e.preventDefault();
+                    return;
+                }
+
+                if (tilingState.mask_brush_enable) {
+                    isMaskBrushing = true;
+                    backupTilingMask();
+                    let pos = getCanvasPos(e);
+                    stampCursorX = pos.x; stampCursorY = pos.y;
+                    applyTilingMaskBrush(pos.x, pos.y);
+                    runTilingPipeline();
+                    e.stopPropagation();
+                    e.preventDefault();
+                    return;
+                }
+            }
+
             let lay = state.layers.find(l => l.id === state.selectedLayerId);
             if (!lay || lay.generatorType !== 'paint' || !lay.visible) return;
 
@@ -1043,6 +1091,41 @@
         }
 
         function handleCanvasPointerMove(e) {
+            if (currentTab === 'tiling') {
+                if (!paintModule.isValidPointer(e) || (e.touches && e.touches.length > 1) || (typeof activeTouchCount !== 'undefined' && activeTouchCount > 1) || (touchGesture && touchGesture.maxTouches > 1)) {
+                    cancelStamping();
+                    cancelMaskBrushing();
+                    renderTilingView();
+                    return;
+                }
+                let pos = getCanvasPos(e);
+                stampCursorX = pos.x; stampCursorY = pos.y;
+
+                if (isStamping && tilingState.stamp_enable) {
+                    if (tilingState.stamp_mode === 'erase') {
+                        applyTilingStamp(pos.x, pos.y, pos.x, pos.y);
+                    } else if (stampSource && lastDrawPos) {
+                        let dx = pos.x - lastDrawPos.x;
+                        let dy = pos.y - lastDrawPos.y;
+                        if (tilingState.stamp_aligned) {
+                            stampSource.x += dx;
+                            stampSource.y += dy;
+                        } else if (initialStampSource) {
+                            stampSource = { x: initialStampSource.x, y: initialStampSource.y };
+                        }
+                        applyTilingStamp(pos.x, pos.y, stampSource.x, stampSource.y);
+                    }
+                    lastDrawPos = { x: pos.x, y: pos.y };
+                    renderTilingView();
+                } else if (isMaskBrushing && tilingState.mask_brush_enable) {
+                    applyTilingMaskBrush(pos.x, pos.y);
+                    runTilingPipeline();
+                } else {
+                    renderTilingView();
+                }
+                return;
+            }
+
             if (!isPainting) return;
 
             if (!paintModule.isValidPointer(e)) {
@@ -1138,6 +1221,22 @@
         }
 
         function handleCanvasPointerUp(e) {
+            if (currentTab === 'tiling') {
+                if (isStamping) {
+                    isStamping = false;
+                    if (initialStampSource && stampSource) {
+                        stampSource = { x: initialStampSource.x, y: initialStampSource.y };
+                    }
+                    commitHistorySnapshot();
+                }
+                if (isMaskBrushing) {
+                    isMaskBrushing = false;
+                    commitHistorySnapshot();
+                }
+                renderTilingView();
+                return;
+            }
+
             if (!isPainting) return;
 
             if (!paintModule.isValidPointer(e)) {
@@ -1578,10 +1677,26 @@
 
         function switchRightTab(tab) {
             currentTab = tab;
-            $('btnTabLayer').className = tab==='layer'?'btn btn-primary':'btn btn-secondary';
-            $('btnTabGlobal').className = tab==='global'?'btn btn-primary':'btn btn-secondary';
-            $('rightPanelTitle').innerText = tab==='layer'?"Властивості шару":"Глобальні ефекти";
-            tab==='layer'?renderProps():renderGlobal();
+            if ($('btnTabLayer')) $('btnTabLayer').className = tab==='layer'?'btn btn-primary':'btn btn-secondary';
+            if ($('btnTabGlobal')) $('btnTabGlobal').className = tab==='global'?'btn btn-primary':'btn btn-secondary';
+            if ($('btnTabTiling')) $('btnTabTiling').className = tab==='tiling'?'btn btn-primary':'btn btn-secondary';
+
+            if (tab === 'tiling') {
+                $('rightPanelTitle').innerText = "Безшовний Тайлінг PRO";
+                if (!tilingState.hasImage) {
+                    captureProjectToTiling();
+                } else {
+                    renderTilingPanel();
+                    requestRender();
+                }
+            } else {
+                $('rightPanelTitle').innerText = tab==='layer'?"Властивості шару":"Глобальні ефекти";
+                if (tilingState.stamp_enable) {
+                    toggleTilingStamp(false);
+                }
+                tab==='layer'?renderProps():renderGlobal();
+                requestRender();
+            }
         }
 
         function renderLayers() {
@@ -2259,6 +2374,1762 @@
             requestRender();
         }
 
+        // =========================================================================
+        // === SEAMLESS TEXTURE STUDIO PRO v9.0 — СИСТЕМА БЕЗШОВНОГО ТАЙЛІНГУ ===
+        // =========================================================================
+
+        let tilingOriginalCanvas = null;
+        let tilingProcessedCanvas = null;
+        let tilingStampCanvas = null;
+        let tilingMaskCanvas = null;
+        let tilingLastSeams = null;
+        let initialStampSource = null;
+        let stampSource = null;
+        let selectingStampSource = false;
+        let stampCursorX = -9999;
+        let stampCursorY = -9999;
+        let isStamping = false;
+        let isMaskBrushing = false;
+        let lastDrawPos = null;
+        let stampBackupCanvas = null;
+        let maskBackupCanvas = null;
+
+        function ensureTilingStampCanvas(w, h) {
+            if (!tilingStampCanvas) {
+                tilingStampCanvas = document.createElement('canvas');
+            }
+            if (tilingStampCanvas.width !== w || tilingStampCanvas.height !== h) {
+                tilingStampCanvas.width = w;
+                tilingStampCanvas.height = h;
+            }
+        }
+
+        function clearTilingStampCanvas() {
+            if (tilingStampCanvas) {
+                let sctx = tilingStampCanvas.getContext('2d');
+                sctx.clearRect(0, 0, tilingStampCanvas.width, tilingStampCanvas.height);
+            }
+        }
+
+        function backupTilingStamp() {
+            if (!tilingStampCanvas) return;
+            if (!stampBackupCanvas) stampBackupCanvas = document.createElement('canvas');
+            stampBackupCanvas.width = tilingStampCanvas.width;
+            stampBackupCanvas.height = tilingStampCanvas.height;
+            let bctx = stampBackupCanvas.getContext('2d');
+            bctx.clearRect(0, 0, stampBackupCanvas.width, stampBackupCanvas.height);
+            bctx.drawImage(tilingStampCanvas, 0, 0);
+        }
+
+        function restoreTilingStampBackup() {
+            if (stampBackupCanvas && tilingStampCanvas) {
+                let sctx = tilingStampCanvas.getContext('2d');
+                sctx.clearRect(0, 0, tilingStampCanvas.width, tilingStampCanvas.height);
+                sctx.drawImage(stampBackupCanvas, 0, 0);
+            }
+        }
+
+        function cancelStamping() {
+            if (isStamping) {
+                isStamping = false;
+                restoreTilingStampBackup();
+                if (initialStampSource) {
+                    stampSource = { x: initialStampSource.x, y: initialStampSource.y };
+                }
+                runTilingPipeline();
+            }
+        }
+
+        function ensureTilingMaskCanvas(w, h) {
+            if (!tilingMaskCanvas) {
+                tilingMaskCanvas = document.createElement('canvas');
+            }
+            if (tilingMaskCanvas.width !== w || tilingMaskCanvas.height !== h) {
+                tilingMaskCanvas.width = w;
+                tilingMaskCanvas.height = h;
+            }
+        }
+
+        function clearTilingMaskCanvas() {
+            if (tilingMaskCanvas) {
+                let mctx = tilingMaskCanvas.getContext('2d');
+                mctx.clearRect(0, 0, tilingMaskCanvas.width, tilingMaskCanvas.height);
+            }
+        }
+
+        function backupTilingMask() {
+            if (!tilingMaskCanvas) return;
+            if (!maskBackupCanvas) maskBackupCanvas = document.createElement('canvas');
+            maskBackupCanvas.width = tilingMaskCanvas.width;
+            maskBackupCanvas.height = tilingMaskCanvas.height;
+            let bctx = maskBackupCanvas.getContext('2d');
+            bctx.clearRect(0, 0, maskBackupCanvas.width, maskBackupCanvas.height);
+            bctx.drawImage(tilingMaskCanvas, 0, 0);
+        }
+
+        function restoreTilingMaskBackup() {
+            if (maskBackupCanvas && tilingMaskCanvas) {
+                let mctx = tilingMaskCanvas.getContext('2d');
+                mctx.clearRect(0, 0, tilingMaskCanvas.width, tilingMaskCanvas.height);
+                mctx.drawImage(maskBackupCanvas, 0, 0);
+            }
+        }
+
+        function cancelMaskBrushing() {
+            if (isMaskBrushing) {
+                isMaskBrushing = false;
+                restoreTilingMaskBackup();
+                runTilingPipeline();
+            }
+        }
+
+        function toggleTilingStamp(enable) {
+            tilingState.stamp_enable = enable;
+            if (enable) tilingState.mask_brush_enable = false;
+            renderTilingPanel();
+            renderTilingView();
+        }
+
+        function toggleTilingMaskBrush(enable) {
+            tilingState.mask_brush_enable = enable;
+            if (enable) tilingState.stamp_enable = false;
+            renderTilingPanel();
+            renderTilingView();
+        }
+
+        let tilingState = {
+            hasImage: false,
+            currentViewMode: 'single', // 'single', 'tiled', 'tiled3', 'original'
+            showGrid: false,
+            showSeams: false,
+
+            preset: 'organic',
+
+            stamp_enable: false,
+            stamp_mode: 'clone', // 'clone' or 'erase'
+            stamp_aligned: true,
+            stamp_size: 30,
+            stamp_opacity: 80,
+            stamp_softness: 60,
+
+            mask_brush_enable: false,
+            mask_brush_mode: 'erase_seam', // 'erase_seam' (reveal original) or 'restore_seam' (restore tile)
+            mask_brush_size: 30,
+            mask_brush_opacity: 80,
+            mask_brush_softness: 60,
+
+            guard_enable: true,
+            guard_width: 16,
+            guard_mix_strength: 85,
+            guard_blend_mode: 'cosine',
+            guard_jitter: 8,
+            guard_frequency: 0.08,
+            guard_detail_preserve: 70,
+
+            guard_seam_algo: 'dp_mincost',
+            guard_seam_metric: 'lab',
+            guard_search: 15,
+            guard_stiffness: 1.2,
+            guard_grad_weight: 2.0,
+            guard_warp_mode: 'chaotic',
+            guard_warp_amp: 8,
+            guard_warp_freq: 0.08,
+            guard_curve: 'cosine',
+            guard_overlap: 14,
+            guard_feather: 8,
+            guard_blur_radius: 8,
+
+            seam_algo: 'dp_mincost',
+            seam_metric: 'lab',
+            seam_search: 20,
+            seam_stiffness: 1.2,
+            seam_grad_weight: 2.5,
+
+            seam_warp_mode: 'chaotic',
+            seam_warp_amp: 10,
+            seam_warp_freq: 0.06,
+            seam_warp_jitter: 4,
+
+            seam_curve: 'sigmoid',
+            seam_overlap: 14,
+            seam_feather: 8,
+            seam_blur_radius: 12,
+            seam_contrast_match: 50,
+
+            luma_balance_enable: true,
+            luma_balance_strength: 75,
+
+            flat_enable: true,
+            flat_strength: 0.80,
+
+            offset_x: 50,
+            offset_y: 50,
+
+            freq_gain: 1.30,
+            freq_radius: 3,
+            sharpen: 0.40,
+            micro_contrast: 1.10,
+            micro_noise: 2.5,
+            micro_noise_scale: 'fine',
+
+            accordions: {
+                stamp: true,
+                mask: true,
+                guard: true,
+                dp: true,
+                warp: true,
+                blend: true,
+                luma: true,
+                flat: false,
+                offset: false,
+                fx: true
+            }
+        };
+
+        function getCanvasPos(e) {
+            if (!canvas) return { x: 0, y: 0 };
+
+            let clientX = e.clientX;
+            let clientY = e.clientY;
+
+            if (clientX === undefined || clientY === undefined) {
+                if (e.touches && e.touches.length > 0) {
+                    clientX = e.touches[0].clientX;
+                    clientY = e.touches[0].clientY;
+                } else if (e.changedTouches && e.changedTouches.length > 0) {
+                    clientX = e.changedTouches[0].clientX;
+                    clientY = e.changedTouches[0].clientY;
+                } else if (e.targetTouches && e.targetTouches.length > 0) {
+                    clientX = e.targetTouches[0].clientX;
+                    clientY = e.targetTouches[0].clientY;
+                }
+            }
+
+            if (clientX === undefined || clientY === undefined) return { x: 0, y: 0 };
+
+            const rect = canvas.getBoundingClientRect();
+            if (!rect || rect.width === 0 || rect.height === 0) return { x: 0, y: 0 };
+
+            const targetW = canvas.width;
+            const targetH = canvas.height;
+
+            let normX = 0;
+            let normY = 0;
+
+            if (!viewport || !viewport.angle) {
+                normX = (clientX - rect.left) / rect.width;
+                normY = (clientY - rect.top) / rect.height;
+            } else {
+                const centerX = rect.left + rect.width / 2;
+                const centerY = rect.top + rect.height / 2;
+                const dx = clientX - centerX;
+                const dy = clientY - centerY;
+                const rad = -viewport.angle * Math.PI / 180;
+                const cos = Math.cos(rad);
+                const sin = Math.sin(rad);
+                const rotX = dx * cos - dy * sin;
+                const rotY = dx * sin + dy * cos;
+                const scale = (viewport && viewport.scale) || 1;
+                const cssW = (canvas.offsetWidth || rect.width / scale || 512) * scale;
+                const cssH = (canvas.offsetHeight || rect.height / scale || 512) * scale;
+                normX = rotX / cssW + 0.5;
+                normY = rotY / cssH + 0.5;
+            }
+
+            return {
+                x: normX * targetW,
+                y: normY * targetH
+            };
+        }
+
+        function setViewModeTiling(mode) {
+            tilingState.currentViewMode = mode;
+            renderTilingPanel();
+            renderTilingView();
+        }
+
+        function toggleTilingAccordion(accKey) {
+            tilingState.accordions[accKey] = !tilingState.accordions[accKey];
+            let content = $(`acc_tiling_${accKey}`);
+            let chev = $(`acc_tiling_${accKey}_chev`);
+            if (content) content.classList.toggle('show', tilingState.accordions[accKey]);
+            if (chev) chev.classList.toggle('open', tilingState.accordions[accKey]);
+        }
+
+        function updTiling(key, val, suffix='') {
+            if (key in tilingState) {
+                tilingState[key] = (typeof tilingState[key] === 'number') ? parseFloat(val) : val;
+                let vSpan = $(`tiling_val_${key}`);
+                if (vSpan) vSpan.innerText = val + suffix;
+            }
+            if (tilingState.hasImage && !key.startsWith('stamp')) {
+                runTilingPipeline();
+            } else {
+                renderTilingView();
+            }
+        }
+
+        function tilingSlider(label, key, min, max, step, suffix, defVal) {
+            let val = tilingState[key];
+            if (defVal === undefined) defVal = val;
+            return `
+                <div class="control-group">
+                    <div class="control-label">
+                        <span>${label}</span>
+                        <span class="control-value" id="tiling_val_${key}">${val}${suffix}</span>
+                    </div>
+                    <div style="display:flex; gap:6px; align-items:center;">
+                        <input type="range" id="rng_tiling_${key}" min="${min}" max="${max}" step="${step}" value="${val}" oninput="updTiling('${key}', this.value, '${suffix}'); if ($('num_tiling_${key}')) $('num_tiling_${key}').value=this.value;">
+                        <input type="number" class="num-input" id="num_tiling_${key}" min="${min}" max="${max}" step="${step}" value="${val}" oninput="updTiling('${key}', this.value, '${suffix}'); if ($('rng_tiling_${key}')) $('rng_tiling_${key}').value=this.value;">
+                        <button type="button" class="reset-btn" title="Скинути за замовчуванням (${defVal})" onclick="updTiling('${key}', ${defVal}, '${suffix}'); if ($('rng_tiling_${key}')) $('rng_tiling_${key}').value=${defVal}; if ($('num_tiling_${key}')) $('num_tiling_${key}').value=${defVal};">↺</button>
+                    </div>
+                </div>
+            `;
+        }
+
+        function toggleTilingStamp(enabled) {
+            tilingState.stamp_enable = enabled;
+            selectingStampSource = false;
+            if (enabled) {
+                if (canvas) canvas.style.cursor = 'crosshair';
+            } else {
+                if (canvas) canvas.style.cursor = 'grab';
+                initialStampSource = null;
+                stampSource = null;
+                stampCursorX = -9999;
+                stampCursorY = -9999;
+            }
+            renderTilingPanel();
+            renderTilingView();
+        }
+
+        function toggleSelectingStampSource() {
+            selectingStampSource = !selectingStampSource;
+            if (selectingStampSource) {
+                tilingState.stamp_enable = true;
+                if (canvas) canvas.style.cursor = 'crosshair';
+            }
+            renderTilingPanel();
+            renderTilingView();
+        }
+
+        function applyTilingPreset(p) {
+            tilingState.preset = p;
+            if (p === 'organic') {
+                tilingState.seam_search = 25;
+                tilingState.seam_stiffness = 0.8;
+                tilingState.seam_warp_mode = 'chaotic';
+                tilingState.seam_warp_amp = 14;
+                tilingState.seam_curve = 'sigmoid';
+                tilingState.guard_jitter = 10;
+                tilingState.guard_blend_mode = 'stochastic';
+            } else if (p === 'pattern') {
+                tilingState.seam_search = 12;
+                tilingState.seam_stiffness = 2.8;
+                tilingState.seam_warp_mode = 'sine';
+                tilingState.seam_warp_amp = 2;
+                tilingState.seam_curve = 'cosine';
+                tilingState.guard_jitter = 2;
+                tilingState.guard_blend_mode = 'cosine';
+            } else if (p === 'wood') {
+                tilingState.seam_search = 18;
+                tilingState.seam_stiffness = 2.0;
+                tilingState.seam_warp_mode = 'fractal';
+                tilingState.seam_warp_amp = 8;
+                tilingState.seam_curve = 'gaussian';
+                tilingState.guard_jitter = 5;
+                tilingState.guard_blend_mode = 'sigmoid';
+            } else if (p === 'micro') {
+                tilingState.freq_gain = 2.2;
+                tilingState.freq_radius = 2;
+                tilingState.sharpen = 0.8;
+                tilingState.micro_contrast = 1.25;
+                tilingState.micro_noise = 4.0;
+                tilingState.micro_noise_scale = 'fine';
+            }
+            renderTilingPanel();
+            if (tilingState.hasImage) runTilingPipeline();
+        }
+
+        function resetTilingToDefaults() {
+            tilingState.preset = 'organic';
+            tilingState.stamp_enable = false;
+            tilingState.stamp_aligned = true;
+            tilingState.stamp_size = 30;
+            tilingState.stamp_opacity = 80;
+            tilingState.stamp_softness = 60;
+            tilingState.guard_enable = true;
+            tilingState.guard_width = 16;
+            tilingState.guard_mix_strength = 85;
+            tilingState.guard_blend_mode = 'cosine';
+            tilingState.guard_jitter = 8;
+            tilingState.guard_frequency = 0.08;
+            tilingState.guard_detail_preserve = 70;
+            tilingState.seam_algo = 'dp_mincost';
+            tilingState.seam_metric = 'lab';
+            tilingState.seam_search = 20;
+            tilingState.seam_stiffness = 1.2;
+            tilingState.seam_grad_weight = 2.5;
+            tilingState.seam_warp_mode = 'chaotic';
+            tilingState.seam_warp_amp = 10;
+            tilingState.seam_warp_freq = 0.06;
+            tilingState.seam_warp_jitter = 4;
+            tilingState.seam_curve = 'sigmoid';
+            tilingState.seam_overlap = 14;
+            tilingState.seam_feather = 8;
+            tilingState.seam_blur_radius = 12;
+            tilingState.seam_contrast_match = 50;
+            tilingState.luma_balance_enable = true;
+            tilingState.luma_balance_strength = 75;
+            tilingState.flat_enable = true;
+            tilingState.flat_strength = 0.80;
+            tilingState.offset_x = 50;
+            tilingState.offset_y = 50;
+            tilingState.freq_gain = 1.30;
+            tilingState.freq_radius = 3;
+            tilingState.sharpen = 0.40;
+            tilingState.micro_contrast = 1.10;
+            tilingState.micro_noise = 2.5;
+            tilingState.micro_noise_scale = 'fine';
+            initialStampSource = null;
+            stampSource = null;
+            selectingStampSource = false;
+            if (canvas) canvas.style.cursor = 'grab';
+            renderTilingPanel();
+            if (tilingState.hasImage) runTilingPipeline();
+        }
+
+        function captureProjectToTiling() {
+            if (!tilingOriginalCanvas) {
+                tilingOriginalCanvas = document.createElement('canvas');
+            }
+            tilingOriginalCanvas.width = canvasResolution;
+            tilingOriginalCanvas.height = canvasResolution;
+            renderProject(tilingOriginalCanvas);
+            tilingState.hasImage = true;
+            renderTilingPanel();
+            runTilingPipeline();
+        }
+
+        function applyTilingToLayer() {
+            if (!tilingProcessedCanvas || !tilingState.hasImage) return;
+            prepareStateForSerialization();
+            let id = 'l' + Date.now();
+            let newLay = {
+                id,
+                name: 'Безшовний тайл',
+                visible: true,
+                opacity: 100,
+                blendMode: 'normal',
+                generatorType: 'paint',
+                isMask: false,
+                params: freshLayerParams()
+            };
+            ensureLayerPaintCanvas(newLay);
+            let pCtx = newLay.paintCanvas.getContext('2d');
+            pCtx.clearRect(0, 0, 1024, 1024);
+            pCtx.drawImage(tilingProcessedCanvas, 0, 0, 1024, 1024);
+            newLay.isDirty = true;
+
+            state.layers.unshift(newLay);
+            state.selectedLayerId = id;
+            commitHistorySnapshot();
+            renderLayers();
+            switchRightTab('layer');
+            requestRender();
+        }
+
+        function handleTilingImageUpload(e) {
+            let file = e.target.files[0];
+            if (!file) return;
+            let reader = new FileReader();
+            reader.onload = function(event) {
+                let img = new Image();
+                img.onload = function() {
+                    if (!tilingOriginalCanvas) {
+                        tilingOriginalCanvas = document.createElement('canvas');
+                    }
+                    tilingOriginalCanvas.width = img.width;
+                    tilingOriginalCanvas.height = img.height;
+                    let octx = tilingOriginalCanvas.getContext('2d');
+                    octx.drawImage(img, 0, 0);
+                    tilingState.hasImage = true;
+                    renderTilingPanel();
+                    runTilingPipeline();
+                };
+                img.src = event.target.result;
+            };
+            reader.readAsDataURL(file);
+            e.target.value = '';
+        }
+
+        function openTilingExportModal() {
+            if (!tilingProcessedCanvas || !tilingState.hasImage) return;
+            let modalImg = $('modalPngPreview');
+            if (modalImg) {
+                modalImg.src = tilingProcessedCanvas.toDataURL('image/png');
+            }
+            let modal = $('pngModal');
+            if (modal) {
+                modal.style.display = 'flex';
+            }
+        }
+
+        // --- Алгоритми обробки текстур ---
+        function pseudoNoise(x, y) {
+            let n = Math.sin(x * 12.9898 + y * 78.233) * 43758.5453123;
+            return n - Math.floor(n);
+        }
+
+        function getPixelWrapped(pixels, w, h, x, y, c) {
+            let wx = (x % w + w) % w;
+            let wy = (y % h + h) % h;
+            return pixels[(wy * w + wx) * 4 + c];
+        }
+
+        function getBlendAlpha(t, curveType, x, y) {
+            t = Math.max(0, Math.min(1, t));
+            if (curveType === 'sigmoid') {
+                return 1 / (1 + Math.exp(-10 * (t - 0.5)));
+            } else if (curveType === 'gaussian') {
+                return Math.exp(-Math.pow((t - 0.5) * 3, 2));
+            } else if (curveType === 'dither' || curveType === 'stochastic') {
+                let ditherVal = (pseudoNoise(x, y) - 0.5) * 0.3;
+                return Math.max(0, Math.min(1, t + ditherVal));
+            } else if (curveType === 'cosine') {
+                return 0.5 - 0.5 * Math.cos(Math.PI * t);
+            } else if (curveType === 'exponential') {
+                return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+            } else if (curveType === 'smoothstep') {
+                return t * t * (3 - 2 * t);
+            } else {
+                return t;
+            }
+        }
+
+        function getWarpOffset(i, mode, amp, freq, jitter) {
+            let offset = 0;
+            if (mode === 'sine') {
+                offset = Math.sin(i * freq) * amp + Math.cos(i * freq * 1.7) * (amp * 0.4);
+            } else if (mode === 'chaotic') {
+                offset = Math.sin(i * freq) * amp + Math.sin(i * freq * 2.7 + 1.2) * (amp * 0.6) + (pseudoNoise(i, 1) - 0.5) * amp * 0.5;
+            } else if (mode === 'jitter') {
+                offset = (pseudoNoise(i, 87) - 0.5) * amp * 1.8;
+            } else if (mode === 'fractal') {
+                offset = Math.sin(i * freq) * amp + Math.sin(i * freq * 2) * (amp * 0.5) + Math.sin(i * freq * 4) * (amp * 0.25);
+            }
+            if (jitter > 0) offset += (pseudoNoise(i, 42) - 0.5) * jitter;
+            return Math.round(offset);
+        }
+
+        function applyCyclicLumaBalance(pixels, w, h) {
+            let strength = parseInt(tilingState.luma_balance_strength) / 100;
+            if (strength <= 0) return;
+
+            let stripW = Math.max(2, Math.floor(w * 0.08));
+            let stripH = Math.max(2, Math.floor(h * 0.08));
+
+            let lumaL = 0, lumaR = 0, countX = 0;
+            for (let y = 0; y < h; y++) {
+                for (let x = 0; x < stripW; x++) {
+                    let idxL = (y * w + x) * 4;
+                    let idxR = (y * w + (w - 1 - x)) * 4;
+                    lumaL += 0.299 * pixels[idxL] + 0.587 * pixels[idxL+1] + 0.114 * pixels[idxL+2];
+                    lumaR += 0.299 * pixels[idxR] + 0.587 * pixels[idxR+1] + 0.114 * pixels[idxR+2];
+                    countX++;
+                }
+            }
+            lumaL /= countX; lumaR /= countX;
+
+            let lumaT = 0, lumaB = 0, countY = 0;
+            for (let x = 0; x < w; x++) {
+                for (let y = 0; y < stripH; y++) {
+                    let idxT = (y * w + x) * 4;
+                    let idxB = ((h - 1 - y) * w + x) * 4;
+                    lumaT += 0.299 * pixels[idxT] + 0.587 * pixels[idxT+1] + 0.114 * pixels[idxT+2];
+                    lumaB += 0.299 * pixels[idxB] + 0.587 * pixels[idxB+1] + 0.114 * pixels[idxB+2];
+                    countY++;
+                }
+            }
+            lumaT /= countY; lumaB /= countY;
+
+            for (let y = 0; y < h; y++) {
+                let factorY = -Math.cos((2 * Math.PI * y) / h);
+                let corrY = (lumaB - lumaT) * 0.25 * factorY * strength;
+
+                for (let x = 0; x < w; x++) {
+                    let factorX = -Math.cos((2 * Math.PI * x) / w);
+                    let corrX = (lumaR - lumaL) * 0.25 * factorX * strength;
+                    let corr = corrX + corrY;
+
+                    let idx = (y * w + x) * 4;
+                    for (let c = 0; c < 3; c++) {
+                        pixels[idx + c] = Math.min(255, Math.max(0, pixels[idx + c] + corr));
+                    }
+                }
+            }
+        }
+
+        function calcPixelCost(p1, p2, x, y, w, h, metric, gradW) {
+            let idx = (y * w + x) * 4;
+            let r1 = p1[idx], g1 = p1[idx+1], b1 = p1[idx+2];
+            let r2 = p2[idx], g2 = p2[idx+1], b2 = p2[idx+2];
+
+            let colorDist = 0;
+            if (metric === 'lab') {
+                let rmean = (r1 + r2) / 2;
+                let dr = r1 - r2, dg = g1 - g2, db = b1 - b2;
+                colorDist = Math.sqrt((2 + rmean/256)*dr*dr + 4*dg*dg + (2 + (255-rmean)/256)*db*db);
+            } else if (metric === 'rgb') {
+                colorDist = Math.sqrt((r1-r2)**2 + (g1-g2)**2 + (b1-b2)**2);
+            } else if (metric === 'luma') {
+                colorDist = Math.abs((0.299*r1 + 0.587*g1 + 0.114*b1) - (0.299*r2 + 0.587*g2 + 0.114*b2));
+            }
+
+            let gradDist = 0;
+            if (gradW > 0 && x > 0 && x < w - 1 && y > 0 && y < h - 1) {
+                let g1 = Math.abs(p1[idx + 4] - p1[idx - 4]) + Math.abs(p1[idx + w*4] - p1[idx - w*4]);
+                let g2 = Math.abs(p2[idx + 4] - p2[idx - 4]) + Math.abs(p2[idx + w*4] - p2[idx - w*4]);
+                gradDist = Math.abs(g1 - g2);
+            }
+
+            return colorDist + gradW * gradDist;
+        }
+
+        function computeDPPath(p1, p2, w, h, startOffset, bandSize, gradW, stiffness, metric, dir) {
+            let steps = (dir === 'vertical') ? h : w;
+            let dp = new Float32Array(steps * bandSize);
+            let trace = new Int32Array(steps * bandSize);
+
+            for (let k = 0; k < bandSize; k++) {
+                let x = (dir === 'vertical') ? startOffset + k : 0;
+                let y = (dir === 'vertical') ? 0 : startOffset + k;
+                dp[k] = calcPixelCost(p1, p2, x, y, w, h, metric, gradW);
+            }
+
+            for (let i = 1; i < steps; i++) {
+                for (let k = 0; k < bandSize; k++) {
+                    let x = (dir === 'vertical') ? startOffset + k : i;
+                    let y = (dir === 'vertical') ? i : startOffset + k;
+
+                    let cost = calcPixelCost(p1, p2, x, y, w, h, metric, gradW);
+                    let minPrev = dp[(i - 1) * bandSize + k];
+                    let bestOffset = 0;
+
+                    if (k > 0) {
+                        let cLeft = dp[(i - 1) * bandSize + k - 1] + stiffness * 10;
+                        if (cLeft < minPrev) { minPrev = cLeft; bestOffset = -1; }
+                    }
+                    if (k < bandSize - 1) {
+                        let cRight = dp[(i - 1) * bandSize + k + 1] + stiffness * 10;
+                        if (cRight < minPrev) { minPrev = cRight; bestOffset = 1; }
+                    }
+
+                    dp[i * bandSize + k] = cost + minPrev;
+                    trace[i * bandSize + k] = k + bestOffset;
+                }
+            }
+
+            let bestK = 0;
+            let minVal = Infinity;
+            for (let k = 0; k < bandSize; k++) {
+                if (dp[(steps - 1) * bandSize + k] < minVal) {
+                    minVal = dp[(steps - 1) * bandSize + k];
+                    bestK = k;
+                }
+            }
+
+            let path = new Int32Array(steps);
+            path[steps - 1] = bestK;
+            for (let i = steps - 1; i > 0; i--) {
+                path[i - 1] = trace[i * bandSize + path[i]];
+            }
+            return path;
+        }
+
+        function applyOpticalDynamicSeamEngine(pixels, w, h, offX, offY) {
+            let searchPct = parseInt(tilingState.seam_search) / 100;
+            let gradWeight = parseFloat(tilingState.seam_grad_weight);
+            let stiffness = parseFloat(tilingState.seam_stiffness);
+            let metric = tilingState.seam_metric;
+
+            let warpMode = tilingState.seam_warp_mode;
+            let warpAmp = parseFloat(tilingState.seam_warp_amp);
+            let warpFreq = parseFloat(tilingState.seam_warp_freq);
+            let warpJitter = parseFloat(tilingState.seam_warp_jitter);
+
+            let featherPx = parseInt(tilingState.seam_feather);
+            let overlapPx = parseInt(tilingState.seam_overlap);
+            let curveType = tilingState.seam_curve;
+            let totalBlendSpan = featherPx + overlapPx;
+
+            let bandW = Math.max(6, Math.floor(w * searchPct));
+            let bandH = Math.max(6, Math.floor(h * searchPct));
+
+            let refCanvas = document.createElement('canvas');
+            refCanvas.width = w; refCanvas.height = h;
+            let rctx = refCanvas.getContext('2d');
+            rctx.drawImage(tilingOriginalCanvas, 0, 0);
+            let refPixels = rctx.getImageData(0, 0, w, h).data;
+
+            let copyPixels = new Uint8ClampedArray(pixels);
+
+            let minX_L = Math.max(1, offX - bandW);
+            let width_L = Math.max(2, offX - minX_L);
+            let seamL = computeDPPath(copyPixels, refPixels, w, h, minX_L, width_L, gradWeight, stiffness, metric, 'vertical');
+
+            let minX_R = offX;
+            let width_R = Math.min(w - offX - 2, bandW);
+            let seamR = computeDPPath(copyPixels, refPixels, w, h, minX_R, width_R, gradWeight, stiffness, metric, 'vertical');
+
+            for (let y = 0; y < h; y++) {
+                let wave = getWarpOffset(y, warpMode, warpAmp, warpFreq, warpJitter);
+                seamL[y] = Math.max(0, Math.min(width_L - 1, seamL[y] + wave));
+                seamR[y] = Math.max(0, Math.min(width_R - 1, seamR[y] - wave));
+            }
+
+            for (let y = 0; y < h; y++) {
+                let cutL = minX_L + seamL[y];
+                let cutR = minX_R + seamR[y];
+
+                let xStart = Math.max(0, cutL - totalBlendSpan);
+                let xEnd = Math.min(w - 1, cutR + totalBlendSpan);
+
+                for (let x = xStart; x <= xEnd; x++) {
+                    let idx = (y * w + x) * 4;
+                    let alpha = 1.0;
+
+                    if (x < cutL + totalBlendSpan) {
+                        let t = (x - (cutL - totalBlendSpan)) / (2 * totalBlendSpan + 1);
+                        alpha = getBlendAlpha(t, curveType, x, y);
+                    } else if (x > cutR - totalBlendSpan) {
+                        let t = ((cutR + totalBlendSpan) - x) / (2 * totalBlendSpan + 1);
+                        alpha = getBlendAlpha(t, curveType, x, y);
+                    }
+
+                    for (let c = 0; c < 3; c++) {
+                        pixels[idx + c] = pixels[idx + c] * (1 - alpha) + refPixels[idx + c] * alpha;
+                    }
+                }
+            }
+
+            copyPixels.set(pixels);
+            let minY_T = Math.max(1, offY - bandH);
+            let height_T = Math.max(2, offY - minY_T);
+            let seamT = computeDPPath(copyPixels, refPixels, w, h, minY_T, height_T, gradWeight, stiffness, metric, 'horizontal');
+
+            let minY_B = offY;
+            let height_B = Math.min(h - offY - 2, bandH);
+            let seamB = computeDPPath(copyPixels, refPixels, w, h, minY_B, height_B, gradWeight, stiffness, metric, 'horizontal');
+
+            for (let x = 0; x < w; x++) {
+                let wave = getWarpOffset(x, warpMode, warpAmp, warpFreq, warpJitter);
+                seamT[x] = Math.max(0, Math.min(height_T - 1, seamT[x] + wave));
+                seamB[x] = Math.max(0, Math.min(height_B - 1, seamB[x] - wave));
+            }
+
+            for (let x = 0; x < w; x++) {
+                let cutT = minY_T + seamT[x];
+                let cutB = minY_B + seamB[x];
+
+                let yStart = Math.max(0, cutT - totalBlendSpan);
+                let yEnd = Math.min(h - 1, cutB + totalBlendSpan);
+
+                for (let y = yStart; y <= yEnd; y++) {
+                    let idx = (y * w + x) * 4;
+                    let alpha = 1.0;
+
+                    if (y < cutT + totalBlendSpan) {
+                        let t = (y - (cutT - totalBlendSpan)) / (2 * totalBlendSpan + 1);
+                        alpha = getBlendAlpha(t, curveType, x, y);
+                    } else if (y > cutB - totalBlendSpan) {
+                        let t = ((cutB + totalBlendSpan) - y) / (2 * totalBlendSpan + 1);
+                        alpha = getBlendAlpha(t, curveType, x, y);
+                    }
+
+                    for (let c = 0; c < 3; c++) {
+                        pixels[idx + c] = pixels[idx + c] * (1 - alpha) + refPixels[idx + c] * alpha;
+                    }
+                }
+            }
+
+            tilingLastSeams = { seamL, seamR, seamT, seamB, minX_L, minX_R, minY_T, minY_B };
+        }
+
+        function applyCosineFeather(pixels, w, h, sx, sy) {
+            let blendW = Math.floor(w * 0.15);
+            let ref = new Uint8ClampedArray(pixels);
+            for (let y = 0; y < h; y++) {
+                for (let x = 0; x < w; x++) {
+                    let dx = Math.abs(x - sx), dy = Math.abs(y - sy);
+                    if (dx < blendW || dy < blendW) {
+                        let idx = (y * w + x) * 4;
+                        let aX = dx < blendW ? 0.5 * (1 + Math.cos(Math.PI * (dx / blendW))) : 0;
+                        let aY = dy < blendW ? 0.5 * (1 + Math.cos(Math.PI * (dy / blendW))) : 0;
+                        let a = Math.max(aX, aY);
+                        let refIdx = (((y + sy) % h) * w + ((x + sx) % w)) * 4;
+                        for (let c = 0; c < 3; c++) {
+                            pixels[idx + c] = pixels[idx + c] * (1 - a) + ref[refIdx + c] * a;
+                        }
+                    }
+                }
+            }
+        }
+
+        function applyFlatField(pixels, w, h) {
+            let str = parseFloat(tilingState.flat_strength);
+            for (let y = 0; y < h; y++) {
+                let ny = (y - h/2)/(h/2);
+                for (let x = 0; x < w; x++) {
+                    let nx = (x - w/2)/(w/2);
+                    let idx = (y * w + x) * 4;
+                    let illum = Math.max(0.2, 1.0 - (nx*nx + ny*ny) * 0.4);
+                    for (let c = 0; c < 3; c++) {
+                        pixels[idx + c] = Math.min(255, Math.max(0, pixels[idx + c] / (illum * str + (1 - str))));
+                    }
+                }
+            }
+        }
+
+        function applyCyclicOffset(pctx, w, h, sx, sy) {
+            let tmp = document.createElement('canvas');
+            tmp.width = w; tmp.height = h;
+            let tctx = tmp.getContext('2d');
+            tctx.drawImage(pctx.canvas, 0, 0);
+
+            pctx.clearRect(0, 0, w, h);
+            pctx.drawImage(tmp, 0, 0, w - sx, h - sy, sx, sy, w - sx, h - sy);
+            pctx.drawImage(tmp, w - sx, 0, sx, h - sy, 0, sy, sx, h - sy);
+            pctx.drawImage(tmp, 0, h - sy, w - sx, sy, sx, 0, w - sx, sy);
+            pctx.drawImage(tmp, w - sx, h - sy, sx, sy, 0, 0, sx, sy);
+        }
+
+        function applyToroidalPostFX(pixels, w, h) {
+            let gain = parseFloat(tilingState.freq_gain);
+            let rad = parseInt(tilingState.freq_radius);
+            let sharp = parseFloat(tilingState.sharpen);
+            let microContrast = parseFloat(tilingState.micro_contrast);
+            let noise = parseFloat(tilingState.micro_noise) * 2.55;
+            let noiseScale = tilingState.micro_noise_scale;
+
+            let copy = new Uint8ClampedArray(pixels);
+
+            for (let y = 0; y < h; y++) {
+                for (let x = 0; x < w; x++) {
+                    let idx = (y * w + x) * 4;
+                    for (let c = 0; c < 3; c++) {
+                        let val = copy[idx + c];
+
+                        if (gain > 1.0) {
+                            let blurVal = (
+                                getPixelWrapped(copy, w, h, x - rad, y, c) +
+                                getPixelWrapped(copy, w, h, x + rad, y, c) +
+                                getPixelWrapped(copy, w, h, x, y - rad, c) +
+                                getPixelWrapped(copy, w, h, x, y + rad, c)
+                            ) / 4;
+                            val += (val - blurVal) * (gain - 1.0);
+                        }
+
+                        if (sharp > 0) {
+                            let neighbors = (
+                                getPixelWrapped(copy, w, h, x, y - 1, c) +
+                                getPixelWrapped(copy, w, h, x, y + 1, c) +
+                                getPixelWrapped(copy, w, h, x - 1, y, c) +
+                                getPixelWrapped(copy, w, h, x + 1, y, c)
+                            ) / 4;
+                            val += (val - neighbors) * sharp;
+                        }
+
+                        if (microContrast !== 1.0) {
+                            val = 128 + (val - 128) * microContrast;
+                        }
+
+                        if (noise > 0) {
+                            let scaleFactor = noiseScale === 'fine' ? 1 : noiseScale === 'medium' ? 2 : 4;
+                            let wx = Math.floor(x / scaleFactor);
+                            let wy = Math.floor(y / scaleFactor);
+                            let rnd = (pseudoNoise(wx, wy) - 0.5) * noise;
+                            val += rnd;
+                        }
+
+                        pixels[idx + c] = Math.min(255, Math.max(0, val));
+                    }
+                }
+            }
+        }
+
+        function enforceAdvancedToroidalGuard(pixels, w, h) {
+            let guardW = parseInt(tilingState.guard_width || 16);
+            let mixStr = parseInt(tilingState.guard_mix_strength || 85) / 100;
+            let blendMode = tilingState.guard_blend_mode || tilingState.guard_curve || 'cosine';
+            let jitterMax = parseInt(tilingState.guard_jitter || tilingState.guard_warp_amp || 8);
+            let freq = parseFloat(tilingState.guard_frequency || tilingState.guard_warp_freq || 0.08);
+            let preserveDetail = parseInt(tilingState.guard_detail_preserve || 70) / 100;
+
+            let copy = new Uint8ClampedArray(pixels);
+
+            // 1. Left-Right Boundary Blend
+            for (let y = 0; y < h; y++) {
+                let wave = Math.sin(y * freq) * jitterMax + (pseudoNoise(y, 19) - 0.5) * jitterMax;
+                let effGuardW = Math.max(2, Math.round(guardW + wave));
+
+                for (let x = 0; x < effGuardW; x++) {
+                    let idxL = (y * w + x) * 4;
+                    let idxR = (y * w + (w - 1 - x)) * 4;
+
+                    let normT = x / effGuardW;
+                    let alphaCurve = getBlendAlpha(1 - normT, blendMode, x, y);
+                    let factor = 0.5 * alphaCurve * mixStr;
+
+                    for (let c = 0; c < 3; c++) {
+                        let valL = copy[idxL + c];
+                        let valR = copy[idxR + c];
+
+                        let newL = valL * (1 - factor) + valR * factor;
+                        let newR = valR * (1 - factor) + valL * factor;
+
+                        if (preserveDetail > 0) {
+                            let detailL = valL - ((getPixelWrapped(copy, w, h, x-1, y, c) + getPixelWrapped(copy, w, h, x+1, y, c)) / 2);
+                            let detailR = valR - ((getPixelWrapped(copy, w, h, w-1-x-1, y, c) + getPixelWrapped(copy, w, h, w-1-x+1, y, c)) / 2);
+                            newL += detailL * preserveDetail * (1 - factor);
+                            newR += detailR * preserveDetail * (1 - factor);
+                        }
+
+                        pixels[idxL + c] = Math.min(255, Math.max(0, Math.round(newL)));
+                        pixels[idxR + c] = Math.min(255, Math.max(0, Math.round(newR)));
+                    }
+                }
+            }
+
+            copy.set(pixels);
+
+            // 2. Top-Bottom Boundary Blend
+            for (let x = 0; x < w; x++) {
+                let wave = Math.sin(x * freq) * jitterMax + (pseudoNoise(x, 73) - 0.5) * jitterMax;
+                let effGuardH = Math.max(2, Math.round(guardW + wave));
+
+                for (let y = 0; y < effGuardH; y++) {
+                    let idxT = (y * w + x) * 4;
+                    let idxB = ((h - 1 - y) * w + x) * 4;
+
+                    let normT = y / effGuardH;
+                    let alphaCurve = getBlendAlpha(1 - normT, blendMode, x, y);
+                    let factor = 0.5 * alphaCurve * mixStr;
+
+                    for (let c = 0; c < 3; c++) {
+                        let valT = copy[idxT + c];
+                        let valB = copy[idxB + c];
+
+                        let newT = valT * (1 - factor) + valB * factor;
+                        let newB = valB * (1 - factor) + valT * factor;
+
+                        if (preserveDetail > 0) {
+                            let detailT = valT - ((getPixelWrapped(copy, w, h, x, y-1, c) + getPixelWrapped(copy, w, h, x, y+1, c)) / 2);
+                            let detailB = valB - ((getPixelWrapped(copy, w, h, x, h-1-y-1, c) + getPixelWrapped(copy, w, h, x, h-1-y+1, c)) / 2);
+                            newT += detailT * preserveDetail * (1 - factor);
+                            newB += detailB * preserveDetail * (1 - factor);
+                        }
+
+                        pixels[idxT + c] = Math.min(255, Math.max(0, Math.round(newT)));
+                        pixels[idxB + c] = Math.min(255, Math.max(0, Math.round(newB)));
+                    }
+                }
+            }
+
+            // 3. Toroidal Boundary Seam Edge Blur
+            let guardBlurRad = parseInt(tilingState.guard_blur_radius || 0);
+            if (guardBlurRad > 0) {
+                applyToroidalBoundaryEdgeBlur(pixels, w, h, guardBlurRad);
+            }
+        }
+
+        function applyToroidalBoundaryEdgeBlur(pixels, w, h, blurRadius) {
+            if (blurRadius <= 0) return;
+            let copy = new Uint8ClampedArray(pixels);
+            let rad = Math.min(25, Math.round(blurRadius));
+
+            function getBlurredVal(x, y, c) {
+                let sum = 0, count = 0;
+                let step = Math.max(1, Math.floor(rad / 4));
+                for (let dy = -rad; dy <= rad; dy += step) {
+                    for (let dx = -rad; dx <= rad; dx += step) {
+                        let wx = (x + dx + w) % w;
+                        let wy = (y + dy + h) % h;
+                        sum += copy[(wy * w + wx) * 4 + c];
+                        count++;
+                    }
+                }
+                return count > 0 ? sum / count : copy[(y * w + x) * 4 + c];
+            }
+
+            for (let y = 0; y < h; y++) {
+                for (let dx = 0; dx <= rad; dx++) {
+                    let alpha = (1 - dx / (rad + 1)) * 0.6;
+                    let idxL = (y * w + dx) * 4;
+                    let idxR = (y * w + (w - 1 - dx)) * 4;
+                    for (let c = 0; c < 3; c++) {
+                        let blurL = getBlurredVal(dx, y, c);
+                        pixels[idxL + c] = Math.round(pixels[idxL + c] * (1 - alpha) + blurL * alpha);
+                        let blurR = getBlurredVal(w - 1 - dx, y, c);
+                        pixels[idxR + c] = Math.round(pixels[idxR + c] * (1 - alpha) + blurR * alpha);
+                    }
+                }
+            }
+
+            for (let x = 0; x < w; x++) {
+                for (let dy = 0; dy <= rad; dy++) {
+                    let alpha = (1 - dy / (rad + 1)) * 0.6;
+                    let idxT = (dy * w + x) * 4;
+                    let idxB = ((h - 1 - dy) * w + x) * 4;
+                    for (let c = 0; c < 3; c++) {
+                        let blurT = getBlurredVal(x, dy, c);
+                        pixels[idxT + c] = Math.round(pixels[idxT + c] * (1 - alpha) + blurT * alpha);
+                        let blurB = getBlurredVal(x, h - 1 - dy, c);
+                        pixels[idxB + c] = Math.round(pixels[idxB + c] * (1 - alpha) + blurB * alpha);
+                    }
+                }
+            }
+        }
+
+        function drawDebugSeams(pctx, w, h) {
+            let s = tilingLastSeams;
+            if (!s) return;
+            pctx.fillStyle = 'rgba(239, 68, 68, 0.9)';
+            for (let y = 0; y < h; y++) {
+                pctx.fillRect(s.minX_L + s.seamL[y], y, 2, 1);
+                pctx.fillRect(s.minX_R + s.seamR[y], y, 2, 1);
+            }
+            pctx.fillStyle = 'rgba(16, 185, 129, 0.9)';
+            for (let x = 0; x < w; x++) {
+                pctx.fillRect(x, s.minY_T + s.seamT[x], 1, 2);
+                pctx.fillRect(x, s.minY_B + s.seamB[x], 1, 2);
+            }
+        }
+
+        function applyTilingStamp(tx, ty, sx, sy) {
+            if (!tilingProcessedCanvas) return;
+            let pctx = tilingProcessedCanvas.getContext('2d');
+            let w = tilingProcessedCanvas.width;
+            let h = tilingProcessedCanvas.height;
+            if (w <= 0 || h <= 0) return;
+
+            ensureTilingStampCanvas(w, h);
+            let sctx = tilingStampCanvas.getContext('2d');
+
+            let size = parseInt(tilingState.stamp_size);
+            let opacity = parseInt(tilingState.stamp_opacity) / 100;
+            let softness = parseInt(tilingState.stamp_softness) / 100;
+
+            let baseTx = (Math.floor(tx) % w + w) % w;
+            let baseTy = (Math.floor(ty) % h + h) % h;
+            let baseSx = (Math.floor(sx) % w + w) % w;
+            let baseSy = (Math.floor(sy) % h + h) % h;
+
+            if (tilingState.stamp_mode === 'erase') {
+                let tempCanvas = document.createElement('canvas');
+                tempCanvas.width = size * 2;
+                tempCanvas.height = size * 2;
+                let tCtx = tempCanvas.getContext('2d');
+
+                let grad = tCtx.createRadialGradient(size, size, Math.max(0.1, size * (1 - softness)), size, size, size);
+                grad.addColorStop(0, `rgba(0, 0, 0, ${opacity})`);
+                grad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+                tCtx.fillStyle = grad;
+                tCtx.beginPath();
+                tCtx.arc(size, size, size, 0, Math.PI * 2);
+                tCtx.fill();
+
+                sctx.save();
+                sctx.globalCompositeOperation = 'destination-out';
+                for (let i = -1; i <= 1; i++) {
+                    for (let j = -1; j <= 1; j++) {
+                        let dx = baseTx - size + i * w;
+                        let dy = baseTy - size + j * h;
+                        sctx.drawImage(tempCanvas, dx, dy);
+                    }
+                }
+                sctx.restore();
+                runTilingPipeline();
+                return;
+            }
+
+            let tempCanvas = document.createElement('canvas');
+            tempCanvas.width = size * 2;
+            tempCanvas.height = size * 2;
+            let tCtx = tempCanvas.getContext('2d');
+
+            tCtx.save();
+            tCtx.translate(size - baseSx, size - baseSy);
+            for (let i = -1; i <= 1; i++) {
+                for (let j = -1; j <= 1; j++) {
+                    tCtx.drawImage(tilingProcessedCanvas, i * w, j * h);
+                }
+            }
+            tCtx.restore();
+
+            tCtx.globalCompositeOperation = 'destination-in';
+            let grad = tCtx.createRadialGradient(size, size, Math.max(0.1, size * (1 - softness)), size, size, size);
+            grad.addColorStop(0, 'rgba(0,0,0,1)');
+            grad.addColorStop(1, 'rgba(0,0,0,0)');
+            tCtx.fillStyle = grad;
+            tCtx.beginPath();
+            tCtx.arc(size, size, size, 0, Math.PI * 2);
+            tCtx.fill();
+
+            pctx.globalAlpha = opacity;
+            sctx.globalAlpha = opacity;
+            for (let i = -1; i <= 1; i++) {
+                for (let j = -1; j <= 1; j++) {
+                    let dx = baseTx - size + i * w;
+                    let dy = baseTy - size + j * h;
+                    pctx.drawImage(tempCanvas, dx, dy);
+                    sctx.drawImage(tempCanvas, dx, dy);
+                }
+            }
+            pctx.globalAlpha = 1.0;
+            sctx.globalAlpha = 1.0;
+        }
+
+        function applyTilingMaskBrush(tx, ty) {
+            if (!tilingOriginalCanvas) return;
+            let w = tilingOriginalCanvas.width;
+            let h = tilingOriginalCanvas.height;
+            if (w <= 0 || h <= 0) return;
+
+            ensureTilingMaskCanvas(w, h);
+            let mctx = tilingMaskCanvas.getContext('2d');
+
+            let size = parseInt(tilingState.mask_brush_size || 30);
+            let opacity = parseInt(tilingState.mask_brush_opacity || 80) / 100;
+            let softness = parseInt(tilingState.mask_brush_softness || 60) / 100;
+            let mode = tilingState.mask_brush_mode || 'erase_seam';
+
+            let baseTx = (Math.floor(tx) % w + w) % w;
+            let baseTy = (Math.floor(ty) % h + h) % h;
+
+            let tempCanvas = document.createElement('canvas');
+            tempCanvas.width = size * 2;
+            tempCanvas.height = size * 2;
+            let tCtx = tempCanvas.getContext('2d');
+
+            let grad = tCtx.createRadialGradient(size, size, Math.max(0.1, size * (1 - softness)), size, size, size);
+            grad.addColorStop(0, `rgba(255, 255, 255, ${opacity})`);
+            grad.addColorStop(1, 'rgba(255, 255, 255, 0)');
+            tCtx.fillStyle = grad;
+            tCtx.beginPath();
+            tCtx.arc(size, size, size, 0, Math.PI * 2);
+            tCtx.fill();
+
+            mctx.save();
+            if (mode === 'erase_seam') {
+                mctx.globalCompositeOperation = 'source-over';
+            } else {
+                mctx.globalCompositeOperation = 'destination-out';
+            }
+
+            for (let i = -1; i <= 1; i++) {
+                for (let j = -1; j <= 1; j++) {
+                    let dx = baseTx - size + i * w;
+                    let dy = baseTy - size + j * h;
+                    mctx.drawImage(tempCanvas, dx, dy);
+                }
+            }
+            mctx.restore();
+        }
+
+        function applySeamEdgeBlur(pixels, w, h, blurRadius) {
+            if (blurRadius <= 0 || !tilingLastSeams) return;
+            let s = tilingLastSeams;
+            let copy = new Uint8ClampedArray(pixels);
+            let rad = Math.min(25, Math.round(blurRadius));
+
+            function getBlurredVal(x, y, c) {
+                let sum = 0, count = 0;
+                let step = Math.max(1, Math.floor(rad / 4));
+                for (let dy = -rad; dy <= rad; dy += step) {
+                    for (let dx = -rad; dx <= rad; dx += step) {
+                        let wx = (x + dx % w + w) % w;
+                        let wy = (y + dy % h + h) % h;
+                        sum += copy[(wy * w + wx) * 4 + c];
+                        count++;
+                    }
+                }
+                return count > 0 ? sum / count : copy[(y * w + x) * 4 + c];
+            }
+
+            for (let y = 0; y < h; y++) {
+                let cutL = s.minX_L + (s.seamL[y] || 0);
+                let cutR = s.minX_R + (s.seamR[y] || 0);
+
+                for (let dx = -rad; dx <= rad; dx++) {
+                    let xL = (cutL + dx + w) % w;
+                    let dist = Math.abs(dx) / (rad || 1);
+                    let alpha = Math.max(0, 1 - dist) * 0.7;
+                    let idxL = (y * w + xL) * 4;
+                    for (let c = 0; c < 3; c++) {
+                        let blurV = getBlurredVal(xL, y, c);
+                        pixels[idxL + c] = Math.round(pixels[idxL + c] * (1 - alpha) + blurV * alpha);
+                    }
+
+                    let xR = (cutR + dx + w) % w;
+                    let idxR = (y * w + xR) * 4;
+                    for (let c = 0; c < 3; c++) {
+                        let blurV = getBlurredVal(xR, y, c);
+                        pixels[idxR + c] = Math.round(pixels[idxR + c] * (1 - alpha) + blurV * alpha);
+                    }
+                }
+            }
+
+            for (let x = 0; x < w; x++) {
+                let cutT = s.minY_T + (s.seamT[x] || 0);
+                let cutB = s.minY_B + (s.seamB[x] || 0);
+
+                for (let dy = -rad; dy <= rad; dy++) {
+                    let yT = (cutT + dy + h) % h;
+                    let dist = Math.abs(dy) / (rad || 1);
+                    let alpha = Math.max(0, 1 - dist) * 0.7;
+                    let idxT = (yT * w + x) * 4;
+                    for (let c = 0; c < 3; c++) {
+                        let blurV = getBlurredVal(x, yT, c);
+                        pixels[idxT + c] = Math.round(pixels[idxT + c] * (1 - alpha) + blurV * alpha);
+                    }
+
+                    let yB = (cutB + dy + h) % h;
+                    let idxB = (yB * w + x) * 4;
+                    for (let c = 0; c < 3; c++) {
+                        let blurV = getBlurredVal(x, yB, c);
+                        pixels[idxB + c] = Math.round(pixels[idxB + c] * (1 - alpha) + blurV * alpha);
+                    }
+                }
+            }
+        }
+
+        function runTilingPipeline() {
+            if (!tilingState.hasImage || !tilingOriginalCanvas) return;
+            let t0 = performance.now();
+            let w = tilingOriginalCanvas.width;
+            let h = tilingOriginalCanvas.height;
+            if (w <= 0 || h <= 0) return;
+
+            if (!tilingProcessedCanvas) {
+                tilingProcessedCanvas = document.createElement('canvas');
+            }
+            tilingProcessedCanvas.width = w;
+            tilingProcessedCanvas.height = h;
+
+            let pctx = tilingProcessedCanvas.getContext('2d');
+            pctx.drawImage(tilingOriginalCanvas, 0, 0);
+
+            let imgData = pctx.getImageData(0, 0, w, h);
+            let pixels = imgData.data;
+
+            if (tilingState.luma_balance_enable) {
+                applyCyclicLumaBalance(pixels, w, h);
+            }
+
+            if (tilingState.flat_enable) {
+                applyFlatField(pixels, w, h);
+            }
+
+            pctx.putImageData(imgData, 0, 0);
+
+            let offX = Math.floor(w * (parseInt(tilingState.offset_x) / 100));
+            let offY = Math.floor(h * (parseInt(tilingState.offset_y) / 100));
+            applyCyclicOffset(pctx, w, h, offX, offY);
+
+            imgData = pctx.getImageData(0, 0, w, h);
+            pixels = imgData.data;
+
+            let algo = tilingState.seam_algo;
+            if (algo.startsWith('dp')) {
+                applyOpticalDynamicSeamEngine(pixels, w, h, offX, offY);
+            } else {
+                applyCosineFeather(pixels, w, h, offX, offY);
+            }
+
+            if (tilingState.seam_blur_radius > 0) {
+                applySeamEdgeBlur(pixels, w, h, parseInt(tilingState.seam_blur_radius));
+            }
+
+            applyToroidalPostFX(pixels, w, h);
+
+            if (tilingState.guard_enable) {
+                enforceAdvancedToroidalGuard(pixels, w, h);
+            }
+
+            pctx.putImageData(imgData, 0, 0);
+
+            if (tilingMaskCanvas && tilingMaskCanvas.width === w && tilingMaskCanvas.height === h) {
+                let maskTemp = document.createElement('canvas');
+                maskTemp.width = w; maskTemp.height = h;
+                let mctx = maskTemp.getContext('2d');
+                mctx.drawImage(tilingOriginalCanvas, 0, 0);
+                mctx.globalCompositeOperation = 'destination-in';
+                mctx.drawImage(tilingMaskCanvas, 0, 0);
+
+                pctx.drawImage(maskTemp, 0, 0);
+            }
+
+            if (tilingStampCanvas && tilingStampCanvas.width === w && tilingStampCanvas.height === h) {
+                pctx.drawImage(tilingStampCanvas, 0, 0);
+            }
+
+            if (tilingState.showSeams && tilingLastSeams) {
+                drawDebugSeams(pctx, w, h);
+            }
+
+            let t1 = performance.now();
+            let badge = $('tilingStatusBadge');
+            if (badge) badge.innerText = `Оброблено за ${(t1 - t0).toFixed(1)} мс`;
+
+            if (currentTab === 'tiling') {
+                renderTilingView();
+            }
+        }
+
+        function renderTilingView() {
+            if (!canvas) return;
+            let cx = canvas.getContext('2d');
+            if (!tilingProcessedCanvas || !tilingState.hasImage) {
+                canvas.width = canvasResolution;
+                canvas.height = canvasResolution;
+                cx.fillStyle = '#0f0f11';
+                cx.fillRect(0, 0, canvas.width, canvas.height);
+                cx.fillStyle = '#9ca3af';
+                cx.font = '14px sans-serif';
+                cx.textAlign = 'center';
+                cx.fillText('Немає текстури для тайлінгу. Отримайте з проєкту або завантажте.', canvas.width/2, canvas.height/2);
+                return;
+            }
+
+            let w = tilingProcessedCanvas.width;
+            let h = tilingProcessedCanvas.height;
+            let m = tilingState.currentViewMode;
+            let showGrid = tilingState.showGrid;
+
+            if (m === 'single') {
+                canvas.width = w; canvas.height = h;
+                cx.drawImage(tilingProcessedCanvas, 0, 0);
+            } else if (m === 'original') {
+                canvas.width = tilingOriginalCanvas.width; canvas.height = tilingOriginalCanvas.height;
+                cx.drawImage(tilingOriginalCanvas, 0, 0);
+            } else if (m === 'tiled') {
+                canvas.width = w * 2; canvas.height = h * 2;
+                cx.drawImage(tilingProcessedCanvas, 0, 0, w, h);
+                cx.drawImage(tilingProcessedCanvas, w, 0, w, h);
+                cx.drawImage(tilingProcessedCanvas, 0, h, w, h);
+                cx.drawImage(tilingProcessedCanvas, w, h, w, h);
+
+                if (showGrid) {
+                    cx.strokeStyle = 'rgba(59, 130, 246, 0.8)'; cx.lineWidth = 2;
+                    cx.beginPath();
+                    cx.moveTo(w, 0); cx.lineTo(w, h * 2); cx.moveTo(0, h); cx.lineTo(w * 2, h);
+                    cx.stroke();
+                }
+            } else if (m === 'tiled3') {
+                canvas.width = w * 3; canvas.height = h * 3;
+                for (let r = 0; r < 3; r++) {
+                    for (let c = 0; c < 3; c++) {
+                        cx.drawImage(tilingProcessedCanvas, c * w, r * h, w, h);
+                    }
+                }
+                if (showGrid) {
+                    cx.strokeStyle = 'rgba(59, 130, 246, 0.8)'; cx.lineWidth = 2;
+                    cx.beginPath();
+                    cx.moveTo(w, 0); cx.lineTo(w, h * 3); cx.moveTo(w * 2, 0); cx.lineTo(w * 2, h * 3);
+                    cx.moveTo(0, h); cx.lineTo(w * 3, h); cx.moveTo(0, h * 2); cx.lineTo(w * 3, h * 2);
+                    cx.stroke();
+                }
+            }
+
+            if ($('resolutionInfo')) {
+                $('resolutionInfo').textContent = `${w} × ${h} (Тайлінг ${m})`;
+            }
+
+            if ((tilingState.stamp_enable || tilingState.mask_brush_enable) && m !== 'original') {
+                let size = tilingState.stamp_enable ? parseInt(tilingState.stamp_size) : parseInt(tilingState.mask_brush_size);
+
+                if (stampCursorX > -9999) {
+                    cx.beginPath();
+                    cx.arc(stampCursorX, stampCursorY, size, 0, Math.PI * 2);
+                    let color = tilingState.mask_brush_enable ? 'rgba(168, 85, 247, 0.9)' : (tilingState.stamp_mode === 'erase' ? 'rgba(239, 68, 68, 0.9)' : 'rgba(255, 255, 255, 0.9)');
+                    cx.strokeStyle = color;
+                    cx.lineWidth = 1.5;
+                    cx.stroke();
+                    cx.beginPath();
+                    cx.arc(stampCursorX, stampCursorY, size, 0, Math.PI * 2);
+                    cx.strokeStyle = 'rgba(0, 0, 0, 0.7)';
+                    cx.lineWidth = 1;
+                    cx.setLineDash([4, 4]);
+                    cx.stroke();
+                    cx.setLineDash([]);
+                }
+
+                if (tilingState.stamp_enable && stampSource && tilingState.stamp_mode !== 'erase') {
+                    let sX = stampSource.x;
+                    let sY = stampSource.y;
+
+                    cx.beginPath();
+                    cx.arc(sX, sY, size, 0, Math.PI * 2);
+                    cx.strokeStyle = 'rgba(16, 185, 129, 0.9)';
+                    cx.lineWidth = 1.5;
+                    cx.stroke();
+
+                    cx.beginPath();
+                    cx.moveTo(sX - 4, sY); cx.lineTo(sX + 4, sY);
+                    cx.moveTo(sX, sY - 4); cx.lineTo(sX, sY + 4);
+                    cx.stroke();
+                }
+            }
+        }
+
+        function renderTilingPanel() {
+            let t = tilingState;
+            let acc = t.accordions;
+            let toggleAcc = (key) => `onclick="toggleTilingAccordion('${key}')"`;
+            let isAccOpen = (key) => acc[key] ? 'show' : '';
+            let isAccChev = (key) => acc[key] ? 'open' : '';
+
+            let panel = $('propertiesPanel');
+            if (!panel) return;
+
+            panel.innerHTML = `
+                <div class="property-group" style="display:grid; grid-template-columns:1fr 1fr; gap:6px;">
+                    <button onclick="captureProjectToTiling()" class="btn btn-primary" style="font-size:11px; padding:6px 4px;" title="Захопити результат з поточного проєкту">📸 З проєкту</button>
+                    <button onclick="$('tilingImageInput').click()" class="btn btn-secondary" style="font-size:11px; padding:6px 4px;" title="Завантажити власне фото для тайлінгу">📂 Завантажити</button>
+                    <button onclick="applyTilingToLayer()" class="btn btn-secondary" style="font-size:11px; padding:6px 4px;" title="Створити новий Paint шар з цим безшовним талом">🎨 У новий шар</button>
+                    <button onclick="openTilingExportModal()" class="btn btn-success" style="font-size:11px; padding:6px 4px;" title="Зберегти PNG зображення">💾 Зберегти PNG</button>
+                </div>
+
+                <div class="property-group" style="display:grid; grid-template-columns:1fr 1fr; gap:6px;">
+                    <button type="button" class="btn btn-secondary" onclick="undo()" style="font-size:11px;" ${historyIndex <= 0 ? 'disabled' : ''}>↩ Скасувати (Undo)</button>
+                    <button type="button" class="btn btn-secondary" onclick="redo()" style="font-size:11px;" ${historyIndex >= history.length - 1 ? 'disabled' : ''}>↪ Повторити (Redo)</button>
+                </div>
+
+                <div class="property-group">
+                    <button onclick="resetTilingToDefaults()" class="btn btn-secondary" style="width:100%; font-size:11px;" title="Скинути всі налаштування тайлінгу">🔄 Скинути параметри тайлінгу</button>
+                </div>
+
+                <hr>
+
+                <div class="sidebar-section">
+                    <div class="section-title">📦 Професійні Пресети</div>
+                    <div class="control-group">
+                        <select id="presetSelect" onchange="applyTilingPreset(this.value)" class="form-control">
+                            <option value="organic" ${t.preset==='organic'?'selected':''}>Органіка (Камінь, Земля, Трава)</option>
+                            <option value="pattern" ${t.preset==='pattern'?'selected':''}>Геометрія / Плитка / Бруківка</option>
+                            <option value="wood" ${t.preset==='wood'?'selected':''}>Дерево / Текстиль</option>
+                            <option value="micro" ${t.preset==='micro'?'selected':''}>Максимальні деталі (Micro-Highpass)</option>
+                        </select>
+                    </div>
+                </div>
+
+                <hr>
+
+                <div class="sidebar-section">
+                    <div class="section-title">👁️ Режим перегляду</div>
+                    <div class="gen-grid" style="grid-template-columns:repeat(4,1fr); gap:4px; margin-bottom:8px;">
+                        <button class="gen-btn ${t.currentViewMode==='single'?'active':''}" onclick="setViewModeTiling('single')">1x1</button>
+                        <button class="gen-btn ${t.currentViewMode==='tiled'?'active':''}" onclick="setViewModeTiling('tiled')">2x2 Grid</button>
+                        <button class="gen-btn ${t.currentViewMode==='tiled3'?'active':''}" onclick="setViewModeTiling('tiled3')">3x3 Grid</button>
+                        <button class="gen-btn ${t.currentViewMode==='original'?'active':''}" onclick="setViewModeTiling('original')">Оригінал</button>
+                    </div>
+                    <div class="toggle-row">
+                        <span style="font-size:11px;">📐 Лінії сітки:</span>
+                        <label class="switch"><input type="checkbox" ${t.showGrid?'checked':''} onchange="tilingState.showGrid=this.checked; renderTilingView();"><span class="slider"></span></label>
+                    </div>
+                    <div id="tilingStatusBadge" style="font-size:10px; color:var(--accent-green, #10b981); font-family:monospace; margin-top:4px;">
+                        ${t.hasImage ? 'Готовий' : 'Очікування зображення...'}
+                    </div>
+                </div>
+
+                <hr>
+
+                <!-- 1. ШТАМП -->
+                <div class="sidebar-section" style="background-color: rgba(6, 182, 212, 0.08); padding:8px; border-radius:6px; margin-bottom:8px;">
+                    <div class="section-header" ${toggleAcc('stamp')}>
+                        <span class="section-title" style="color: #06b6d4; margin:0; border:none;"><span class="algo-badge" style="background: rgba(6, 182, 212, 0.2); color: #06b6d4;">🖌️ STAMP</span> Інструмент Штамп</span>
+                        <span class="chevron ${isAccChev('stamp')}" id="acc_tiling_stamp_chev">▼</span>
+                    </div>
+                    <div class="accordion-content ${isAccOpen('stamp')}" id="acc_tiling_stamp">
+                        <div class="toggle-row" style="margin-bottom: 6px;">
+                            <span style="font-weight: 600;">Увімкнути Штамп</span>
+                            <label class="switch"><input type="checkbox" id="stamp_enable" ${t.stamp_enable?'checked':''} onchange="toggleTilingStamp(this.checked)"><span class="slider"></span></label>
+                        </div>
+
+                        <div class="control-group" style="margin-bottom:8px;">
+                            <label class="control-label">Режим штампу:</label>
+                            <div class="gen-grid" style="grid-template-columns: 1fr 1fr; gap: 4px;">
+                                <button type="button" class="gen-btn ${t.stamp_mode !== 'erase' ? 'active' : ''}" onclick="tilingState.stamp_mode='clone'; renderTilingPanel();">🎯 Клон (Clone)</button>
+                                <button type="button" class="gen-btn ${t.stamp_mode === 'erase' ? 'active' : ''}" onclick="tilingState.stamp_mode='erase'; renderTilingPanel();">🧹 Стерти (Eraser)</button>
+                            </div>
+                        </div>
+
+                        ${t.stamp_mode !== 'erase' ? `
+                            <div class="toggle-row" style="margin-bottom: 8px;">
+                                <span style="font-size:11px;">Переміщати джерело (Aligned):</span>
+                                <label class="switch"><input type="checkbox" ${t.stamp_aligned?'checked':''} onchange="tilingState.stamp_aligned=this.checked; renderTilingPanel();"><span class="slider"></span></label>
+                            </div>
+
+                            <button onclick="toggleSelectingStampSource()" class="btn ${selectingStampSource ? 'btn-primary' : 'btn-secondary'}" style="width:100%; margin-bottom:8px; font-size:11px; padding:6px 8px; display:flex; align-items:center; justify-content:center; gap:6px;">
+                                <span>🎯</span>
+                                <span>${selectingStampSource ? 'Клікніть на полотні для вибору точки' : 'Обрати точку джерела (зразка)'}</span>
+                            </button>
+
+                            ${selectingStampSource ? `
+                                <div style="background: rgba(6, 182, 212, 0.2); color: #06b6d4; font-size:11px; padding:6px; border-radius:4px; margin-bottom:8px; text-align:center; font-weight:600;">
+                                    👉 Торкніться або клікніть у будь-якому місці текстури, щоб встановити маркер зразка.
+                                </div>
+                            ` : `
+                                <div class="hint-text" style="margin-bottom:8px;">
+                                    <b>Підказка:</b> Натисніть кнопку вище або затисніть <b>SHIFT / ALT</b> і торкніться полотна.
+                                </div>
+                            `}
+                        ` : ''}
+
+                        ${tilingSlider("Розмір пензля", "stamp_size", 5, 200, 1, "px", 30)}
+                        ${tilingSlider("Непрозорість", "stamp_opacity", 1, 100, 1, "%", 80)}
+                        ${tilingSlider("М'якість країв", "stamp_softness", 0, 100, 1, "%", 60)}
+
+                        <button type="button" class="btn btn-secondary" style="width:100%; margin-top:8px; color:#ef4444; border-color:rgba(239,68,68,0.3); font-size:11px;" onclick="clearTilingStampCanvas(); runTilingPipeline(); commitHistorySnapshot();">🗑️ Очистити штрихи штампу</button>
+                    </div>
+                </div>
+
+                <!-- 1b. ТАЙЛІНГ СТЕРТИ / ВІДНОВИТИ -->
+                <div class="sidebar-section" style="background-color: rgba(168, 85, 247, 0.08); padding:8px; border-radius:6px; margin-bottom:8px;">
+                    <div class="section-header" ${toggleAcc('mask')}>
+                        <span class="section-title" style="color: #a855f7; margin:0; border:none;"><span class="algo-badge" style="background: rgba(168, 85, 247, 0.2); color: #a855f7;">✨ MASK</span> Стерти / Відновити стики</span>
+                        <span class="chevron ${isAccChev('mask')}" id="acc_tiling_mask_chev">▼</span>
+                    </div>
+                    <div class="accordion-content ${isAccOpen('mask')}" id="acc_tiling_mask">
+                        <div class="toggle-row" style="margin-bottom: 6px;">
+                            <span style="font-weight: 600;">Увімкнути Пензель стиків</span>
+                            <label class="switch"><input type="checkbox" id="mask_brush_enable" ${t.mask_brush_enable?'checked':''} onchange="toggleTilingMaskBrush(this.checked)"><span class="slider"></span></label>
+                        </div>
+                        <div class="control-group" style="margin-bottom:8px;">
+                            <label class="control-label">Дія пензля:</label>
+                            <div class="gen-grid" style="grid-template-columns: 1fr 1fr; gap: 4px;">
+                                <button type="button" class="gen-btn ${t.mask_brush_mode==='erase_seam'?'active':''}" onclick="tilingState.mask_brush_mode='erase_seam'; renderTilingPanel();">👁️ Проявити нижні (Стерти стик)</button>
+                                <button type="button" class="gen-btn ${t.mask_brush_mode==='restore_seam'?'active':''}" onclick="tilingState.mask_brush_mode='restore_seam'; renderTilingPanel();">🛡️ Перекрити (Відновити тайл)</button>
+                            </div>
+                        </div>
+                        ${tilingSlider("Розмір пензля", "mask_brush_size", 5, 200, 1, "px", 30)}
+                        ${tilingSlider("Непрозорість", "mask_brush_opacity", 1, 100, 1, "%", 80)}
+                        ${tilingSlider("М'якість країв", "mask_brush_softness", 0, 100, 1, "%", 60)}
+                        <button type="button" class="btn btn-secondary" style="width:100%; margin-top:8px; color:#ef4444; border-color:rgba(239,68,68,0.3); font-size:11px;" onclick="clearTilingMaskCanvas(); runTilingPipeline(); commitHistorySnapshot();">🗑️ Очистити маску стиків</button>
+                    </div>
+                </div>
+
+                <!-- 2. TOROIDAL GUARD v9.0 -->
+                <div class="sidebar-section" style="background-color: rgba(16, 185, 129, 0.08); padding:8px; border-radius:6px; margin-bottom:8px;">
+                    <div class="section-header" ${toggleAcc('guard')}>
+                        <span class="section-title" style="color: #10b981; margin:0; border:none;"><span class="algo-badge" style="background: rgba(16, 185, 129, 0.2); color: #10b981;">★ ADVANCED</span> Toroidal Guard v9.0</span>
+                        <span class="chevron ${isAccChev('guard')}" id="acc_tiling_guard_chev">▼</span>
+                    </div>
+                    <div class="accordion-content ${isAccOpen('guard')}" id="acc_tiling_guard">
+                        <div class="toggle-row">
+                            <span>Гарантія безшовності стиків</span>
+                            <label class="switch"><input type="checkbox" ${t.guard_enable?'checked':''} onchange="tilingState.guard_enable=this.checked; runTilingPipeline();"><span class="slider"></span></label>
+                        </div>
+                        ${tilingSlider("Ширина зони", "guard_width", 2, 60, 1, "px", 16)}
+                        ${tilingSlider("Сила змішування", "guard_mix_strength", 0, 100, 1, "%", 85)}
+                        <div class="control-group">
+                            <label class="control-label">Алгоритм генерації стиків країв:</label>
+                            <select class="form-control" onchange="tilingState.guard_seam_algo=this.value; runTilingPipeline();">
+                                <option value="dp_mincost" ${t.guard_seam_algo==='dp_mincost'?'selected':''}>DP Dual-Cut Graph (Мінімальна вартість)</option>
+                                <option value="cosine" ${t.guard_seam_algo==='cosine'?'selected':''}>Cosine Feather (Плавне згасання)</option>
+                                <option value="smoothstep" ${t.guard_seam_algo==='smoothstep'?'selected':''}>Smoothstep S-Curve</option>
+                            </select>
+                        </div>
+                        <div class="control-group">
+                            <label class="control-label">Метрика кольору країв:</label>
+                            <select class="form-control" onchange="tilingState.guard_seam_metric=this.value; runTilingPipeline();">
+                                <option value="lab" ${t.guard_seam_metric==='lab'?'selected':''}>CIELAB Perceptual (Перцептивна)</option>
+                                <option value="rgb" ${t.guard_seam_metric==='rgb'?'selected':''}>RGB Euclidean</option>
+                                <option value="sobel" ${t.guard_seam_metric==='sobel'?'selected':''}>Sobel Gradient (Структурні ребра)</option>
+                                <option value="luma" ${t.guard_seam_metric==='luma'?'selected':''}>Luminance Only</option>
+                            </select>
+                        </div>
+                        ${tilingSlider("Зона пошуку шва країв", "guard_search", 5, 50, 1, "px", 15)}
+                        ${tilingSlider("Жорсткість лінії шва країв", "guard_stiffness", 0.1, 3.0, 0.1, "", 1.2)}
+                        ${tilingSlider("Вага градієнта країв", "guard_grad_weight", 0.1, 5.0, 0.1, "", 2.0)}
+                        <div class="control-group">
+                            <label class="control-label">Режим деформації країв:</label>
+                            <select class="form-control" onchange="tilingState.guard_warp_mode=this.value; runTilingPipeline();">
+                                <option value="chaotic" ${t.guard_warp_mode==='chaotic'?'selected':''}>Chaotic Noise (Хаотична шумова)</option>
+                                <option value="sine" ${t.guard_warp_mode==='sine'?'selected':''}>Sine Wave (Синусоїдальна)</option>
+                                <option value="perlin" ${t.guard_warp_mode==='perlin'?'selected':''}>Perlin Noise (Фрактальна)</option>
+                                <option value="stochastic" ${t.guard_warp_mode==='stochastic'?'selected':''}>Stochastic Dither (Стохастична)</option>
+                                <option value="none" ${t.guard_warp_mode==='none'?'selected':''}>None (Пряма лінія)</option>
+                            </select>
+                        </div>
+                        ${tilingSlider("Амплітуда деформації країв", "guard_warp_amp", 0, 30, 1, "px", 8)}
+                        ${tilingSlider("Частота деформації країв", "guard_warp_freq", 0.01, 0.30, 0.01, "", 0.08)}
+                        <div class="control-group">
+                            <label class="control-label">Крива згладжування країв:</label>
+                            <select class="form-control" onchange="tilingState.guard_blend_mode=this.value; runTilingPipeline();">
+                                <option value="cosine" ${t.guard_blend_mode==='cosine'?'selected':''}>Cosine Feather</option>
+                                <option value="sigmoid" ${t.guard_blend_mode==='sigmoid'?'selected':''}>Sigmoid S-Curve</option>
+                                <option value="exponential" ${t.guard_blend_mode==='exponential'?'selected':''}>Exponential</option>
+                                <option value="stochastic" ${t.guard_blend_mode==='stochastic'?'selected':''}>Stochastic Dither</option>
+                                <option value="gaussian" ${t.guard_blend_mode==='gaussian'?'selected':''}>Gaussian Bell Curve</option>
+                                <option value="smoothstep" ${t.guard_blend_mode==='smoothstep'?'selected':''}>Smoothstep</option>
+                            </select>
+                        </div>
+                        ${tilingSlider("Зона перекриття країв", "guard_overlap", 2, 60, 1, "px", 14)}
+                        ${tilingSlider("Згладжування стику (Feather)", "guard_feather", 0, 30, 1, "px", 8)}
+                        ${tilingSlider("Розмиття країв гарантованого стику", "guard_blur_radius", 0, 30, 1, "px", 8)}
+                        ${tilingSlider("Розсіювання шва (Jitter)", "guard_jitter", 0, 30, 1, "px", 8)}
+                        ${tilingSlider("Частота вигину", "guard_frequency", 0.01, 0.30, 0.01, "", 0.08)}
+                        ${tilingSlider("Збереження деталей", "guard_detail_preserve", 0, 100, 1, "%", 70)}
+                    </div>
+                </div>
+
+                <!-- 3. OPTICAL DYNAMIC SEAM ENGINE -->
+                <div class="sidebar-section" style="background-color: rgba(59, 130, 246, 0.05); padding:8px; border-radius:6px; margin-bottom:8px;">
+                    <div class="section-header" ${toggleAcc('dp')}>
+                        <span class="section-title" style="color: #3b82f6; margin:0; border:none;"><span class="algo-badge">DP</span> Optical Dynamic Seam Engine</span>
+                        <span class="chevron ${isAccChev('dp')}" id="acc_tiling_dp_chev">▼</span>
+                    </div>
+                    <div class="accordion-content ${isAccOpen('dp')}" id="acc_tiling_dp">
+                        <div class="toggle-row" style="background: rgba(239, 68, 68, 0.1); padding: 4px 6px; border-radius: 4px; margin-bottom: 8px;">
+                            <span style="color: #fca5a5; font-weight: 600;">🔴 Показувати лінію розрізу</span>
+                            <label class="switch"><input type="checkbox" ${t.showSeams?'checked':''} onchange="tilingState.showSeams=this.checked; runTilingPipeline();"><span class="slider"></span></label>
+                        </div>
+                        <div class="control-group">
+                            <label class="control-label">Алгоритм генерації:</label>
+                            <select class="form-control" onchange="tilingState.seam_algo=this.value; runTilingPipeline();">
+                                <option value="dp_mincost" ${t.seam_algo==='dp_mincost'?'selected':''}>Optical Dynamic Dual-Cut Graph (DP)</option>
+                                <option value="cosine" ${t.seam_algo==='cosine'?'selected':''}>Cosine Feather Soft Crossfade</option>
+                            </select>
+                        </div>
+                        <div class="control-group">
+                            <label class="control-label">Метрика порівняння кольору:</label>
+                            <select class="form-control" onchange="tilingState.seam_metric=this.value; runTilingPipeline();">
+                                <option value="lab" ${t.seam_metric==='lab'?'selected':''}>CIELAB Perceptual</option>
+                                <option value="rgb" ${t.seam_metric==='rgb'?'selected':''}>RGB Euclidean</option>
+                                <option value="sobel" ${t.seam_metric==='sobel'?'selected':''}>Sobel Gradient Magnitude</option>
+                                <option value="luma" ${t.seam_metric==='luma'?'selected':''}>Luminance / Яскравість</option>
+                            </select>
+                        </div>
+                        ${tilingSlider("Ширина зони пошуку", "seam_search", 5, 40, 1, "%", 20)}
+                        ${tilingSlider("Жорсткість шва (Stiffness)", "seam_stiffness", 0.0, 4.0, 0.1, "", 1.2)}
+                        ${tilingSlider("Вага градієнта (Деталі)", "seam_grad_weight", 0.0, 5.0, 0.2, "", 2.5)}
+                    </div>
+                </div>
+
+                <!-- 4. WARP FX -->
+                <div class="sidebar-section" style="background-color: rgba(139, 92, 246, 0.05); padding:8px; border-radius:6px; margin-bottom:8px;">
+                    <div class="section-header" ${toggleAcc('warp')}>
+                        <span class="section-title" style="color: #8b5cf6; margin:0; border:none;"><span class="algo-badge" style="background: rgba(139, 92, 246, 0.2); color: #8b5cf6;">FX</span> Деформація Границі</span>
+                        <span class="chevron ${isAccChev('warp')}" id="acc_tiling_warp_chev">▼</span>
+                    </div>
+                    <div class="accordion-content ${isAccOpen('warp')}" id="acc_tiling_warp">
+                        <div class="control-group">
+                            <label class="control-label">Режим деформації шва:</label>
+                            <select class="form-control" onchange="tilingState.seam_warp_mode=this.value; runTilingPipeline();">
+                                <option value="chaotic" ${t.seam_warp_mode==='chaotic'?'selected':''}>🌀 Chaotic Noise</option>
+                                <option value="jitter" ${t.seam_warp_mode==='jitter'?'selected':''}>⚡ Jitter / Scattered</option>
+                                <option value="fractal" ${t.seam_warp_mode==='fractal'?'selected':''}>❄️ Fractal Wave</option>
+                                <option value="sine" ${t.seam_warp_mode==='sine'?'selected':''}>🌊 Sinusoidal Wave</option>
+                            </select>
+                        </div>
+                        ${tilingSlider("Амплітуда деформації", "seam_warp_amp", 0, 40, 1, "px", 10)}
+                        ${tilingSlider("Частота хвилі/шуму", "seam_warp_freq", 0.01, 0.30, 0.01, "", 0.06)}
+                        ${tilingSlider("Розсіювання шва", "seam_warp_jitter", 0, 20, 1, "px", 4)}
+                    </div>
+                </div>
+
+                <!-- 5. MIX BLEND & FEATHER -->
+                <div class="sidebar-section" style="padding:8px; border-radius:6px; margin-bottom:8px;">
+                    <div class="section-header" ${toggleAcc('blend')}>
+                        <span class="section-title" style="margin:0; border:none;"><span class="algo-badge">MIX</span> Змішування та Згладжування</span>
+                        <span class="chevron ${isAccChev('blend')}" id="acc_tiling_blend_chev">▼</span>
+                    </div>
+                    <div class="accordion-content ${isAccOpen('blend')}" id="acc_tiling_blend">
+                        <div class="control-group">
+                            <label class="control-label">Крива блендингу:</label>
+                            <select class="form-control" onchange="tilingState.seam_curve=this.value; runTilingPipeline();">
+                                <option value="sigmoid" ${t.seam_curve==='sigmoid'?'selected':''}>📉 Sigmoid S-Curve</option>
+                                <option value="gaussian" ${t.seam_curve==='gaussian'?'selected':''}>🔔 Gaussian Bell Curve</option>
+                                <option value="dither" ${t.seam_curve==='dither'?'selected':''}>🎲 Dithered Stochastic Mask</option>
+                                <option value="cosine" ${t.seam_curve==='cosine'?'selected':''}>〰️ Cosine Feather</option>
+                                <option value="smoothstep" ${t.seam_curve==='smoothstep'?'selected':''}>S-Smoothstep</option>
+                            </select>
+                        </div>
+                        ${tilingSlider("Розмиття країв шва (Edge Blur)", "seam_blur_radius", 0, 50, 1, "px", 12)}
+                        ${tilingSlider("Згладжування стику (Feather)", "seam_feather", 0, 100, 1, "px", 8)}
+                        ${tilingSlider("Зона перекриття (Overlap)", "seam_overlap", 0, 100, 1, "px", 14)}
+                    </div>
+                </div>
+
+                <!-- 6. LUMA BALANCE -->
+                <div class="sidebar-section" style="background-color: rgba(245, 158, 11, 0.05); padding:8px; border-radius:6px; margin-bottom:8px;">
+                    <div class="section-header" ${toggleAcc('luma')}>
+                        <span class="section-title" style="color: #f59e0b; margin:0; border:none;"><span class="algo-badge" style="background: rgba(245, 158, 11, 0.2); color: #f59e0b;">LUMA</span> Вирівнювання Яскравості</span>
+                        <span class="chevron ${isAccChev('luma')}" id="acc_tiling_luma_chev">▼</span>
+                    </div>
+                    <div class="accordion-content ${isAccOpen('luma')}" id="acc_tiling_luma">
+                        <div class="toggle-row">
+                            <span>Баланс протилежних границь</span>
+                            <label class="switch"><input type="checkbox" ${t.luma_balance_enable?'checked':''} onchange="tilingState.luma_balance_enable=this.checked; runTilingPipeline();"><span class="slider"></span></label>
+                        </div>
+                        ${tilingSlider("Сила компенсації", "luma_balance_strength", 0, 100, 1, "%", 75)}
+                    </div>
+                </div>
+
+                <!-- 7. FLAT-FIELD LIGHT CORRECTION -->
+                <div class="sidebar-section" style="padding:8px; border-radius:6px; margin-bottom:8px;">
+                    <div class="section-header" ${toggleAcc('flat')}>
+                        <span class="section-title" style="margin:0; border:none;"><span class="algo-badge">FLAT</span> Flat-Field Light Correction</span>
+                        <span class="chevron ${isAccChev('flat')}" id="acc_tiling_flat_chev">▼</span>
+                    </div>
+                    <div class="accordion-content ${isAccOpen('flat')}" id="acc_tiling_flat">
+                        <div class="toggle-row">
+                            <span>Корекція нерівності освітлення</span>
+                            <label class="switch"><input type="checkbox" ${t.flat_enable?'checked':''} onchange="tilingState.flat_enable=this.checked; runTilingPipeline();"><span class="slider"></span></label>
+                        </div>
+                        ${tilingSlider("Сила корекції", "flat_strength", 0, 1, 0.05, "", 0.80)}
+                    </div>
+                </div>
+
+                <!-- 8. CYCLIC OFFSET -->
+                <div class="sidebar-section" style="padding:8px; border-radius:6px; margin-bottom:8px;">
+                    <div class="section-header" ${toggleAcc('offset')}>
+                        <span class="section-title" style="margin:0; border:none;"><span class="algo-badge">OFFSET</span> Cyclic Offset</span>
+                        <span class="chevron ${isAccChev('offset')}" id="acc_tiling_offset_chev">▼</span>
+                    </div>
+                    <div class="accordion-content ${isAccOpen('offset')}" id="acc_tiling_offset">
+                        ${tilingSlider("X Offset", "offset_x", 0, 100, 1, "%", 50)}
+                        ${tilingSlider("Y Offset", "offset_y", 0, 100, 1, "%", 50)}
+                    </div>
+                </div>
+
+                <!-- 9. POST-FX MICRO-DETAILS -->
+                <div class="sidebar-section" style="background-color: rgba(236, 72, 153, 0.05); padding:8px; border-radius:6px; margin-bottom:8px;">
+                    <div class="section-header" ${toggleAcc('fx')}>
+                        <span class="section-title" style="color: #ec4899; margin:0; border:none;"><span class="algo-badge" style="background: rgba(236, 72, 153, 0.2); color: #ec4899;">FX</span> Мікродеталі та Post-FX</span>
+                        <span class="chevron ${isAccChev('fx')}" id="acc_tiling_fx_chev">▼</span>
+                    </div>
+                    <div class="accordion-content ${isAccOpen('fx')}" id="acc_tiling_fx">
+                        ${tilingSlider("High-Pass Gain", "freq_gain", 0.5, 3.0, 0.05, "", 1.30)}
+                        ${tilingSlider("Радіус High-Pass", "freq_radius", 1, 10, 1, "px", 3)}
+                        ${tilingSlider("Unsharp Mask (Чіткість)", "sharpen", 0, 2.0, 0.05, "", 0.40)}
+                        ${tilingSlider("Локальний контраст", "micro_contrast", 0.8, 1.6, 0.05, "", 1.10)}
+                        ${tilingSlider("Інтенсивність зерна", "micro_noise", 0, 15, 0.5, "%", 2.5)}
+                        <div class="control-group">
+                            <label class="control-label">Тип зернистості:</label>
+                            <select class="form-control" onchange="tilingState.micro_noise_scale=this.value; runTilingPipeline();">
+                                <option value="fine" ${t.micro_noise_scale==='fine'?'selected':''}>Fine (Дрібний пісок)</option>
+                                <option value="medium" ${t.micro_noise_scale==='medium'?'selected':''}>Medium (Середнє зерно)</option>
+                                <option value="coarse" ${t.micro_noise_scale==='coarse'?'selected':''}>Coarse (Шорсткість)</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
         // --- Історія (Undo/Redo) ---
         let history = []; // Array of { snap: string, paintData: { [layerId]: ImageData } }
         let historyIndex = -1;
@@ -2317,10 +4188,70 @@
             });
         }
 
+        function captureTilingForHistory() {
+            if (!tilingState || !tilingState.hasImage) return null;
+            let stampImgData = null;
+            if (tilingStampCanvas && tilingStampCanvas.width > 0 && tilingStampCanvas.height > 0) {
+                let sctx = tilingStampCanvas.getContext('2d');
+                stampImgData = sctx.getImageData(0, 0, tilingStampCanvas.width, tilingStampCanvas.height);
+            }
+            let maskImgData = null;
+            if (tilingMaskCanvas && tilingMaskCanvas.width > 0 && tilingMaskCanvas.height > 0) {
+                let mctx = tilingMaskCanvas.getContext('2d');
+                maskImgData = mctx.getImageData(0, 0, tilingMaskCanvas.width, tilingMaskCanvas.height);
+            }
+            let origImgData = null;
+            if (tilingOriginalCanvas && tilingOriginalCanvas.width > 0 && tilingOriginalCanvas.height > 0) {
+                let octx = tilingOriginalCanvas.getContext('2d');
+                origImgData = octx.getImageData(0, 0, tilingOriginalCanvas.width, tilingOriginalCanvas.height);
+            }
+            return {
+                tilingState: JSON.parse(JSON.stringify(tilingState)),
+                origImgData: origImgData,
+                stampImgData: stampImgData,
+                maskImgData: maskImgData
+            };
+        }
+
+        function restoreTilingFromHistory(entry) {
+            if (!entry || !entry.tilingData) return;
+            let td = entry.tilingData;
+            tilingState = JSON.parse(JSON.stringify(td.tilingState));
+            if (td.origImgData) {
+                if (!tilingOriginalCanvas) tilingOriginalCanvas = document.createElement('canvas');
+                tilingOriginalCanvas.width = td.origImgData.width;
+                tilingOriginalCanvas.height = td.origImgData.height;
+                let octx = tilingOriginalCanvas.getContext('2d');
+                octx.putImageData(td.origImgData, 0, 0);
+            }
+            if (td.stampImgData) {
+                ensureTilingStampCanvas(td.stampImgData.width, td.stampImgData.height);
+                let sctx = tilingStampCanvas.getContext('2d');
+                sctx.putImageData(td.stampImgData, 0, 0);
+            } else if (tilingStampCanvas) {
+                clearTilingStampCanvas();
+            }
+            if (td.maskImgData) {
+                ensureTilingMaskCanvas(td.maskImgData.width, td.maskImgData.height);
+                let mctx = tilingMaskCanvas.getContext('2d');
+                mctx.putImageData(td.maskImgData, 0, 0);
+            } else if (tilingMaskCanvas) {
+                clearTilingMaskCanvas();
+            }
+            if (tilingState.hasImage) {
+                runTilingPipeline();
+            }
+            if (currentTab === 'tiling') {
+                renderTilingPanel();
+                renderTilingView();
+            }
+        }
+
         function initHistory() {
             let snap = serializeState(state);
             let paintData = capturePaintCanvasesForHistory();
-            history = [{ snap, paintData }];
+            let tilingData = captureTilingForHistory();
+            history = [{ snap, paintData, tilingData }];
             historyIndex = 0;
             historyReady = true;
             updateHistoryButtons();
@@ -2340,12 +4271,17 @@
             if (!historyReady || isPainting || strokeBackupActive || isRestoringHistory) return;
             clearTimeout(historyTimer);
             let snap = serializeState(state);
-            if (history[historyIndex] && history[historyIndex].snap === snap) return;
+            let tilingData = captureTilingForHistory();
+
+            let prevEntry = history[historyIndex];
+            if (prevEntry && prevEntry.snap === snap && JSON.stringify(prevEntry.tilingData) === JSON.stringify(tilingData)) {
+                return;
+            }
 
             history = history.slice(0, historyIndex + 1);
 
             let paintData = capturePaintCanvasesForHistory();
-            history.push({ snap, paintData });
+            history.push({ snap, paintData, tilingData });
             if (history.length > MAX_HISTORY) { history.shift(); }
             historyIndex = history.length - 1;
             updateHistoryButtons();
@@ -2364,6 +4300,7 @@
             let entry = history[historyIndex];
             setState(JSON.parse(entry.snap));
             restorePaintCanvasesFromHistory(entry);
+            restoreTilingFromHistory(entry);
             afterHistoryRestore();
             isRestoringHistory = false;
         }
@@ -2381,6 +4318,7 @@
             let entry = history[historyIndex];
             setState(JSON.parse(entry.snap));
             restorePaintCanvasesFromHistory(entry);
+            restoreTilingFromHistory(entry);
             afterHistoryRestore();
             isRestoringHistory = false;
         }
@@ -2430,20 +4368,24 @@
             renderRequested = true;
             requestAnimationFrame(() => {
                 renderRequested = false;
-                if (!suppressRender) {
-                    if (isInteracting && lowResOnEdit) {
-                        if (canvas.width !== 256) {
-                            canvas.width = 256;
-                            canvas.height = 256;
-                        }
-                    } else {
-                        if (canvas.width !== canvasResolution) {
-                            canvas.width = canvasResolution;
-                            canvas.height = canvasResolution;
+                if (currentTab === 'tiling') {
+                    renderTilingView();
+                } else {
+                    if (!suppressRender) {
+                        if (isInteracting && lowResOnEdit) {
+                            if (canvas.width !== 256) {
+                                canvas.width = 256;
+                                canvas.height = 256;
+                            }
+                        } else {
+                            if (canvas.width !== canvasResolution) {
+                                canvas.width = canvasResolution;
+                                canvas.height = canvasResolution;
+                            }
                         }
                     }
+                    renderProject();
                 }
-                renderProject();
             });
         }
 
@@ -3052,6 +4994,7 @@
         window.renderLayers = renderLayers;
         window.renderProps = renderProps;
         window.requestRender = requestRender;
+        window.toggleSelectingStampSource = toggleSelectingStampSource;
 
         function initCanvasControlsUI() {
             if ($('chkLowRes')) $('chkLowRes').checked = lowResOnEdit;

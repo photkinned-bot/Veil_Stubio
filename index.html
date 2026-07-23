@@ -77,6 +77,8 @@
                 <div style="display:flex; gap:4px;">
                     <button id="btnTabLayer" class="btn btn-primary" style="padding:4px 8px; font-size:11px;" onclick="switchRightTab('layer')">Шар</button>
                     <button id="btnTabGlobal" class="btn btn-secondary" style="padding:4px 8px; font-size:11px;" onclick="switchRightTab('global')">Глобальні</button>
+                    <button id="btnTabTiling" class="btn btn-secondary" style="padding:4px 8px; font-size:11px;" onclick="switchRightTab('tiling')">Тайлінг</button>
+                    <input type="file" id="tilingImageInput" accept="image/*" style="display:none;" onchange="handleTilingImageUpload(event)">
                 </div>
             </div>
             <div id="propertiesPanel" class="properties-content"></div>
