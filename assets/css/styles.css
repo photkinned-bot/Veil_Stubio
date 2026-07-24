@@ -322,4 +322,96 @@
             transform: scale(1.05);
         }
 
+        /* Accordion & Reorderable Blocks */
+        .accordion-block {
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius);
+            margin-bottom: 8px;
+            overflow: hidden;
+            transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+        }
+        .accordion-block:hover {
+            border-color: #3f3f46;
+        }
+        .accordion-block.dragging {
+            opacity: 0.4;
+            border: 1px dashed var(--primary-color);
+        }
+        .accordion-block.drag-over {
+            border: 2px solid var(--primary-color);
+            box-shadow: 0 0 10px rgba(59, 130, 246, 0.4);
+            transform: scale(1.01);
+        }
+        .accordion-header {
+            background: rgba(0, 0, 0, 0.25);
+            padding: 8px 12px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            cursor: pointer;
+            user-select: none;
+            -webkit-user-select: none;
+            transition: background 0.15s ease;
+        }
+        .accordion-header:hover {
+            background: rgba(255, 255, 255, 0.05);
+        }
+        .accordion-header-left {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 11px;
+            font-weight: 700;
+            color: var(--text-color);
+            letter-spacing: 0.02em;
+        }
+        .drag-handle {
+            cursor: grab;
+            color: var(--text-muted);
+            font-size: 13px;
+            padding: 2px 4px;
+            border-radius: 3px;
+            line-height: 1;
+            display: inline-flex;
+            align-items: center;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+        .drag-handle:hover {
+            color: var(--primary-color);
+            background: rgba(255, 255, 255, 0.08);
+        }
+        .drag-handle:active {
+            cursor: grabbing;
+        }
+        .accordion-chevron {
+            font-size: 9px;
+            color: var(--text-muted);
+            transition: transform 0.2s ease;
+            display: inline-block;
+        }
+        .accordion-chevron.open {
+            transform: rotate(180deg);
+        }
+        .accordion-body {
+            padding: 12px;
+            border-top: 1px solid var(--border-color);
+            background: rgba(0, 0, 0, 0.1);
+        }
+        .accordion-body.collapsed {
+            display: none !important;
+        }
+
+        /* Layer card drag states */
+        .layer-card.dragging {
+            opacity: 0.4;
+            border: 1px dashed var(--primary-color);
+        }
+        .layer-card.drag-over {
+            border: 2px solid var(--primary-color);
+            box-shadow: 0 0 10px rgba(59, 130, 246, 0.4);
+            transform: translateY(-2px);
+        }
+
 

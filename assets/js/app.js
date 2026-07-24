@@ -1860,15 +1860,74 @@
             }
         }
 
+        let pointerLayerDragState = null;
+
+        window.handleLayerPointerDown = function(e, idx) {
+            if (e.button !== undefined && e.button !== 0) return;
+            e.stopPropagation();
+            let handle = e.currentTarget;
+            let card = handle.closest('.layer-card');
+            if (!card) return;
+
+            pointerLayerDragState = {
+                fromIdx: idx,
+                cardEl: card
+            };
+
+            try { handle.setPointerCapture(e.pointerId); } catch(err) {}
+            card.classList.add('dragging');
+
+            handle.onpointermove = function(ev) {
+                if (!pointerLayerDragState) return;
+                let targetEl = document.elementFromPoint(ev.clientX, ev.clientY);
+                let targetCard = targetEl ? targetEl.closest('.layer-card') : null;
+                document.querySelectorAll('.layer-card').forEach(c => c.classList.remove('drag-over'));
+                if (targetCard && targetCard !== pointerLayerDragState.cardEl) {
+                    targetCard.classList.add('drag-over');
+                }
+            };
+
+            handle.onpointerup = handle.onpointercancel = function(ev) {
+                if (!pointerLayerDragState) return;
+                let targetEl = document.elementFromPoint(ev.clientX, ev.clientY);
+                let targetCard = targetEl ? targetEl.closest('.layer-card') : null;
+                if (targetCard && targetCard.dataset.layerIndex !== undefined) {
+                    let targetIdx = parseInt(targetCard.dataset.layerIndex, 10);
+                    if (!isNaN(targetIdx) && targetIdx !== pointerLayerDragState.fromIdx) {
+                        let [movedLayer] = state.layers.splice(pointerLayerDragState.fromIdx, 1);
+                        state.layers.splice(targetIdx, 0, movedLayer);
+                        commitHistorySnapshot();
+                        renderLayers();
+                        requestRender();
+                    }
+                }
+                document.querySelectorAll('.layer-card').forEach(c => c.classList.remove('dragging', 'drag-over'));
+                try { handle.releasePointerCapture(ev.pointerId); } catch(err) {}
+                handle.onpointermove = null;
+                handle.onpointerup = null;
+                handle.onpointercancel = null;
+                pointerLayerDragState = null;
+            };
+        };
+
         function renderLayers() {
             let { maskTargetIndex, clippedByMasks } = computeMaskRelationships();
             $('layersList').innerHTML = state.layers.map((l,i) => {
                 let isMasked = !!clippedByMasks[i]; // цей шар кліпається маскою(ами), що йдуть над ним
                 let maskHasNoTarget = l.isMask && maskTargetIndex[i] === -1; // маска в самому низу — не відображається
                 return `
-                <div class="layer-card ${l.id===state.selectedLayerId?'active':''} ${l.isMask?'is-mask':''} ${maskHasNoTarget?'is-mask-empty':''} ${isMasked?'is-masked-target':''} ${!l.visible?'is-hidden':''}" data-layer-id="${l.id}" data-layer-index="${i}" onclick="state.selectedLayerId='${l.id}';switchRightTab('layer');renderLayers();renderProps();">
+                <div class="layer-card ${l.id===state.selectedLayerId?'active':''} ${l.isMask?'is-mask':''} ${maskHasNoTarget?'is-mask-empty':''} ${isMasked?'is-masked-target':''} ${!l.visible?'is-hidden':''}" 
+                     data-layer-id="${l.id}" 
+                     data-layer-index="${i}" 
+                     onclick="state.selectedLayerId='${l.id}';switchRightTab('layer');renderLayers();renderProps();">
                     <div class="layer-row-top">
-                        <div class="layer-info">${isMasked?'<span class="mask-link-icon" title="Кліпується маскою зверху">⤷</span>':''}<button onclick="event.stopPropagation(); toggleLayerVisibility(${i})" class="layer-btn ${l.visible?'layer-visible':'layer-hidden'}" title="${l.visible?'Приховати шар':'Показати шар'}" style="padding:0; margin-right:4px;">${l.visible?'👁':'🕶'}</button><span class="layer-name">${l.name}</span>${l.isMask?`<span class="mask-badge" title="${maskHasNoTarget?'Маска: немає шару знизу — не відображається':'Цей шар працює як маска для шару знизу'}">МАСКА</span>`:''}</div>
+                        <div class="layer-info">
+                            <span class="drag-handle" title="Затисніть мишою або пальцем та перетягніть шар" onpointerdown="handleLayerPointerDown(event, ${i})" onclick="event.stopPropagation()">⣿</span>
+                            ${isMasked?'<span class="mask-link-icon" title="Кліпується маскою зверху">⤷</span>':''}
+                            <button onclick="event.stopPropagation(); toggleLayerVisibility(${i})" class="layer-btn ${l.visible?'layer-visible':'layer-hidden'}" title="${l.visible?'Приховати шар':'Показати шар'}" style="padding:0; margin-right:4px;">${l.visible?'👁':'🕶'}</button>
+                            <span class="layer-name">${l.name}</span>
+                            ${l.isMask?`<span class="mask-badge" title="${maskHasNoTarget?'Маска: немає шару знизу — не відображається':'Цей шар працює як маска для шару знизу'}">МАСКА</span>`:''}
+                        </div>
                         <div class="layer-controls">
                             <button onclick="event.stopPropagation(); toggleMask(${i})" class="layer-btn ${l.isMask?'layer-btn-mask-active':''}" title="Використати як маску">🎭</button>
                             <button onclick="event.stopPropagation(); duplicateLayer(${i})" class="layer-btn" title="Дублювати шар">📋</button>
@@ -2390,6 +2449,124 @@
             commitHistorySnapshot();
         };
 
+        // --- Accordion Blocks & Drag-and-Drop Reordering State ---
+        let accordionConfig = {
+            layer: {
+                order: ['algo', 'blend', 'transform', 'fx', 'warps'],
+                states: { algo: false, blend: false, transform: false, fx: false, warps: false }
+            },
+            global: {
+                order: ['fx', 'transform', 'tiling'],
+                states: { fx: false, transform: false, tiling: false }
+            }
+        };
+
+        try {
+            let savedAcc = localStorage.getItem('veil_accordion_config');
+            if (savedAcc) {
+                let parsed = JSON.parse(savedAcc);
+                if (parsed.layer && Array.isArray(parsed.layer.order)) {
+                    accordionConfig.layer.order = parsed.layer.order;
+                    if (parsed.layer.states) accordionConfig.layer.states = parsed.layer.states;
+                }
+                if (parsed.global && Array.isArray(parsed.global.order)) {
+                    accordionConfig.global.order = parsed.global.order;
+                    if (parsed.global.states) accordionConfig.global.states = parsed.global.states;
+                }
+            }
+        } catch(e) {}
+
+        function saveAccordionConfig() {
+            try {
+                localStorage.setItem('veil_accordion_config', JSON.stringify(accordionConfig));
+            } catch(e) {}
+        }
+
+        window.toggleAccordionBlock = function(tab, id) {
+            if (accordionConfig[tab] && accordionConfig[tab].states) {
+                accordionConfig[tab].states[id] = !accordionConfig[tab].states[id];
+                saveAccordionConfig();
+                if (tab === 'layer') renderProps();
+                else if (tab === 'global') renderGlobal();
+            }
+        };
+
+        let pointerAccDragState = null;
+
+        window.handleAccPointerDown = function(e, tab, id) {
+            if (e.button !== undefined && e.button !== 0) return;
+            e.stopPropagation();
+            let handle = e.currentTarget;
+            let block = handle.closest('.accordion-block');
+            if (!block) return;
+
+            pointerAccDragState = {
+                tab: tab,
+                id: id,
+                blockEl: block
+            };
+
+            try { handle.setPointerCapture(e.pointerId); } catch(err) {}
+            block.classList.add('dragging');
+
+            handle.onpointermove = function(ev) {
+                if (!pointerAccDragState) return;
+                let targetEl = document.elementFromPoint(ev.clientX, ev.clientY);
+                let targetBlock = targetEl ? targetEl.closest('.accordion-block') : null;
+                document.querySelectorAll('.accordion-block').forEach(b => b.classList.remove('drag-over'));
+                if (targetBlock && targetBlock !== pointerAccDragState.blockEl && targetBlock.dataset.accTab === pointerAccDragState.tab) {
+                    targetBlock.classList.add('drag-over');
+                }
+            };
+
+            handle.onpointerup = handle.onpointercancel = function(ev) {
+                if (!pointerAccDragState) return;
+                let targetEl = document.elementFromPoint(ev.clientX, ev.clientY);
+                let targetBlock = targetEl ? targetEl.closest('.accordion-block') : null;
+                if (targetBlock && targetBlock.dataset.accTab === pointerAccDragState.tab && targetBlock.dataset.accId !== pointerAccDragState.id) {
+                    let targetId = targetBlock.dataset.accId;
+                    let tab = pointerAccDragState.tab;
+                    let order = accordionConfig[tab].order;
+                    let fromIdx = order.indexOf(pointerAccDragState.id);
+                    let toIdx = order.indexOf(targetId);
+                    if (fromIdx !== -1 && toIdx !== -1) {
+                        order.splice(fromIdx, 1);
+                        order.splice(toIdx, 0, pointerAccDragState.id);
+                        saveAccordionConfig();
+                        if (tab === 'layer') renderProps();
+                        else renderGlobal();
+                    }
+                }
+                document.querySelectorAll('.accordion-block').forEach(b => b.classList.remove('dragging', 'drag-over'));
+                try { handle.releasePointerCapture(ev.pointerId); } catch(err) {}
+                handle.onpointermove = null;
+                handle.onpointerup = null;
+                handle.onpointercancel = null;
+                pointerAccDragState = null;
+            };
+        };
+
+        function renderAccordionBlock(tab, id, title, icon, contentHTML) {
+            let isExpanded = accordionConfig[tab].states[id] === true;
+            return `
+            <div class="accordion-block" 
+                 data-acc-tab="${tab}" 
+                 data-acc-id="${id}">
+                <div class="accordion-header" onclick="toggleAccordionBlock('${tab}', '${id}')" title="Натисніть для розгортання/згортання">
+                    <div class="accordion-header-left">
+                        <span class="drag-handle" title="Затисніть мишою або пальцем та перетягніть" onpointerdown="handleAccPointerDown(event, '${tab}', '${id}')" onclick="event.stopPropagation()">⣿</span>
+                        <span>${icon} ${title}</span>
+                    </div>
+                    <div style="display:flex; align-items:center; gap:6px;">
+                        <span class="accordion-chevron ${isExpanded ? 'open' : ''}">▼</span>
+                    </div>
+                </div>
+                <div class="accordion-body ${isExpanded ? '' : 'collapsed'}">
+                    ${contentHTML}
+                </div>
+            </div>`;
+        }
+
         function renderProps() {
             let lay=state.layers.find(l=>l.id===state.selectedLayerId), p=$('propertiesPanel');
             if(!lay) return p.innerHTML = '<div class="empty-state">Виберіть шар</div>';
@@ -2424,14 +2601,33 @@
                 }
             }
 
-            let genHTML=createSlider("Зсув X", "offsetX", -2, 2, 0.05, lp.offsetX, false, 0) +
-                        createSlider("Зсув Y", "offsetY", -2, 2, 0.05, lp.offsetY, false, 0) +
-                        `<div class="property-group"><label class="property-label">Масштаб по осях <button type="button" class="layer-btn" title="${lp.lockScale?'Масштаб X/Y пов’язаний':'Масштаб X/Y незалежний'}" onclick="upd('lockScale',${!lp.lockScale}); renderProps();">${lp.lockScale?'🔒':'🔓'}</button></label></div>` +
-                        createScaleSlider("Масштаб X (Noise/Web)", "scaleX", lp.scaleX) +
-                        createScaleSlider("Масштаб Y (Noise/Web)", "scaleY", lp.scaleY) +
-                        createSlider("Масштаб Шару (Zoom)", "layerScale", 0.1, 10, 0.1, lp.layerScale, false, 1) +
-                        createSlider("Кут обертання (−180° … +180°)", "angle", -180, 180, 1, lp.angle, false, 0);
-            
+            // --- Constructing Accordion Content Blocks for Layer Properties ---
+            let layerBlockContents = {};
+
+            // Block: blend
+            layerBlockContents.blend = `
+                <div class="property-group"><label class="property-label">Назва шару</label><input type="text" value="${lay.name}" onchange="lay.name=this.value;renderLayers()" class="form-control"></div>
+                <div class="property-group grid-2">
+                    <button onclick="randomizeLayer(state.layers.findIndex(l=>l.id==='${lay.id}'))" class="btn btn-secondary" title="Рандомізувати цей шар (тип, параметри, ефекти)">🎲 Рандом (шар)</button>
+                    <button onclick="resetLayer(state.layers.findIndex(l=>l.id==='${lay.id}'))" class="btn btn-secondary" title="Скинути ВСІ параметри цього шару">↺ Скинути шар</button>
+                </div>
+                <div class="property-group" style="margin-top:8px;">
+                    <label class="property-label">Режим накладання (Blend Mode)</label>
+                    <select onchange="upd('blendMode',this.value,true)" class="form-control" style="height:34px; width: 100%;">
+                        ${['normal','multiply','screen','overlay','difference','colorburn','colordodge','heightblend','exclusion','hardlight','lineardodge','linearburn'].map(o=>`<option value="${o}" ${lay.blendMode===o?'selected':''}>${o}</option>`).join('')}
+                    </select>
+                </div>
+                ${createSlider("Непрозорість (%)", "opacity", 0, 100, 1, lay.opacity, true, 100, true)}
+                <div class="property-group" style="margin-bottom:0;">
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <label class="property-label" style="margin:0;">Базова Безшовність (Tileable)</label>
+                        <input type="checkbox" ${lp.seamless ? 'checked' : ''} onchange="upd('seamless', this.checked)">
+                    </div>
+                </div>
+            `;
+
+            // Block: algo
+            let algoSpecificHTML = '';
             if (lay.generatorType === 'paint') {
                 ensureLayerPaintCanvas(lay);
                 lp.brushColor = lp.brushColor || '#ffffff';
@@ -2444,7 +2640,7 @@
                 lp.brushSquash = lp.brushSquash !== undefined ? lp.brushSquash : 1.0;
                 lp.brushTool = lp.brushTool || 'brush';
 
-                genHTML += `
+                algoSpecificHTML += `
                 <div class="section-title">Малювання (Brush Canvas)</div>
                 <div class="property-group">
                     <label class="property-label">Інструмент</label>
@@ -2474,30 +2670,30 @@
             }
 
             if (lay.generatorType === 'cymatics') {
-                genHTML += `<div class="section-title">Cymatics</div>`;
-                genHTML += createSlider("Частота", "frequency", 1, 300, 1, lp.frequency, false, 50);
-                genHTML += createSlider("Фаза", "phase", 0, 360, 1, lp.phase, false, 0);
-                genHTML += `<div class="property-group"><label class="property-label">Джерело (Source)</label><select class="form-control" onchange="upd('sourceMode', this.value)"><option value="Center" ${lp.sourceMode==='Center'?'selected':''}>Center</option><option value="Corners" ${lp.sourceMode==='Corners'?'selected':''}>Corners</option><option value="Edges" ${lp.sourceMode==='Edges'?'selected':''}>Edges</option><option value="Ring" ${lp.sourceMode==='Ring'?'selected':''}>Ring</option><option value="Polygon" ${lp.sourceMode==='Polygon'?'selected':''}>Polygon</option><option value="Random" ${lp.sourceMode==='Random'?'selected':''}>Random</option></select></div>`;
-                genHTML += createSlider("К-ть Джерел", "sourcesCount", 1, 64, 1, lp.sourcesCount, false, 4);
-                genHTML += createSlider("Симетрія", "symmetry", 1, 24, 1, lp.symmetry, false, 1);
-                genHTML += createSlider("Товщина лінії", "isolineWidth", 0, 1, 0.01, lp.isolineWidth, false, 0.5);
+                algoSpecificHTML += `<div class="section-title">Cymatics</div>`;
+                algoSpecificHTML += createSlider("Частота", "frequency", 1, 300, 1, lp.frequency, false, 50);
+                algoSpecificHTML += createSlider("Фаза", "phase", 0, 360, 1, lp.phase, false, 0);
+                algoSpecificHTML += `<div class="property-group"><label class="property-label">Джерело (Source)</label><select class="form-control" onchange="upd('sourceMode', this.value)"><option value="Center" ${lp.sourceMode==='Center'?'selected':''}>Center</option><option value="Corners" ${lp.sourceMode==='Corners'?'selected':''}>Corners</option><option value="Edges" ${lp.sourceMode==='Edges'?'selected':''}>Edges</option><option value="Ring" ${lp.sourceMode==='Ring'?'selected':''}>Ring</option><option value="Polygon" ${lp.sourceMode==='Polygon'?'selected':''}>Polygon</option><option value="Random" ${lp.sourceMode==='Random'?'selected':''}>Random</option></select></div>`;
+                algoSpecificHTML += createSlider("К-ть Джерел", "sourcesCount", 1, 64, 1, lp.sourcesCount, false, 4);
+                algoSpecificHTML += createSlider("Симетрія", "symmetry", 1, 24, 1, lp.symmetry, false, 1);
+                algoSpecificHTML += createSlider("Товщина лінії", "isolineWidth", 0, 1, 0.01, lp.isolineWidth, false, 0.5);
             }
 
             if (lay.generatorType === 'spider_web') {
-                genHTML += `<div class="section-title">Spider Web</div>`;
-                genHTML += createSlider("Кількість променів", "radialCount", 4, 64, 1, lp.radialCount || 18, false, 18);
-                genHTML += createSlider("Кількість кілець", "ringCount", 4, 64, 1, lp.ringCount || 22, false, 22);
-                genHTML += createSlider("Товщина кілець", "ringThick", 0.01, 0.2, 0.01, lp.ringThick || 0.04, false, 0.04);
-                genHTML += createSlider("Товщина променів", "radThick", 0.01, 0.2, 0.01, lp.radThick || 0.025, false, 0.025);
-                genHTML += createSlider("Wobble (Хвилювання)", "wobble", 0, 0.5, 0.01, lp.wobble || 0.03, false, 0.03);
-                genHTML += createSlider("Jitter (Джиттер)", "jitter", 0, 20, 0.5, lp.jitter || 8, false, 8);
-                genHTML += createSlider("Fractal (Фрактал)", "fractal", 0, 1, 0.05, lp.fractal || 0, false, 0);
-                genHTML += createSlider("Ампл. кілець (Sine)", "ringSineAmp", 0, 1, 0.05, lp.ringSineAmp || 0, false, 0);
-                genHTML += createSlider("Частота кілець (Sine)", "ringSineFreq", 1, 20, 1, lp.ringSineFreq || 5, false, 5);
-                genHTML += createSlider("Ампл. променів (Sine)", "radSineAmp", 0, 1, 0.05, lp.radSineAmp || 0, false, 0);
-                genHTML += createSlider("Частота променів (Sine)", "radSineFreq", 1, 20, 1, lp.radSineFreq || 10, false, 10);
+                algoSpecificHTML += `<div class="section-title">Spider Web</div>`;
+                algoSpecificHTML += createSlider("Кількість променів", "radialCount", 4, 64, 1, lp.radialCount || 18, false, 18);
+                algoSpecificHTML += createSlider("Кількість кілець", "ringCount", 4, 64, 1, lp.ringCount || 22, false, 22);
+                algoSpecificHTML += createSlider("Товщина кілець", "ringThick", 0.01, 0.2, 0.01, lp.ringThick || 0.04, false, 0.04);
+                algoSpecificHTML += createSlider("Товщина променів", "radThick", 0.01, 0.2, 0.01, lp.radThick || 0.025, false, 0.025);
+                algoSpecificHTML += createSlider("Wobble (Хвилювання)", "wobble", 0, 0.5, 0.01, lp.wobble || 0.03, false, 0.03);
+                algoSpecificHTML += createSlider("Jitter (Джиттер)", "jitter", 0, 20, 0.5, lp.jitter || 8, false, 8);
+                algoSpecificHTML += createSlider("Fractal (Фрактал)", "fractal", 0, 1, 0.05, lp.fractal || 0, false, 0);
+                algoSpecificHTML += createSlider("Ампл. кілець (Sine)", "ringSineAmp", 0, 1, 0.05, lp.ringSineAmp || 0, false, 0);
+                algoSpecificHTML += createSlider("Частота кілець (Sine)", "ringSineFreq", 1, 20, 1, lp.ringSineFreq || 5, false, 5);
+                algoSpecificHTML += createSlider("Ампл. променів (Sine)", "radSineAmp", 0, 1, 0.05, lp.radSineAmp || 0, false, 0);
+                algoSpecificHTML += createSlider("Частота променів (Sine)", "radSineFreq", 1, 20, 1, lp.radSineFreq || 10, false, 10);
             }
-            
+
             if (lay.generatorType === 'gradient') {
                 let sortedStops = lp.stops.slice().sort((a, b) => a.pos - b.pos);
                 let cssStopsStr = sortedStops.map(s => `${s.color || '#888888'} ${Math.round(s.pos * 100)}%`).join(', ');
@@ -2520,7 +2716,7 @@
                     </div>`;
                 }).join('');
 
-                genHTML += `
+                algoSpecificHTML += `
                 <div class="section-title" style="margin-top:12px;">🎨 Градієнти (Procedural Gradients)</div>
                 <div class="property-group">
                     <label class="property-label">Форма / Тип градієнта</label>
@@ -2571,68 +2767,33 @@
                 `;
             }
 
-            if(['perlin','fbm','ridged','spiral'].includes(lay.generatorType)) genHTML+=createSlider(lay.generatorType==='spiral'?'Кількість рукавів (Arms)':'Октави', "octaves", 1, 10, 1, lp.octaves||3, false, 3);
-            if(lay.generatorType==='voronoi') genHTML+=`<div class="property-group grid-2"><div><label class="property-label">Метрика</label><select class="form-control" onchange="upd('metric',this.value)"><option value="euclidean" ${lp.metric==='euclidean'?'selected':''}>Euclidean</option><option value="manhattan" ${lp.metric==='manhattan'?'selected':''}>Manhattan</option><option value="chebyshev" ${lp.metric==='chebyshev'?'selected':''}>Chebyshev</option></select></div><div><label class="property-label">Режим</label><select class="form-control" onchange="upd('mode',this.value)"><option value="f1" ${lp.mode==='f1'?'selected':''}>F1</option><option value="f2" ${lp.mode==='f2'?'selected':''}>F2</option><option value="f2_minus_f1" ${lp.mode==='f2_minus_f1'?'selected':''}>F2-F1</option></select></div></div>`;
-            if(lay.generatorType==='sine') genHTML+=createSlider("Фаза зсуву", "phase", 0, 6.28, 0.1, lp.phase||0, false, 0);
-            
-            let warpsHTML = lp.warps.map((w, idx) => `
-                <div class="warp-card" data-warp-index="${idx}" style="${w.visible===false?'opacity:0.5;':''}">
-                    <div class="warp-controls">
-                        <button type="button" class="warp-toggle" onclick="toggleWarp(${idx})" title="${w.visible!==false?'Приховати':'Показати'}">${w.visible!==false?'👁':'🕶'}</button>
-                        <button type="button" class="warp-del" onclick="removeWarp(${idx})" title="Видалити">✕</button>
-                    </div>
-                    <label class="property-label" style="margin-top:2px;">Деформатор №${idx+1}</label>
-                    <select onchange="updateWarp(${idx}, 'type', this.value)" class="form-control" style="margin-bottom:8px; margin-top:4px;">
-                        <option value="none" ${w.type==='none'?'selected':''}>Немає</option>
-                        <option value="displacement" ${w.type==='displacement'?'selected':''}>Displacement</option>
-                        <option value="vortex" ${w.type==='vortex'?'selected':''}>Vortex</option>
-                        <option value="twirl" ${w.type==='twirl'?'selected':''}>Twirl (Spiral Falloff)</option>
-                        <option value="sine" ${w.type==='sine'?'selected':''}>Sine</option>
-                        <option value="bulge" ${w.type==='bulge'?'selected':''}>Pinch/Bulge</option>
-                        <option value="noise" ${w.type==='noise'?'selected':''}>Perlin Noise</option>
-                        <option value="domain_warp" ${w.type==='domain_warp'?'selected':''}>Domain Warp</option>
-                        <option value="distortion" ${w.type==='distortion'?'selected':''}>Дісторсія</option>
-                        <option value="polar" ${w.type==='polar'?'selected':''}>Полярні координати</option>
-                    </select>
-                    ${w.type !== 'none' ? `
-                    <div style="margin-bottom:4px;">${sliderRow(-100, 100, 1, w.strength, 10, `updateWarp(${idx}, 'strength', this.value)`)}</div>
-                    ${sliderRow(0.1, 20, 0.1, w.freq, 4, `updateWarp(${idx}, 'freq', this.value)`)}` : ''}
-                </div>
-            `).join('');
+            if(['perlin','fbm','ridged','spiral'].includes(lay.generatorType)) algoSpecificHTML+=createSlider(lay.generatorType==='spiral'?'Кількість рукавів (Arms)':'Октави', "octaves", 1, 10, 1, lp.octaves||3, false, 3);
+            if(lay.generatorType==='voronoi') algoSpecificHTML+=`<div class="property-group grid-2"><div><label class="property-label">Метрика</label><select class="form-control" onchange="upd('metric',this.value)"><option value="euclidean" ${lp.metric==='euclidean'?'selected':''}>Euclidean</option><option value="manhattan" ${lp.metric==='manhattan'?'selected':''}>Manhattan</option><option value="chebyshev" ${lp.metric==='chebyshev'?'selected':''}>Chebyshev</option></select></div><div><label class="property-label">Режим</label><select class="form-control" onchange="upd('mode',this.value)"><option value="f1" ${lp.mode==='f1'?'selected':''}>F1</option><option value="f2" ${lp.mode==='f2'?'selected':''}>F2</option><option value="f2_minus_f1" ${lp.mode==='f2_minus_f1'?'selected':''}>F2-F1</option></select></div></div>`;
+            if(lay.generatorType==='sine') algoSpecificHTML+=createSlider("Фаза зсуву", "phase", 0, 6.28, 0.1, lp.phase||0, false, 0);
 
-            p.innerHTML = `
+            layerBlockContents.algo = `
                 <div class="property-group">
                     <label class="property-label">Алгоритм (Algorithm)</label>
                     <div class="gen-grid" style="grid-template-columns:repeat(3,1fr);">
                         ${['gradient','paint','simplex','perlin','voronoi','fbm','ridged','sine','radial','spiral','hexagon','pixel_noise','white_noise','checkerboard','dots','weave','value_noise','cellular','spider_web', 'cymatics'].map(t=>`<button onclick="upd('generatorType','${t}',true)" class="gen-btn ${lay.generatorType===t?'active':''}">${t}</button>`).join('')}
                     </div>
                 </div>
-                <hr>
+                ${algoSpecificHTML}
+            `;
 
-                <div class="property-group"><label class="property-label">Назва шару</label><input type="text" value="${lay.name}" onchange="lay.name=this.value;renderLayers()" class="form-control"></div>
-                <div class="property-group grid-2">
-                    <button onclick="randomizeLayer(state.layers.findIndex(l=>l.id==='${lay.id}'))" class="btn btn-secondary" title="Рандомізувати цей шар (тип, параметри, ефекти)">🎲 Рандом (шар)</button>
-                    <button onclick="resetLayer(state.layers.findIndex(l=>l.id==='${lay.id}'))" class="btn btn-secondary" title="Скинути ВСІ параметри цього шару">↺ Скинути шар</button>
-                </div>
-                <div class="property-group" style="margin-top:8px;">
-                    <label class="property-label">Режим накладання (Blend Mode)</label>
-                    <select onchange="upd('blendMode',this.value,true)" class="form-control" style="height:34px; width: 100%;">
-                        ${['normal','multiply','screen','overlay','difference','colorburn','colordodge','heightblend','exclusion','hardlight','lineardodge','linearburn'].map(o=>`<option value="${o}" ${lay.blendMode===o?'selected':''}>${o}</option>`).join('')}
-                    </select>
-                </div>
-                ${createSlider("Непрозорість (%)", "opacity", 0, 100, 1, lay.opacity, true, 100, true)}
-                <div class="property-group">
-                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-                        <label class="property-label" style="margin:0;">Базова Безшовність (Tileable)</label>
-                        <input type="checkbox" ${lp.seamless ? 'checked' : ''} onchange="upd('seamless', this.checked)">
-                    </div>
-                </div>
-                <hr>
+            // Block: transform
+            layerBlockContents.transform = `
+                ${createSlider("Зсув X", "offsetX", -2, 2, 0.05, lp.offsetX, false, 0)}
+                ${createSlider("Зсув Y", "offsetY", -2, 2, 0.05, lp.offsetY, false, 0)}
+                <div class="property-group"><label class="property-label">Масштаб по осях <button type="button" class="layer-btn" title="${lp.lockScale?'Масштаб X/Y пов’язаний':'Масштаб X/Y незалежний'}" onclick="upd('lockScale',${!lp.lockScale}); renderProps();">${lp.lockScale?'🔒':'🔓'}</button></label></div>
+                ${createScaleSlider("Масштаб X (Noise/Web)", "scaleX", lp.scaleX)}
+                ${createScaleSlider("Масштаб Y (Noise/Web)", "scaleY", lp.scaleY)}
+                ${createSlider("Масштаб Шару (Zoom)", "layerScale", 0.1, 10, 0.1, lp.layerScale, false, 1)}
+                ${createSlider("Кут обертання (−180° … +180°)", "angle", -180, 180, 1, lp.angle, false, 0)}
+            `;
 
-                ${genHTML}
-                <hr>
-                
-                <div class="section-title">Локальні ефекти</div>
+            // Block: fx
+            layerBlockContents.fx = `
                 <div class="property-group">
                     <label class="property-label"><input type="checkbox" ${lp.useThreshold?'checked':''} onchange="upd('useThreshold',this.checked)"> Threshold (Поріг)</label>
                     ${lp.useThreshold ? sliderRow(0, 100, 1, lp.thresholdVal||50, 50, "upd('thresholdVal',this.value)") : ''}
@@ -2660,36 +2821,82 @@
                         <span>Repeat Edge Pixels / Clamp to Edge</span>
                     </label>
                 </div>
-                <hr>
+            `;
 
-                <div class="property-group">
+            // Block: warps
+            let warpsHTML = lp.warps.map((w, idx) => `
+                <div class="warp-card" data-warp-index="${idx}" style="${w.visible===false?'opacity:0.5;':''}">
+                    <div class="warp-controls">
+                        <button type="button" class="warp-toggle" onclick="toggleWarp(${idx})" title="${w.visible!==false?'Приховати':'Показати'}">${w.visible!==false?'👁':'🕶'}</button>
+                        <button type="button" class="warp-del" onclick="removeWarp(${idx})" title="Видалити">✕</button>
+                    </div>
+                    <label class="property-label" style="margin-top:2px;">Деформатор №${idx+1}</label>
+                    <select onchange="updateWarp(${idx}, 'type', this.value)" class="form-control" style="margin-bottom:8px; margin-top:4px;">
+                        <option value="none" ${w.type==='none'?'selected':''}>Немає</option>
+                        <option value="displacement" ${w.type==='displacement'?'selected':''}>Displacement</option>
+                        <option value="vortex" ${w.type==='vortex'?'selected':''}>Vortex</option>
+                        <option value="twirl" ${w.type==='twirl'?'selected':''}>Twirl (Spiral Falloff)</option>
+                        <option value="sine" ${w.type==='sine'?'selected':''}>Sine</option>
+                        <option value="bulge" ${w.type==='bulge'?'selected':''}>Pinch/Bulge</option>
+                        <option value="noise" ${w.type==='noise'?'selected':''}>Perlin Noise</option>
+                        <option value="domain_warp" ${w.type==='domain_warp'?'selected':''}>Domain Warp</option>
+                        <option value="distortion" ${w.type==='distortion'?'selected':''}>Дісторсія</option>
+                        <option value="polar" ${w.type==='polar'?'selected':''}>Полярні координати</option>
+                    </select>
+                    ${w.type !== 'none' ? `
+                    <div style="margin-bottom:4px;">${sliderRow(-100, 100, 1, w.strength, 10, `updateWarp(${idx}, 'strength', this.value)`)}</div>
+                    ${sliderRow(0.1, 20, 0.1, w.freq, 4, `updateWarp(${idx}, 'freq', this.value)`)}` : ''}
+                </div>
+            `).join('');
+
+            layerBlockContents.warps = `
+                <div class="property-group" style="margin-bottom:0;">
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-                        <label class="property-label" style="margin:0;">Деформації (Warps)</label>
+                        <label class="property-label" style="margin:0;">Деформації шару</label>
                         <button onclick="addWarp()" class="btn btn-primary" style="padding:4px 8px; font-size:10px;">+ Додати</button>
                     </div>
-                    ${warpsHTML}
+                    ${warpsHTML || '<div style="font-size:11px; color:var(--text-muted);">Деформатори відсутні. Натисніть "+ Додати", щоб додати викривлення.</div>'}
                 </div>
             `;
+
+            let blockMeta = {
+                blend: { title: "Блендинг та Непрозорість", icon: "🎛️" },
+                algo: { title: "Алгоритм та Генератор", icon: "🎨" },
+                transform: { title: "Трансформація та Масштаб", icon: "📐" },
+                fx: { title: "Локальні Ефекти", icon: "✨" },
+                warps: { title: "Деформатори (Warps)", icon: "🌀" }
+            };
+
+            // Build panel HTML by rendering accordion blocks in current order
+            let html = accordionConfig.layer.order.map(key => {
+                let meta = blockMeta[key];
+                if (!meta || !layerBlockContents[key]) return '';
+                return renderAccordionBlock('layer', key, meta.title, meta.icon, layerBlockContents[key]);
+            }).join('');
+
+            p.innerHTML = html;
             window.lay = lay; 
         }
-
 
         function renderGlobal() {
             let g = state.global;
             let modeBtn = (m, label) => `<button onclick="setTileMode('${m}')" class="gen-btn ${g.tileMode===m?'active':''}">${label}</button>`;
 
-            $('propertiesPanel').innerHTML = `
-                <div class="property-group">
+            let globalBlockContents = {};
+
+            // Block: transform
+            globalBlockContents.transform = `
+                <div class="property-group" style="margin-bottom:8px;">
                     <button onclick="resetGlobalSettings()" class="btn btn-secondary" style="width:100%;" title="Скинути корекції, трансформацію і тайлінг до значень за замовчуванням">↺ Скинути глобальні налаштування</button>
                 </div>
-                <hr>
-                <div class="section-title" style="margin-top:0;">Глобальна трансформація</div>
                 ${createSlider("Масштаб (Zoom)", "globalZoom", 0.1, 5, 0.05, g.globalZoom, true, 1)}
                 ${createSlider("Поворот", "globalRotation", -180, 180, 1, g.globalRotation, true, 0)}
                 ${createSlider("Зсув X", "globalOffsetX", -2, 2, 0.02, g.globalOffsetX, true, 0)}
                 ${createSlider("Зсув Y", "globalOffsetY", -2, 2, 0.02, g.globalOffsetY, true, 0)}
-                <hr>
-                <div class="section-title">Глобальний Тайлінг</div>
+            `;
+
+            // Block: tiling
+            globalBlockContents.tiling = `
                 <div class="property-group">
                     <label class="property-label">Режим</label>
                     <div class="gen-grid" style="grid-template-columns:repeat(2,1fr);">
@@ -2724,8 +2931,10 @@
                         </div>
                     </div>
                 ` : ''}
-                <hr>
-                <div class="section-title">Корекція</div>
+            `;
+
+            // Block: fx
+            globalBlockContents.fx = `
                 ${createSlider("Контраст", "contrast", 0.5, 2, 0.05, g.contrast, true, 1)}
                 ${createSlider("Гамма", "gamma", 0.2, 3, 0.05, g.gamma, true, 1)}
                 ${createSlider("Віньєтка", "vignette", 0, 1, 0.05, g.vignette, true, 0)}
@@ -2738,6 +2947,20 @@
                 </div>
                 ${createSlider("Зерно", "grain", 0, 50, 1, g.grain, true, 10)}
             `;
+
+            let blockMeta = {
+                transform: { title: "Глобальна Трансформація", icon: "🌐" },
+                tiling: { title: "Глобальний Тайлінг", icon: "🔁" },
+                fx: { title: "Глобальна Корекція", icon: "🎚️" }
+            };
+
+            let html = accordionConfig.global.order.map(key => {
+                let meta = blockMeta[key];
+                if (!meta || !globalBlockContents[key]) return '';
+                return renderAccordionBlock('global', key, meta.title, meta.icon, globalBlockContents[key]);
+            }).join('');
+
+            $('propertiesPanel').innerHTML = html;
         }
 
         function setTileMode(mode) {
@@ -2956,16 +3179,16 @@
             micro_noise_scale: 'fine',
 
             accordions: {
-                stamp: true,
-                mask: true,
-                guard: true,
-                dp: true,
-                warp: true,
-                blend: true,
-                luma: true,
+                stamp: false,
+                mask: false,
+                guard: false,
+                dp: false,
+                warp: false,
+                blend: false,
+                luma: false,
                 flat: false,
                 offset: false,
-                fx: true
+                fx: false
             }
         };
 
