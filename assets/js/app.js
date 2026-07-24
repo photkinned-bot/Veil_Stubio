@@ -2867,12 +2867,6 @@
                     </div>
                 </div>
                 ${algoSpecificHTML}
-                <div class="property-group" style="margin-top:12px; margin-bottom:0;">
-                    <div style="display:flex; justify-content:space-between; align-items:center;">
-                        <label class="property-label" style="margin:0;">Базова Безшовність (Tileable)</label>
-                        <input type="checkbox" ${lp.seamless ? 'checked' : ''} onchange="upd('seamless', this.checked)">
-                    </div>
-                </div>
             `;
 
             // Block: transform
