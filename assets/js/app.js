@@ -409,18 +409,63 @@
             lineardodge:(b,t)=>Math.min(1,b+t), linearburn:(b,t)=>Math.max(0,b+t-1)
         };
 
-        function applyBoxBlur(buf, tmp, w, h, rad) {
+        function applyBoxBlur(buf, tmp, w, h, rad, mode = 'wrap') {
             let scaledRad = Math.max(0, Math.round(rad * (w / 512)));
             if (scaledRad<=0) return;
-            for(let y=0;y<h;y++) for(let x=0;x<w;x++){
-                let sum=0, c=0;
-                for(let dx=-scaledRad;dx<=scaledRad;dx++){ let nx=x+dx; if(nx>=0&&nx<w){ sum+=buf[y*w+nx]; c++; } }
-                tmp[y*w+x] = sum/c;
+            
+            let effectiveMode = mode;
+            if (typeof mode === 'boolean') {
+                effectiveMode = mode ? 'clamp' : 'wrap';
             }
-            for(let x=0;x<w;x++) for(let y=0;y<h;y++){
-                let sum=0, c=0;
-                for(let dy=-scaledRad;dy<=scaledRad;dy++){ let ny=y+dy; if(ny>=0&&ny<h){ sum+=tmp[ny*w+x]; c++; } }
-                buf[y*w+x] = sum/c;
+
+            for(let y=0;y<h;y++) {
+                let rowOffset = y*w;
+                for(let x=0;x<w;x++){
+                    let sum=0, c=0;
+                    for(let dx=-scaledRad;dx<=scaledRad;dx++){
+                        let nx=x+dx;
+                        if (effectiveMode === 'clamp') {
+                            if (nx < 0) nx = 0;
+                            else if (nx >= w) nx = w - 1;
+                            sum += buf[rowOffset + nx];
+                            c++;
+                        } else if (effectiveMode === 'wrap') {
+                            nx = (nx % w + w) % w;
+                            sum += buf[rowOffset + nx];
+                            c++;
+                        } else {
+                            if (nx >= 0 && nx < w) {
+                                sum += buf[rowOffset + nx];
+                                c++;
+                            }
+                        }
+                    }
+                    tmp[rowOffset + x] = sum/c;
+                }
+            }
+            for(let x=0;x<w;x++) {
+                for(let y=0;y<h;y++){
+                    let sum=0, c=0;
+                    for(let dy=-scaledRad;dy<=scaledRad;dy++){
+                        let ny=y+dy;
+                        if (effectiveMode === 'clamp') {
+                            if (ny < 0) ny = 0;
+                            else if (ny >= h) ny = h - 1;
+                            sum += tmp[ny * w + x];
+                            c++;
+                        } else if (effectiveMode === 'wrap') {
+                            ny = (ny % h + h) % h;
+                            sum += tmp[ny * w + x];
+                            c++;
+                        } else {
+                            if (ny >= 0 && ny < h) {
+                                sum += tmp[ny * w + x];
+                                c++;
+                            }
+                        }
+                    }
+                    buf[y*w+x] = sum/c;
+                }
             }
         }
 
@@ -1710,7 +1755,11 @@
                     }
 
                     if(p.useFindEdges) applyEdgeDetection(lay.cachedBuffer, blurTemp, w, h);
-                    if(p.blur>0) applyBoxBlur(lay.cachedBuffer, blurTemp, w, h, parseInt(p.blur));
+                    if(p.blur>0) {
+                        let isTiled = (state.global.tileMode && state.global.tileMode !== 'off') || !!p.seamless;
+                        let blurMode = isTiled ? 'wrap' : (p.blurClampEdge ? 'clamp' : 'wrap');
+                        applyBoxBlur(lay.cachedBuffer, blurTemp, w, h, parseInt(p.blur), blurMode);
+                    }
                 }
 
                 layerBuffer.set(lay.cachedBuffer);
@@ -1756,7 +1805,11 @@
                 }
             }
 
-            if(state.global.blur>0) applyBoxBlur(blendBuffer, blurTemp, w, h, parseInt(state.global.blur));
+            if(state.global.blur>0) {
+                let isGlobalTiled = (state.global.tileMode && state.global.tileMode !== 'off');
+                let globalBlurMode = isGlobalTiled ? 'wrap' : (state.global.blurClampEdge ? 'clamp' : 'wrap');
+                applyBoxBlur(blendBuffer, blurTemp, w, h, parseInt(state.global.blur), globalBlurMode);
+            }
 
             let gg=state.global.gamma||1, gc=state.global.contrast||1, gv=state.global.vignette||0, gr=state.global.grain||0, gi=state.global.invert===true;
 
@@ -1843,14 +1896,14 @@
         // значення за замовчуванням через || / ?? у renderProps()/evalGenerator()
         // самі, щойно з'являються на екрані для свого типу генератора.
         function freshLayerParams() {
-            return { seamless:false, scale:10, scaleX:10, scaleY:10, lockScale:true, layerScale:1, contrast:1, brightness:1, angle:0, blur:0,
+            return { seamless:false, scale:10, scaleX:10, scaleY:10, lockScale:true, layerScale:1, contrast:1, brightness:1, angle:0, blur:0, blurClampEdge:false,
                 offsetX:0, offsetY:0, invert:false, warps:[],
                 useThreshold:false, thresholdVal:50, useLevels:false, levelMin:0, levelMax:100,
                 usePosterize:false, posterizeLevels:4, useFindEdges:false };
         }
 
         function freshGlobalSettings() {
-            return { gamma:1, contrast:1, vignette:0, grain:10, blur:0,
+            return { gamma:1, contrast:1, vignette:0, grain:10, blur:0, blurClampEdge:false,
                 globalZoom:1, globalRotation:0, globalOffsetX:0, globalOffsetY:0,
                 tileMode:'off', tileRepeatX:2, tileRepeatY:2, tileMirrorX:true, tileMirrorY:true,
                 tileSeamOffsetX:0, tileSeamOffsetY:0, blendCurve:'smooth',
@@ -2602,6 +2655,12 @@
                 ${createSlider("Яскравість шару", "brightness", 0, 2, 0.05, lp.brightness, false, 1)}
                 ${createSlider("Контраст шару", "contrast", 0.1, 3, 0.05, lp.contrast, false, 1)}
                 ${createSlider("Розмиття (px)", "blur", 0, 15, 1, lp.blur||0, false, 0)}
+                <div class="property-group" style="margin-top:-6px;">
+                    <label class="checkbox-label" style="font-size:11px; display:flex; align-items:center; gap:6px;">
+                        <input type="checkbox" ${lp.blurClampEdge ? 'checked' : ''} onchange="upd('blurClampEdge', this.checked)">
+                        <span>Repeat Edge Pixels / Clamp to Edge</span>
+                    </label>
+                </div>
                 <hr>
 
                 <div class="property-group">
@@ -2672,6 +2731,12 @@
                 ${createSlider("Гамма", "gamma", 0.2, 3, 0.05, g.gamma, true, 1)}
                 ${createSlider("Віньєтка", "vignette", 0, 1, 0.05, g.vignette, true, 0)}
                 ${createSlider("Глобальне розмиття", "blur", 0, 20, 1, g.blur||0, true, 0)}
+                <div class="property-group" style="margin-top:-6px;">
+                    <label class="checkbox-label" style="font-size:11px; display:flex; align-items:center; gap:6px;">
+                        <input type="checkbox" ${g.blurClampEdge ? 'checked' : ''} onchange="state.global.blurClampEdge=this.checked; invalidateCaches(); requestRender(); commitHistorySnapshot();">
+                        <span>Repeat Edge Pixels / Clamp to Edge</span>
+                    </label>
+                </div>
                 ${createSlider("Зерно", "grain", 0, 50, 1, g.grain, true, 10)}
             `;
         }
@@ -4724,8 +4789,14 @@
             let lay=state.layers.find(l=>l.id===state.selectedLayerId);
             triggerInteraction();
             if(isLay && k in state.global) { 
-                state.global[k] = parseFloat(v);
-                const COORD_PARAMS = ['globalZoom', 'globalRotation', 'globalOffsetX', 'globalOffsetY', 'tileRepeatX', 'tileRepeatY', 'tileSeamOffsetX', 'tileSeamOffsetY', 'forceSeamlessSoftness'];
+                if (typeof v === 'boolean') {
+                    state.global[k] = v;
+                } else if (v === 'true' || v === 'false') {
+                    state.global[k] = (v === 'true');
+                } else {
+                    state.global[k] = parseFloat(v);
+                }
+                const COORD_PARAMS = ['globalZoom', 'globalRotation', 'globalOffsetX', 'globalOffsetY', 'tileRepeatX', 'tileRepeatY', 'tileSeamOffsetX', 'tileSeamOffsetY', 'forceSeamlessSoftness', 'blur', 'blurClampEdge'];
                 if (COORD_PARAMS.includes(k)) {
                     invalidateCaches();
                 }
@@ -4746,7 +4817,7 @@
                     if(k==='visible'||k==='generatorType') { renderProps(); renderLayers(); }
                 } else {
                     lay.params[k]=val;
-                    if(['seamless','useThreshold','useLevels','useFindEdges','usePosterize','brushTool','gradType','spreadMethod','sourceMode','metric','mode','lockScale'].includes(k)) renderProps();
+                    if(['seamless','useThreshold','useLevels','useFindEdges','usePosterize','brushTool','gradType','spreadMethod','sourceMode','metric','mode','lockScale','blurClampEdge'].includes(k)) renderProps();
                     if(String(k).startsWith('brush')) updateBrushPreview();
                 }
                 if(!suppressRender) requestRender();
