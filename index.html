@@ -67,6 +67,23 @@
                     <input type="checkbox" id="chkLowRes" onchange="setLowResOnEdit(this.checked)">
                     <span>Швидкий прев'ю</span>
                 </label>
+
+                <div class="control-divider"></div>
+
+                <div id="borderControlWrapper" class="border-control-wrapper">
+                    <label class="lowres-toggle-label" title="Увімкнути / вимкнути рамку та ефекти навколо канвасу">
+                        <input type="checkbox" id="chkCanvasBorder" onchange="toggleCanvasBorder(this.checked)">
+                        <span class="clickable-border-label" onclick="toggleBorderSliderPopover(event)" title="Натисніть для налаштування інтенсивності">Рамка</span>
+                    </label>
+
+                    <div id="borderSliderPopover" class="border-slider-popover hidden">
+                        <div class="popover-header">
+                            <span>Інтенсивність</span>
+                            <span id="borderIntensityValText">100%</span>
+                        </div>
+                        <input type="range" id="rngBorderIntensity" min="0" max="100" value="100" oninput="setCanvasBorderIntensity(this.value)">
+                    </div>
+                </div>
             </div>
         </main>
 

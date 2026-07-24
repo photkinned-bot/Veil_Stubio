@@ -370,6 +370,9 @@
         let currentTab = 'layer', canvas, ctx;
         let canvasResolution = parseInt(localStorage.getItem('veil_canvas_resolution')) || 512;
         let lowResOnEdit = localStorage.getItem('veil_low_res_on_edit') === 'true';
+        let showCanvasBorder = localStorage.getItem('veil_show_canvas_border') !== 'false';
+        let canvasBorderIntensity = parseFloat(localStorage.getItem('veil_canvas_border_intensity'));
+        if (isNaN(canvasBorderIntensity)) canvasBorderIntensity = 1.0;
         let b_width=0, b_height=0, blendBuffer, layerBuffer, blurTemp, dispBuffer, pendingMaskTargetBuffer, pendingMaskAlphaBuffer;
 
         function ensureBuffers(w,h){
@@ -5345,6 +5348,60 @@
             requestRender();
         };
 
+        window.applyCanvasBorderStyles = function() {
+            let cv = $('canvas');
+            if (!cv) return;
+            cv.classList.toggle('no-border', !showCanvasBorder);
+            cv.style.setProperty('--b-intensity', canvasBorderIntensity);
+        };
+
+        window.toggleCanvasBorder = function(val) {
+            showCanvasBorder = val;
+            try { localStorage.setItem('veil_show_canvas_border', val); } catch(e) {}
+            if ($('chkCanvasBorder')) $('chkCanvasBorder').checked = val;
+            applyCanvasBorderStyles();
+        };
+
+        window.setCanvasBorderIntensity = function(val) {
+            let intVal = parseFloat(val) / 100;
+            if (isNaN(intVal)) intVal = 1.0;
+            canvasBorderIntensity = Math.max(0, Math.min(1, intVal));
+            try { localStorage.setItem('veil_canvas_border_intensity', canvasBorderIntensity); } catch(e) {}
+            
+            if ($('borderIntensityValText')) {
+                $('borderIntensityValText').innerText = Math.round(canvasBorderIntensity * 100) + '%';
+            }
+            if ($('rngBorderIntensity')) {
+                $('rngBorderIntensity').value = Math.round(canvasBorderIntensity * 100);
+            }
+            
+            if (canvasBorderIntensity > 0 && !showCanvasBorder) {
+                toggleCanvasBorder(true);
+            } else if (canvasBorderIntensity === 0 && showCanvasBorder) {
+                toggleCanvasBorder(false);
+            } else {
+                applyCanvasBorderStyles();
+            }
+        };
+
+        window.toggleBorderSliderPopover = function(e) {
+            if (e) {
+                e.preventDefault();
+                e.stopPropagation();
+            }
+            let pop = $('borderSliderPopover');
+            if (!pop) return;
+            pop.classList.toggle('hidden');
+        };
+
+        document.addEventListener('click', function(evt) {
+            let pop = $('borderSliderPopover');
+            let wrapper = $('borderControlWrapper');
+            if (pop && !pop.classList.contains('hidden') && wrapper && !wrapper.contains(evt.target)) {
+                pop.classList.add('hidden');
+            }
+        });
+
         // Expose all state and action handlers to window globally
         window.exportVeilFile = exportVeilFile;
         window.triggerVeilImport = triggerVeilImport;
@@ -5388,9 +5445,16 @@
         window.renderProps = renderProps;
         window.requestRender = requestRender;
         window.toggleSelectingStampSource = toggleSelectingStampSource;
+        window.toggleCanvasBorder = toggleCanvasBorder;
+        window.setCanvasBorderIntensity = setCanvasBorderIntensity;
+        window.toggleBorderSliderPopover = toggleBorderSliderPopover;
 
         function initCanvasControlsUI() {
             if ($('chkLowRes')) $('chkLowRes').checked = lowResOnEdit;
+            if ($('chkCanvasBorder')) $('chkCanvasBorder').checked = showCanvasBorder;
+            if ($('rngBorderIntensity')) $('rngBorderIntensity').value = Math.round(canvasBorderIntensity * 100);
+            if ($('borderIntensityValText')) $('borderIntensityValText').innerText = Math.round(canvasBorderIntensity * 100) + '%';
+            applyCanvasBorderStyles();
             ['512', '1024'].forEach(r => {
                 let btn = $('resBtn' + r);
                 if (btn) btn.classList.toggle('active', parseInt(r) === canvasResolution);
