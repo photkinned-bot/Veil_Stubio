@@ -313,22 +313,25 @@
 
                 // Evaluate color stops or return t
                 if (p.stops && Array.isArray(p.stops) && p.stops.length > 0) {
-                    return this.evalStopsVal(t, p.stops);
+                    if (!p._sortedStops || p._stopsDirty) {
+                        p._sortedStops = p.stops.slice().sort((a, b) => a.pos - b.pos);
+                        p._stopsDirty = false;
+                    }
+                    return this.evalStopsVal(t, p._sortedStops);
                 }
                 return Math.max(0, Math.min(1, t));
             },
 
-            evalStopsVal(t, stops) {
-                if (!stops || stops.length === 0) return t;
-                if (stops.length === 1) return stops[0].val !== undefined ? stops[0].val : 1;
+            evalStopsVal(t, sortedStops) {
+                if (!sortedStops || sortedStops.length === 0) return t;
+                if (sortedStops.length === 1) return sortedStops[0].val !== undefined ? sortedStops[0].val : 1;
 
-                let sorted = stops.slice().sort((a, b) => a.pos - b.pos);
-                if (t <= sorted[0].pos) return sorted[0].val !== undefined ? sorted[0].val : 0;
-                if (t >= sorted[sorted.length - 1].pos) return sorted[sorted.length - 1].val !== undefined ? sorted[sorted.length - 1].val : 1;
+                if (t <= sortedStops[0].pos) return sortedStops[0].val !== undefined ? sortedStops[0].val : 0;
+                if (t >= sortedStops[sortedStops.length - 1].pos) return sortedStops[sortedStops.length - 1].val !== undefined ? sortedStops[sortedStops.length - 1].val : 1;
 
-                for (let i = 0; i < sorted.length - 1; i++) {
-                    let s1 = sorted[i];
-                    let s2 = sorted[i + 1];
+                for (let i = 0; i < sortedStops.length - 1; i++) {
+                    let s1 = sortedStops[i];
+                    let s2 = sortedStops[i + 1];
                     if (t >= s1.pos && t <= s2.pos) {
                         let range = s2.pos - s1.pos;
                         let factor = range > 0 ? (t - s1.pos) / range : 0;
@@ -901,7 +904,7 @@
         function serializeState(s) {
             prepareStateForSerialization();
             return JSON.stringify(s, (key, value) => {
-                if (key === 'paintCanvas' || key === 'paintBuffer') {
+                if (key === 'paintCanvas' || key === 'paintBuffer' || key.startsWith('_')) {
                     return undefined;
                 }
                 return value;
@@ -2218,6 +2221,7 @@
             lay.params.stops.push({ pos: newPos, color: '#888888', val: 0.5 });
             lay.params.stops.sort((a, b) => a.pos - b.pos);
             lay.isDirty = true;
+            lay.params._stopsDirty = true;
             renderProps();
             requestRender();
             commitHistorySnapshot();
@@ -2228,6 +2232,7 @@
             if (!lay || !lay.params || !lay.params.stops || lay.params.stops.length <= 2) return;
             lay.params.stops.splice(idx, 1);
             lay.isDirty = true;
+            lay.params._stopsDirty = true;
             renderProps();
             requestRender();
             commitHistorySnapshot();
@@ -2237,18 +2242,36 @@
             let lay = state.layers.find(l => l.id === state.selectedLayerId);
             if (!lay || !lay.params || !lay.params.stops || !lay.params.stops[idx]) return;
             triggerInteraction();
+            let stop = lay.params.stops[idx];
             if (key === 'color') {
-                lay.params.stops[idx].color = val;
+                stop.color = val;
             } else {
-                lay.params.stops[idx][key] = parseFloat(val);
-            }
-            if (key === 'pos') {
-                lay.params.stops.sort((a, b) => a.pos - b.pos);
+                stop[key] = parseFloat(val);
             }
             lay.isDirty = true;
-            if (key === 'color' || key === 'pos') renderProps();
+            lay.params._stopsDirty = true;
+
+            let lblPos = $('lbl_stop_pos_' + idx);
+            if (lblPos) lblPos.innerText = 'Поз: ' + Math.round(stop.pos * 100) + '%';
+
+            let lblVal = $('lbl_stop_val_' + idx);
+            if (lblVal) lblVal.innerText = 'Вис: ' + (stop.val !== undefined ? stop.val : stop.pos).toFixed(2);
+
+            let sortedStops = lay.params.stops.slice().sort((a, b) => a.pos - b.pos);
+            let cssStopsStr = sortedStops.map(s => `${s.color || '#888888'} ${Math.round(s.pos * 100)}%`).join(', ');
+            let rampEl = $('gradientRampPreview');
+            if (rampEl) rampEl.style.background = `linear-gradient(to right, ${cssStopsStr})`;
+
             if (!suppressRender) requestRender();
-            scheduleHistorySnapshot();
+        };
+
+        window.finishGradientStopEdit = function() {
+            let lay = state.layers.find(l => l.id === state.selectedLayerId);
+            if (!lay || !lay.params || !lay.params.stops) return;
+            lay.params.stops.sort((a, b) => a.pos - b.pos);
+            lay.params._stopsDirty = true;
+            renderProps();
+            commitHistorySnapshot();
         };
 
         window.applyGradientPreset = function(presetName) {
@@ -2307,6 +2330,7 @@
                     break;
             }
             lay.isDirty = true;
+            lay.params._stopsDirty = true;
             renderProps();
             requestRender();
             commitHistorySnapshot();
@@ -2425,18 +2449,18 @@
                 let cssStopsStr = sortedStops.map(s => `${s.color || '#888888'} ${Math.round(s.pos * 100)}%`).join(', ');
                 let rampStyle = `background: linear-gradient(to right, ${cssStopsStr}); height: 28px; border-radius: 6px; border: 1px solid var(--border-color, #27272a); margin-bottom: 10px; position: relative; box-shadow: inset 0 1px 3px rgba(0,0,0,0.5);`;
 
-                let stopsHTML = sortedStops.map((s, idx) => {
+                let stopsHTML = sortedStops.map((s) => {
                     let rawIdx = lp.stops.indexOf(s);
                     return `
                     <div style="background: rgba(255,255,255,0.03); border: 1px solid var(--border-color, #27272a); border-radius: 6px; padding: 6px 8px; margin-bottom: 6px; display: grid; grid-template-columns: 28px 1fr 1fr 24px; gap: 6px; align-items: center;">
-                        <input type="color" value="${s.color || '#ffffff'}" oninput="updateGradientStop(${rawIdx}, 'color', this.value)" style="width:24px; height:24px; padding:0; border:none; background:none; cursor:pointer;" title="Колір точки">
+                        <input type="color" value="${s.color || '#ffffff'}" oninput="updateGradientStop(${rawIdx}, 'color', this.value)" onchange="finishGradientStopEdit();" style="width:24px; height:24px; padding:0; border:none; background:none; cursor:pointer;" title="Колір точки">
                         <div>
-                            <div style="font-size:9px; color:var(--text-muted, #a1a1aa);">Поз: ${Math.round(s.pos * 100)}%</div>
-                            <input type="range" min="0" max="1" step="0.01" value="${s.pos}" oninput="updateGradientStop(${rawIdx}, 'pos', this.value)" onchange="commitHistorySnapshot();" style="width:100%;">
+                            <div id="lbl_stop_pos_${rawIdx}" style="font-size:9px; color:var(--text-muted, #a1a1aa);">Поз: ${Math.round(s.pos * 100)}%</div>
+                            <input type="range" min="0" max="1" step="0.01" value="${s.pos}" oninput="updateGradientStop(${rawIdx}, 'pos', this.value)" onchange="finishGradientStopEdit();" style="width:100%;">
                         </div>
                         <div>
-                            <div style="font-size:9px; color:var(--text-muted, #a1a1aa);">Вис: ${(s.val !== undefined ? s.val : s.pos).toFixed(2)}</div>
-                            <input type="range" min="0" max="1" step="0.01" value="${s.val !== undefined ? s.val : s.pos}" oninput="updateGradientStop(${rawIdx}, 'val', this.value)" onchange="commitHistorySnapshot();" style="width:100%;">
+                            <div id="lbl_stop_val_${rawIdx}" style="font-size:9px; color:var(--text-muted, #a1a1aa);">Вис: ${(s.val !== undefined ? s.val : s.pos).toFixed(2)}</div>
+                            <input type="range" min="0" max="1" step="0.01" value="${s.val !== undefined ? s.val : s.pos}" oninput="updateGradientStop(${rawIdx}, 'val', this.value)" onchange="finishGradientStopEdit();" style="width:100%;">
                         </div>
                         <button type="button" class="reset-btn" style="color:#ef4444; font-size:12px;" title="Видалити точку" onclick="removeGradientStop(${rawIdx})" ${lp.stops.length <= 2 ? 'disabled style="opacity:0.3; cursor:not-allowed;"' : ''}>✕</button>
                     </div>`;
@@ -2487,7 +2511,7 @@
                         <span class="property-label" style="margin:0;">Шкала кольорів (Color Ramp)</span>
                         <button type="button" class="btn btn-primary" onclick="addGradientStop()" style="padding:2px 8px; font-size:10px;">+ Точка</button>
                     </div>
-                    <div style="${rampStyle}"></div>
+                    <div id="gradientRampPreview" style="${rampStyle}"></div>
                     ${stopsHTML}
                 </div>
                 `;
@@ -4722,7 +4746,7 @@
                     if(k==='visible'||k==='generatorType') { renderProps(); renderLayers(); }
                 } else {
                     lay.params[k]=val;
-                    if(k==='seamless'||k==='useThreshold'||k==='useLevels'||k==='useFindEdges'||k==='usePosterize'||k==='brushTool') renderProps();
+                    if(['seamless','useThreshold','useLevels','useFindEdges','usePosterize','brushTool','gradType','spreadMethod','sourceMode','metric','mode','lockScale'].includes(k)) renderProps();
                     if(String(k).startsWith('brush')) updateBrushPreview();
                 }
                 if(!suppressRender) requestRender();
