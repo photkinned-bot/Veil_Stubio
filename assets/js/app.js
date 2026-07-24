@@ -1866,7 +1866,7 @@
                 let isMasked = !!clippedByMasks[i]; // цей шар кліпається маскою(ами), що йдуть над ним
                 let maskHasNoTarget = l.isMask && maskTargetIndex[i] === -1; // маска в самому низу — не відображається
                 return `
-                <div class="layer-card ${l.id===state.selectedLayerId?'active':''} ${l.isMask?'is-mask':''} ${maskHasNoTarget?'is-mask-empty':''} ${isMasked?'is-masked-target':''} ${!l.visible?'is-hidden':''}" onclick="state.selectedLayerId='${l.id}';switchRightTab('layer');renderLayers();renderProps();">
+                <div class="layer-card ${l.id===state.selectedLayerId?'active':''} ${l.isMask?'is-mask':''} ${maskHasNoTarget?'is-mask-empty':''} ${isMasked?'is-masked-target':''} ${!l.visible?'is-hidden':''}" data-layer-id="${l.id}" data-layer-index="${i}" onclick="state.selectedLayerId='${l.id}';switchRightTab('layer');renderLayers();renderProps();">
                     <div class="layer-row-top">
                         <div class="layer-info">${isMasked?'<span class="mask-link-icon" title="Кліпується маскою зверху">⤷</span>':''}<button onclick="event.stopPropagation(); toggleLayerVisibility(${i})" class="layer-btn ${l.visible?'layer-visible':'layer-hidden'}" title="${l.visible?'Приховати шар':'Показати шар'}" style="padding:0; margin-right:4px;">${l.visible?'👁':'🕶'}</button><span class="layer-name">${l.name}</span>${l.isMask?`<span class="mask-badge" title="${maskHasNoTarget?'Маска: немає шару знизу — не відображається':'Цей шар працює як маска для шару знизу'}">МАСКА</span>`:''}</div>
                         <div class="layer-controls">
@@ -2578,7 +2578,7 @@
             if(lay.generatorType==='sine') genHTML+=createSlider("Фаза зсуву", "phase", 0, 6.28, 0.1, lp.phase||0, false, 0);
             
             let warpsHTML = lp.warps.map((w, idx) => `
-                <div class="warp-card" style="${w.visible===false?'opacity:0.5;':''}">
+                <div class="warp-card" data-warp-index="${idx}" style="${w.visible===false?'opacity:0.5;':''}">
                     <div class="warp-controls">
                         <button type="button" class="warp-btn" title="Перемістити вгору" onclick="moveWarp(${idx}, -1)" ${idx === 0 ? 'disabled style="opacity:0.3;cursor:not-allowed;"' : ''}>▲</button>
                         <button type="button" class="warp-btn" title="Перемістити вниз" onclick="moveWarp(${idx}, 1)" ${idx === lp.warps.length - 1 ? 'disabled style="opacity:0.3;cursor:not-allowed;"' : ''}>▼</button>
@@ -5461,10 +5461,158 @@
             });
         }
 
+        function initDragAndDrop() {
+            let ghost = null;
+            let activeItem = null;
+            let container = null;
+            let isLayer = false;
+            let isWarp = false;
+            let offsetX = 0;
+            let offsetY = 0;
+
+            document.addEventListener('pointerdown', (e) => {
+                if (e.button !== undefined && e.button !== 0) return;
+                if (e.target.closest('button, input, select, textarea, label, .reset-btn')) return;
+
+                const card = e.target.closest('.layer-card, .warp-card');
+                if (!card) return;
+
+                isLayer = card.classList.contains('layer-card');
+                isWarp = card.classList.contains('warp-card');
+
+                container = card.parentElement;
+                if (!container) return;
+
+                activeItem = card;
+                const rect = activeItem.getBoundingClientRect();
+                offsetX = e.clientX - rect.left;
+                offsetY = e.clientY - rect.top;
+
+                ghost = activeItem.cloneNode(true);
+                ghost.id = 'drag-ghost-clone';
+                ghost.style.position = 'fixed';
+                ghost.style.left = (e.clientX - offsetX) + 'px';
+                ghost.style.top = (e.clientY - offsetY) + 'px';
+                ghost.style.width = rect.width + 'px';
+                ghost.style.height = rect.height + 'px';
+                ghost.style.pointerEvents = 'none';
+                ghost.style.zIndex = '999999';
+                ghost.style.opacity = '0.85';
+                ghost.style.boxShadow = '0 8px 24px rgba(0,0,0,0.6)';
+                ghost.style.transform = 'scale(1.02)';
+                ghost.style.transition = 'transform 0.05s ease';
+
+                document.body.appendChild(ghost);
+                activeItem.style.opacity = '0.35';
+
+                const onPointerMove = (moveEvt) => {
+                    if (!ghost || !activeItem) return;
+
+                    ghost.style.left = (moveEvt.clientX - offsetX) + 'px';
+                    ghost.style.top = (moveEvt.clientY - offsetY) + 'px';
+
+                    ghost.style.display = 'none';
+                    const elemBelow = document.elementFromPoint(moveEvt.clientX, moveEvt.clientY);
+                    ghost.style.display = 'block';
+
+                    if (!elemBelow) return;
+
+                    const targetSelector = isLayer ? '.layer-card' : '.warp-card';
+                    const targetItem = elemBelow.closest(targetSelector);
+
+                    if (targetItem && targetItem !== activeItem && targetItem.parentElement === container) {
+                        const targetRect = targetItem.getBoundingClientRect();
+                        const targetCenterY = targetRect.top + targetRect.height / 2;
+
+                        if (moveEvt.clientY > targetCenterY) {
+                            container.insertBefore(activeItem, targetItem.nextElementSibling);
+                        } else {
+                            container.insertBefore(activeItem, targetItem);
+                        }
+                    }
+                };
+
+                const onPointerUp = () => {
+                    document.removeEventListener('pointermove', onPointerMove);
+                    document.removeEventListener('pointerup', onPointerUp);
+                    document.removeEventListener('pointercancel', onPointerUp);
+
+                    if (ghost && ghost.parentElement) {
+                        ghost.parentElement.removeChild(ghost);
+                    }
+                    if (activeItem) {
+                        activeItem.style.opacity = '';
+                    }
+
+                    if (isLayer && container) {
+                        const layerCards = Array.from(container.querySelectorAll('.layer-card'));
+                        const newLayersOrder = [];
+                        layerCards.forEach(c => {
+                            const layerId = c.getAttribute('data-layer-id');
+                            const lay = state.layers.find(l => l.id === layerId);
+                            if (lay) newLayersOrder.push(lay);
+                        });
+                        if (newLayersOrder.length === state.layers.length) {
+                            let orderChanged = false;
+                            for (let i = 0; i < state.layers.length; i++) {
+                                if (state.layers[i] !== newLayersOrder[i]) {
+                                    orderChanged = true;
+                                    break;
+                                }
+                            }
+                            if (orderChanged) {
+                                state.layers = newLayersOrder;
+                                commitHistorySnapshot();
+                                renderLayers();
+                                requestRender();
+                            }
+                        }
+                    } else if (isWarp && container) {
+                        const lay = state.layers.find(l => l.id === state.selectedLayerId);
+                        if (lay && lay.params && lay.params.warps) {
+                            const warpCards = Array.from(container.querySelectorAll('.warp-card'));
+                            const newWarpsOrder = [];
+                            warpCards.forEach(c => {
+                                const warpIdx = parseInt(c.getAttribute('data-warp-index'));
+                                if (!isNaN(warpIdx) && lay.params.warps[warpIdx]) {
+                                    newWarpsOrder.push(lay.params.warps[warpIdx]);
+                                }
+                            });
+                            if (newWarpsOrder.length === lay.params.warps.length) {
+                                let orderChanged = false;
+                                for (let i = 0; i < lay.params.warps.length; i++) {
+                                    if (lay.params.warps[i] !== newWarpsOrder[i]) {
+                                        orderChanged = true;
+                                        break;
+                                    }
+                                }
+                                if (orderChanged) {
+                                    lay.params.warps = newWarpsOrder;
+                                    lay.isDirty = true;
+                                    commitHistorySnapshot();
+                                    renderProps();
+                                    requestRender();
+                                }
+                            }
+                        }
+                    }
+
+                    ghost = null;
+                    activeItem = null;
+                    container = null;
+                };
+
+                document.addEventListener('pointermove', onPointerMove);
+                document.addEventListener('pointerup', onPointerUp);
+                document.addEventListener('pointercancel', onPointerUp);
+            });
+        }
+
         document.addEventListener('DOMContentLoaded', () => { 
             canvas=$('canvas'); 
             ctx=canvas.getContext('2d'); 
             initCanvasControlsUI();
+            initDragAndDrop();
 
             // Register pointer events for painting
             let wrapper = $('canvasWrapper');

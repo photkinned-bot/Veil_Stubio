@@ -37,7 +37,7 @@
         .btn-secondary:hover{background-color:var(--border-color)}
 .btn-gesture-active{background-color:var(--primary-color) !important; border-color:var(--primary-hover) !important; color:#ffffff !important; transform:scale(1.08); box-shadow:0 0 10px rgba(59,130,246,0.7); transition:all 0.1s ease;}
         .layers-list{flex:1;overflow-y:auto;padding:10px;display:flex;flex-direction:column;gap:8px}
-        .layer-card{background-color:rgba(255,255,255,0.02);border:1px solid var(--border-color);border-radius:var(--radius);padding:10px;cursor:pointer;transition:var(--transition)}
+        .layer-card{background-color:rgba(255,255,255,0.02);border:1px solid var(--border-color);border-radius:var(--radius);padding:10px;cursor:pointer;transition:var(--transition);touch-action:none;user-select:none;-webkit-user-select:none;}
         .layer-card:hover{border-color:#3f3f46}
         .layer-card.active{background-color:var(--card-bg-active);border-color:var(--primary-color)}
         .layer-row-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
@@ -61,7 +61,7 @@
         .gen-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:4px}
         .gen-btn{background-color:#09090b;border:1px solid var(--border-color);color:var(--text-muted);font-size:10px;padding:6px 2px;border-radius:4px;cursor:pointer;font-weight:600}
         .gen-btn.active{background-color:var(--primary-color);color:#fff;border-color:var(--primary-color)}
-        .warp-card{background:#0f0f11; border:1px solid var(--border-color); padding:10px; margin-bottom:8px; border-radius:4px; position:relative;}
+        .warp-card{background:#0f0f11; border:1px solid var(--border-color); padding:10px; margin-bottom:8px; border-radius:4px; position:relative; touch-action:none; user-select:none; -webkit-user-select:none;}
         .warp-controls{position:absolute; right:6px; top:6px; display:flex; gap:3px; align-items:center;}
         .warp-btn{background:var(--border-color); color:#fff; border:none; border-radius:3px; font-size:10px; padding:2px 5px; cursor:pointer; line-height:1;}
         .warp-btn:hover:not(:disabled){background:var(--primary-color);}
