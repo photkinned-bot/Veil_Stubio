@@ -397,6 +397,7 @@
                     usePosterize: false, posterizeLevels: 4,
                     useFindEdges: false,
                     radialCount: 18, ringCount: 22, ringThick: 0.04, radThick: 0.025,
+                    enableRays: true, enableRings: true,
                     wobble: 0.03, jitter: 8, ringSineAmp: 0, ringSineFreq: 5,
                     radSineAmp: 0, radSineFreq: 10, fractal: 0
                 }
@@ -1479,33 +1480,44 @@
                     let uy = (ty - 0.5) * (sy / 10);
                     let r = Math.sqrt(ux*ux + uy*uy);
                     let a = Math.atan2(uy, ux);
-                    let radSineAmp = p.radSineAmp || 0;
-                    let radSineFreq = p.radSineFreq || 10;
-                    let ringSineAmp = p.ringSineAmp || 0;
-                    let ringSineFreq = p.ringSineFreq || 5;
+                    let radSineAmp = p.radSineAmp !== undefined ? p.radSineAmp : 0;
+                    let radSineFreq = p.radSineFreq !== undefined ? p.radSineFreq : 10;
+                    let ringSineAmp = p.ringSineAmp !== undefined ? p.ringSineAmp : 0;
+                    let ringSineFreq = p.ringSineFreq !== undefined ? p.ringSineFreq : 5;
                     let jitter = p.jitter || 8;
                     let wobble = p.wobble || 0.03;
                     let fractal = p.fractal || 0;
                     let radialCount = p.radialCount || 18;
-                    let radThick = p.radThick || 0.025;
+                    let radThick = p.radThick !== undefined ? p.radThick : 0.025;
                     let ringCount = p.ringCount || 22;
-                    let ringThick = p.ringThick || 0.04;
-                    a += radSineAmp * Math.sin(r * radSineFreq);
-                    let ringOffset = ringSineAmp * Math.sin(a * ringSineFreq);
-                    let d1 = Math.sin(a * jitter);
-                    let mix_val = d1 * (1 - fractal) + (Math.abs(d1) * 2.0 - 1.0) * fractal;
-                    let combinedWobble = wobble * mix_val;
-                    let rad_arg = ((a + combinedWobble) / (2.0 * Math.PI)) * radialCount;
-                    let rad_fract = rad_arg - Math.floor(rad_arg);
-                    let radial = Math.abs(rad_fract - 0.5);
-                    radial = smoothstep(radThick, 0.0, radial);
-                    let sin_a_jit = Math.sin(a * jitter);
-                    let mix_ring = sin_a_jit * (1 - fractal) + Math.abs(sin_a_jit) * fractal;
-                    let rr = r + ringOffset + (wobble * mix_ring);
-                    let ring_arg = rr * ringCount;
-                    let ring_fract = ring_arg - Math.floor(ring_arg);
-                    let ring = Math.abs(ring_fract - 0.5);
-                    ring = smoothstep(ringThick, 0.0, ring);
+                    let ringThick = p.ringThick !== undefined ? p.ringThick : 0.04;
+                    let enableRays = p.enableRays !== undefined ? p.enableRays : true;
+                    let enableRings = p.enableRings !== undefined ? p.enableRings : true;
+
+                    let radial = 0;
+                    if (enableRays) {
+                        let rayAngle = a + radSineAmp * Math.sin(r * radSineFreq * 10.0);
+                        let d1 = Math.sin(rayAngle * jitter);
+                        let mix_val = d1 * (1 - fractal) + (Math.abs(d1) * 2.0 - 1.0) * fractal;
+                        let combinedWobble = wobble * mix_val;
+                        let rad_arg = ((rayAngle + combinedWobble) / (2.0 * Math.PI)) * radialCount;
+                        let rad_fract = rad_arg - Math.floor(rad_arg);
+                        radial = Math.abs(rad_fract - 0.5);
+                        radial = smoothstep(radThick, 0.0, radial);
+                    }
+
+                    let ring = 0;
+                    if (enableRings) {
+                        let ringOffset = ringSineAmp * Math.sin(a * ringSineFreq);
+                        let sin_a_jit = Math.sin(a * jitter);
+                        let mix_ring = sin_a_jit * (1 - fractal) + Math.abs(sin_a_jit) * fractal;
+                        let rr = r + ringOffset + (wobble * mix_ring);
+                        let ring_arg = rr * ringCount;
+                        let ring_fract = ring_arg - Math.floor(ring_arg);
+                        ring = Math.abs(ring_fract - 0.5);
+                        ring = smoothstep(ringThick, 0.0, ring);
+                    }
+
                     let fade = smoothstep(0.0, 0.05, r);
                     let edge = 1.0 - smoothstep(0.8, 1.0, r);
                     v = Math.max(radial, ring) * fade * edge;
@@ -2680,18 +2692,22 @@
             }
 
             if (lay.generatorType === 'spider_web') {
-                algoSpecificHTML += `<div class="section-title">Spider Web</div>`;
+                algoSpecificHTML += `<div class="section-title">Spider Web (Павутина)</div>`;
+                algoSpecificHTML += `<div class="property-group grid-2">
+                    <label class="checkbox-label"><input type="checkbox" ${lp.enableRays !== false ? 'checked' : ''} onchange="upd('enableRays', this.checked)"> Увімкнути промені</label>
+                    <label class="checkbox-label"><input type="checkbox" ${lp.enableRings !== false ? 'checked' : ''} onchange="upd('enableRings', this.checked)"> Увімкнути кільця</label>
+                </div>`;
                 algoSpecificHTML += createSlider("Кількість променів", "radialCount", 4, 64, 1, lp.radialCount || 18, false, 18);
                 algoSpecificHTML += createSlider("Кількість кілець", "ringCount", 4, 64, 1, lp.ringCount || 22, false, 22);
-                algoSpecificHTML += createSlider("Товщина кілець", "ringThick", 0.01, 0.2, 0.01, lp.ringThick || 0.04, false, 0.04);
-                algoSpecificHTML += createSlider("Товщина променів", "radThick", 0.01, 0.2, 0.01, lp.radThick || 0.025, false, 0.025);
+                algoSpecificHTML += createSlider("Товщина кілець", "ringThick", 0.001, 0.5, 0.001, lp.ringThick !== undefined ? lp.ringThick : 0.04, false, 0.04);
+                algoSpecificHTML += createSlider("Товщина променів", "radThick", 0.001, 0.5, 0.001, lp.radThick !== undefined ? lp.radThick : 0.025, false, 0.025);
                 algoSpecificHTML += createSlider("Wobble (Хвилювання)", "wobble", 0, 0.5, 0.01, lp.wobble || 0.03, false, 0.03);
                 algoSpecificHTML += createSlider("Jitter (Джиттер)", "jitter", 0, 20, 0.5, lp.jitter || 8, false, 8);
                 algoSpecificHTML += createSlider("Fractal (Фрактал)", "fractal", 0, 1, 0.05, lp.fractal || 0, false, 0);
-                algoSpecificHTML += createSlider("Ампл. кілець (Sine)", "ringSineAmp", 0, 1, 0.05, lp.ringSineAmp || 0, false, 0);
-                algoSpecificHTML += createSlider("Частота кілець (Sine)", "ringSineFreq", 1, 20, 1, lp.ringSineFreq || 5, false, 5);
-                algoSpecificHTML += createSlider("Ампл. променів (Sine)", "radSineAmp", 0, 1, 0.05, lp.radSineAmp || 0, false, 0);
-                algoSpecificHTML += createSlider("Частота променів (Sine)", "radSineFreq", 1, 20, 1, lp.radSineFreq || 10, false, 10);
+                algoSpecificHTML += createSlider("Хвиля кілець: Амплітуда", "ringSineAmp", 0, 0.5, 0.01, lp.ringSineAmp !== undefined ? lp.ringSineAmp : 0, false, 0);
+                algoSpecificHTML += createSlider("Хвиля кілець: Частота", "ringSineFreq", 1, 30, 1, lp.ringSineFreq !== undefined ? lp.ringSineFreq : 5, false, 5);
+                algoSpecificHTML += createSlider("Хвиля променів: Амплітуда", "radSineAmp", 0, 0.5, 0.01, lp.radSineAmp !== undefined ? lp.radSineAmp : 0, false, 0);
+                algoSpecificHTML += createSlider("Хвиля променів: Частота", "radSineFreq", 1, 30, 1, lp.radSineFreq !== undefined ? lp.radSineFreq : 10, false, 10);
             }
 
             if (lay.generatorType === 'gradient') {
@@ -5039,7 +5055,7 @@
                     if(k==='visible'||k==='generatorType') { renderProps(); renderLayers(); }
                 } else {
                     lay.params[k]=val;
-                    if(['seamless','useThreshold','useLevels','useFindEdges','usePosterize','brushTool','gradType','spreadMethod','sourceMode','metric','mode','lockScale','blurClampEdge'].includes(k)) renderProps();
+                    if(['seamless','useThreshold','useLevels','useFindEdges','usePosterize','brushTool','gradType','spreadMethod','sourceMode','metric','mode','lockScale','blurClampEdge','enableRays','enableRings'].includes(k)) renderProps();
                     if(String(k).startsWith('brush')) updateBrushPreview();
                 }
                 if(!suppressRender) requestRender();
