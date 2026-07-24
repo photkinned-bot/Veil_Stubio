@@ -14,7 +14,6 @@
             <span class="logo-subtitle">| Оптимізовано & Нові Деформації</span>
         </div>
         <div class="header-buttons">
-            <button onclick="randomizeAllLayers()" class="btn btn-secondary" title="Рандомізувати всі шари проєкту">🎲 Рандом</button>
             <button onclick="resetProject()" class="btn btn-secondary" title="Скинути весь проєкт до початкового стану">↺ Скинути</button>
             <button onclick="exportVeilFile()" class="btn btn-secondary" title="Завантажити проєкт у файл .veil">💾 Зберегти .veil</button>
             <button onclick="triggerVeilImport()" class="btn btn-secondary" title="Відкрити файл проєкту (.veil / .json)">📂 Відкрити</button>
@@ -111,6 +110,7 @@
                     <input type="file" id="tilingImageInput" accept="image/*" style="display:none;" onchange="handleTilingImageUpload(event)">
                 </div>
             </div>
+            <div id="stickyLayerHeader" class="sticky-layer-header hidden"></div>
             <div id="propertiesPanel" class="properties-content"></div>
         </aside>
     </div>

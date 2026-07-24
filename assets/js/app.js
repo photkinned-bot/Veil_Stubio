@@ -1848,11 +1848,81 @@
             if(!isExport) $('renderTime').textContent = `${(performance.now()-start).toFixed(1)} ms`;
         }
 
+        function renderStickyHeader() {
+            let headerEl = $('stickyLayerHeader');
+            if (!headerEl) return;
+
+            if (currentTab !== 'layer') {
+                headerEl.classList.add('hidden');
+                headerEl.dataset.layerId = '';
+                return;
+            }
+
+            let lay = state.layers.find(l => l.id === state.selectedLayerId);
+            if (!lay) {
+                headerEl.classList.add('hidden');
+                headerEl.dataset.layerId = '';
+                return;
+            }
+
+            headerEl.classList.remove('hidden');
+
+            let layerIdx = state.layers.findIndex(l => l.id === lay.id);
+
+            if (headerEl.dataset.layerId === lay.id && headerEl.querySelector('#sticky_lay_name')) {
+                let nameInp = headerEl.querySelector('#sticky_lay_name');
+                if (nameInp && document.activeElement !== nameInp) nameInp.value = lay.name;
+
+                let blendSel = headerEl.querySelector('#sticky_lay_blend');
+                if (blendSel && document.activeElement !== blendSel) blendSel.value = lay.blendMode;
+
+                let rngOpacity = $('rng_lay_opacity');
+                if (rngOpacity && document.activeElement !== rngOpacity) rngOpacity.value = lay.opacity;
+
+                let numOpacity = $('num_lay_opacity');
+                if (numOpacity && document.activeElement !== numOpacity) numOpacity.value = lay.opacity;
+
+                let btnReset = headerEl.querySelector('#sticky_lay_reset');
+                if (btnReset) btnReset.setAttribute('onclick', `resetLayer(${layerIdx})`);
+
+                return;
+            }
+
+            headerEl.dataset.layerId = lay.id;
+
+            headerEl.innerHTML = `
+                <div style="display:flex; justify-content:space-between; align-items:flex-end; gap:8px; margin-bottom:8px;">
+                    <div style="flex:1;">
+                        <label class="property-label" style="font-size:10px; margin-bottom:2px;">Назва шару</label>
+                        <input type="text" id="sticky_lay_name" value="${lay.name}" onchange="lay.name=this.value;renderLayers();renderStickyHeader();" class="form-control" style="height:30px; font-size:12px;">
+                    </div>
+                    <button id="sticky_lay_reset" onclick="resetLayer(${layerIdx})" class="btn btn-secondary" style="height:30px; padding:0 8px; font-size:11px; white-space:nowrap; flex-shrink:0;" title="Скинути ВСІ параметри цього шару">↺ Скинути шар</button>
+                </div>
+                <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; align-items:end;">
+                    <div>
+                        <label class="property-label" style="font-size:10px; margin-bottom:2px;">Режим накладання (Blend)</label>
+                        <select id="sticky_lay_blend" onchange="upd('blendMode',this.value,true)" class="form-control" style="height:30px; font-size:11px; width:100%;">
+                            ${['normal','multiply','screen','overlay','difference','colorburn','colordodge','heightblend','exclusion','hardlight','lineardodge','linearburn'].map(o=>`<option value="${o}" ${lay.blendMode===o?'selected':''}>${o}</option>`).join('')}
+                        </select>
+                    </div>
+                    <div>
+                        <label class="property-label" style="font-size:10px; margin-bottom:2px;">Непрозорість (%)</label>
+                        <div style="display:flex; gap:4px; align-items:center;">
+                            <input type="range" id="rng_lay_opacity" min="0" max="100" step="1" value="${lay.opacity}" data-no-random oninput="$('num_lay_opacity').value=this.value; upd('opacity',this.value,true)" onchange="commitHistorySnapshot();" ondblclick="resetSliderEl(this,100)" style="height:4px; flex:1;">
+                            <input type="number" class="num-input" id="num_lay_opacity" step="1" value="${lay.opacity}" oninput="$('rng_lay_opacity').value=this.value; upd('opacity',this.value,true)" onchange="commitHistorySnapshot();" ondblclick="resetSliderEl(this,100)" style="width:48px; padding:2px; font-size:11px; flex-shrink:0;">
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
         function switchRightTab(tab) {
             currentTab = tab;
             if ($('btnTabLayer')) $('btnTabLayer').className = tab==='layer'?'btn btn-primary':'btn btn-secondary';
             if ($('btnTabGlobal')) $('btnTabGlobal').className = tab==='global'?'btn btn-primary':'btn btn-secondary';
             if ($('btnTabTiling')) $('btnTabTiling').className = tab==='tiling'?'btn btn-primary':'btn btn-secondary';
+
+            renderStickyHeader();
 
             if (tab === 'tiling') {
                 $('rightPanelTitle').innerText = "Безшовний Тайлінг PRO";
@@ -2092,66 +2162,87 @@
             });
         }
 
-        // --- Рандомізація ---
+        // --- Рандомізація алгоритму ---
         const GENERATOR_TYPES = ['gradient','simplex','perlin','voronoi','fbm','ridged','sine','radial','spiral','hexagon','pixel_noise','white_noise','checkerboard','dots','weave','value_noise','cellular','spider_web','cymatics', 'paint'];
 
-        // Рандомізує ОДИН шар: випадковий тип генератора + всі його повзунки (в
-        // межах їхніх власних min/max) + помірний шанс увімкнути локальні ефекти.
-        // Непрозорість (opacity) свідомо НЕ чіпається, щоб шар не "зникав".
-        // skipRender=true — для пакетного виклику з randomizeAllLayers(), щоб не
-        // тригерити повний рендер після кожного окремого шару в циклі.
-        function randomizeLayer(idx, skipRender) {
-            console.log("randomizeLayer called for index:", idx, "skipRender:", skipRender);
+        // Рандомізує ВИКЛЮЧНО параметри алгоритму вибраного шару (сід, масштаб, зсув, кут, частоту тощо)
+        // Свідомо НЕ торкається ефектів (threshold, levels, posterize, findEdges, invert, brightness, contrast, blur),
+        // деформаторів (warps), режиму накладання, непрозорості чи назви шару.
+        function randomizeAlgorithm(idx) {
+            console.log("randomizeAlgorithm called for index:", idx);
             let lay = state.layers[idx];
             if (!lay) return;
-            // Keep the current generatorType unchanged
-            lay.params.useThreshold = Math.random() < 0.25;
-            lay.params.useLevels = Math.random() < 0.2;
-            lay.params.usePosterize = Math.random() < 0.2;
-            lay.params.useFindEdges = Math.random() < 0.15;
-            lay.params.invert = Math.random() < 0.25;
+            let p = lay.params;
+
+            p.seed = Math.floor(Math.random() * 10000);
+            p.scale = parseFloat((1 + Math.random() * 49).toFixed(1));
+            p.scaleX = parseFloat((1 + Math.random() * 49).toFixed(1));
+            p.scaleY = parseFloat((1 + Math.random() * 49).toFixed(1));
+            p.offsetX = parseFloat(((Math.random() - 0.5) * 2).toFixed(2));
+            p.offsetY = parseFloat(((Math.random() - 0.5) * 2).toFixed(2));
+            p.angle = Math.floor((Math.random() - 0.5) * 360);
+            p.layerScale = parseFloat((0.5 + Math.random() * 2).toFixed(1));
+
+            if (['perlin', 'fbm', 'ridged', 'spiral'].includes(lay.generatorType)) {
+                p.octaves = 1 + Math.floor(Math.random() * 8);
+            }
+            if (lay.generatorType === 'voronoi') {
+                let metrics = ['euclidean', 'manhattan', 'chebyshev'];
+                let modes = ['f1', 'f2', 'f2_minus_f1'];
+                p.metric = metrics[Math.floor(Math.random() * metrics.length)];
+                p.mode = modes[Math.floor(Math.random() * modes.length)];
+            }
+            if (lay.generatorType === 'sine') {
+                p.phase = parseFloat((Math.random() * 6.28).toFixed(2));
+            }
+            if (lay.generatorType === 'cymatics') {
+                p.frequency = 10 + Math.floor(Math.random() * 150);
+                p.phase = Math.floor(Math.random() * 360);
+                p.sourcesCount = 1 + Math.floor(Math.random() * 12);
+                p.symmetry = 1 + Math.floor(Math.random() * 12);
+                p.isolineWidth = parseFloat((0.1 + Math.random() * 0.8).toFixed(2));
+                let modes = ['Center', 'Corners', 'Edges', 'Ring', 'Polygon', 'Random'];
+                p.sourceMode = modes[Math.floor(Math.random() * modes.length)];
+            }
+            if (lay.generatorType === 'spider_web') {
+                p.radialCount = 4 + Math.floor(Math.random() * 32);
+                p.ringCount = 4 + Math.floor(Math.random() * 32);
+                p.ringThick = parseFloat((0.005 + Math.random() * 0.1).toFixed(3));
+                p.radThick = parseFloat((0.005 + Math.random() * 0.1).toFixed(3));
+                p.wobble = parseFloat((Math.random() * 0.1).toFixed(3));
+                p.jitter = Math.floor(Math.random() * 15);
+                p.fractal = parseFloat(Math.random().toFixed(2));
+                p.ringSineAmp = parseFloat((Math.random() * 0.3).toFixed(2));
+                p.ringSineFreq = 1 + Math.floor(Math.random() * 20);
+                p.radSineAmp = parseFloat((Math.random() * 0.3).toFixed(2));
+                p.radSineFreq = 1 + Math.floor(Math.random() * 20);
+            }
+            if (lay.generatorType === 'gradient') {
+                let gradTypes = ['linear', 'radial', 'elliptical', 'conical', 'reflected', 'diamond'];
+                let spreadMethods = ['clamp', 'repeat', 'reflect'];
+                p.gradType = gradTypes[Math.floor(Math.random() * gradTypes.length)];
+                p.spreadMethod = spreadMethods[Math.floor(Math.random() * spreadMethods.length)];
+                p.centerX = parseFloat(Math.random().toFixed(2));
+                p.centerY = parseFloat(Math.random().toFixed(2));
+                p.aspectRatio = parseFloat((0.2 + Math.random() * 2.8).toFixed(2));
+                p.midpoint = parseFloat((0.1 + Math.random() * 0.8).toFixed(2));
+            }
+            if (lay.generatorType === 'paint') {
+                p.brushSize = 5 + Math.floor(Math.random() * 80);
+                p.brushSpacing = 1 + Math.floor(Math.random() * 50);
+                p.brushSoftness = parseFloat(Math.random().toFixed(2));
+                p.brushFalloff = parseFloat((0.2 + Math.random() * 2).toFixed(1));
+                p.brushAngle = Math.floor((Math.random() - 0.5) * 360);
+                p.brushSquash = parseFloat((0.2 + Math.random() * 0.8).toFixed(2));
+            }
+
             lay.isDirty = true;
             state.selectedLayerId = lay.id;
             renderProps();
-            randomizeSlidersIn($('propertiesPanel'));
-            if (!skipRender) { renderProps(); renderLayers(); requestRender(); }
-        }
-
-        function randomizeGlobalSettings() {
-            console.log("randomizeGlobalSettings called");
-            let g = state.global;
-            g.gamma = 0.5 + Math.random() * 1.5;
-            g.contrast = 0.7 + Math.random() * 0.8;
-            g.vignette = Math.random() < 0.5 ? 0 : Math.random() * 0.6;
-            g.grain = Math.random() < 0.3 ? 0 : Math.round(Math.random() * 25);
-            g.blur = Math.random() < 0.75 ? 0 : Math.round(Math.random() * 5);
-            
-            g.globalZoom = 0.8 + Math.random() * 1.7;
-            g.globalRotation = Math.round((Math.random() - 0.5) * 180);
-            g.globalOffsetX = (Math.random() - 0.5) * 1.0;
-            g.globalOffsetY = (Math.random() - 0.5) * 1.0;
-            
-            if (g.tileMode !== 'off') {
-                g.tileRepeatX = 1 + Math.floor(Math.random() * 4);
-                g.tileRepeatY = 1 + Math.floor(Math.random() * 4);
-                g.tileSeamOffsetX = (Math.random() - 0.5) * 0.5;
-                g.tileSeamOffsetY = (Math.random() - 0.5) * 0.5;
-                g.forceSeamless = Math.random() < 0.4;
-                g.forceSeamlessSoftness = 0.2 + Math.random() * 0.8;
-            }
-        }
-
-        function randomizeAllLayers() {
-            console.log("randomizeAllLayers called");
-            if (!state.layers.length) return;
-            customConfirm(`Рандомізувати ВСІ шари проєкту (${state.layers.length}) та глобальні налаштування?`, () => {
-                console.log("randomizeAllLayers confirmed");
-                state.layers.forEach((_, i) => randomizeLayer(i, true));
-                randomizeGlobalSettings();
-                invalidateCaches();
-                commitHistorySnapshot();
-                renderProps(); renderLayers(); requestRender();
-            });
+            renderLayers();
+            renderStickyHeader();
+            requestRender();
+            commitHistorySnapshot();
         }
 
         // Шар-маска (Clipping Mask): для кожної маски знаходить перший ВИДИМИЙ
@@ -2464,8 +2555,8 @@
         // --- Accordion Blocks & Drag-and-Drop Reordering State ---
         let accordionConfig = {
             layer: {
-                order: ['algo', 'blend', 'transform', 'fx', 'warps'],
-                states: { algo: false, blend: false, transform: false, fx: false, warps: false }
+                order: ['algo', 'transform', 'fx', 'warps'],
+                states: { algo: false, transform: false, fx: false, warps: false }
             },
             global: {
                 order: ['fx', 'transform', 'tiling'],
@@ -2478,7 +2569,7 @@
             if (savedAcc) {
                 let parsed = JSON.parse(savedAcc);
                 if (parsed.layer && Array.isArray(parsed.layer.order)) {
-                    accordionConfig.layer.order = parsed.layer.order;
+                    accordionConfig.layer.order = parsed.layer.order.filter(k => k !== 'blend');
                     if (parsed.layer.states) accordionConfig.layer.states = parsed.layer.states;
                 }
                 if (parsed.global && Array.isArray(parsed.global.order)) {
@@ -2615,28 +2706,6 @@
 
             // --- Constructing Accordion Content Blocks for Layer Properties ---
             let layerBlockContents = {};
-
-            // Block: blend
-            layerBlockContents.blend = `
-                <div class="property-group"><label class="property-label">Назва шару</label><input type="text" value="${lay.name}" onchange="lay.name=this.value;renderLayers()" class="form-control"></div>
-                <div class="property-group grid-2">
-                    <button onclick="randomizeLayer(state.layers.findIndex(l=>l.id==='${lay.id}'))" class="btn btn-secondary" title="Рандомізувати цей шар (тип, параметри, ефекти)">🎲 Рандом (шар)</button>
-                    <button onclick="resetLayer(state.layers.findIndex(l=>l.id==='${lay.id}'))" class="btn btn-secondary" title="Скинути ВСІ параметри цього шару">↺ Скинути шар</button>
-                </div>
-                <div class="property-group" style="margin-top:8px;">
-                    <label class="property-label">Режим накладання (Blend Mode)</label>
-                    <select onchange="upd('blendMode',this.value,true)" class="form-control" style="height:34px; width: 100%;">
-                        ${['normal','multiply','screen','overlay','difference','colorburn','colordodge','heightblend','exclusion','hardlight','lineardodge','linearburn'].map(o=>`<option value="${o}" ${lay.blendMode===o?'selected':''}>${o}</option>`).join('')}
-                    </select>
-                </div>
-                ${createSlider("Непрозорість (%)", "opacity", 0, 100, 1, lay.opacity, true, 100, true)}
-                <div class="property-group" style="margin-bottom:0;">
-                    <div style="display:flex; justify-content:space-between; align-items:center;">
-                        <label class="property-label" style="margin:0;">Базова Безшовність (Tileable)</label>
-                        <input type="checkbox" ${lp.seamless ? 'checked' : ''} onchange="upd('seamless', this.checked)">
-                    </div>
-                </div>
-            `;
 
             // Block: algo
             let algoSpecificHTML = '';
@@ -2788,13 +2857,22 @@
             if(lay.generatorType==='sine') algoSpecificHTML+=createSlider("Фаза зсуву", "phase", 0, 6.28, 0.1, lp.phase||0, false, 0);
 
             layerBlockContents.algo = `
-                <div class="property-group">
-                    <label class="property-label">Алгоритм (Algorithm)</label>
+                <div class="property-group" style="margin-bottom:12px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                        <label class="property-label" style="margin:0;">Алгоритм (Algorithm)</label>
+                        <button onclick="randomizeAlgorithm(state.layers.findIndex(l=>l.id==='${lay.id}'))" class="btn btn-secondary" style="padding:3px 8px; font-size:11px;" title="Рандомізувати параметри алгоритму (сід, масштаб, зсув тощо)">🎲 Рандом алгоритм</button>
+                    </div>
                     <div class="gen-grid" style="grid-template-columns:repeat(3,1fr);">
                         ${['gradient','paint','simplex','perlin','voronoi','fbm','ridged','sine','radial','spiral','hexagon','pixel_noise','white_noise','checkerboard','dots','weave','value_noise','cellular','spider_web', 'cymatics'].map(t=>`<button onclick="upd('generatorType','${t}',true)" class="gen-btn ${lay.generatorType===t?'active':''}">${t}</button>`).join('')}
                     </div>
                 </div>
                 ${algoSpecificHTML}
+                <div class="property-group" style="margin-top:12px; margin-bottom:0;">
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <label class="property-label" style="margin:0;">Базова Безшовність (Tileable)</label>
+                        <input type="checkbox" ${lp.seamless ? 'checked' : ''} onchange="upd('seamless', this.checked)">
+                    </div>
+                </div>
             `;
 
             // Block: transform
@@ -2876,7 +2954,6 @@
             `;
 
             let blockMeta = {
-                blend: { title: "Блендинг та Непрозорість", icon: "🎛️" },
                 algo: { title: "Алгоритм та Генератор", icon: "🎨" },
                 transform: { title: "Трансформація та Масштаб", icon: "📐" },
                 fx: { title: "Локальні Ефекти", icon: "✨" },
@@ -2884,14 +2961,15 @@
             };
 
             // Build panel HTML by rendering accordion blocks in current order
-            let html = accordionConfig.layer.order.map(key => {
+            let html = accordionConfig.layer.order.filter(key => key !== 'blend').map(key => {
                 let meta = blockMeta[key];
                 if (!meta || !layerBlockContents[key]) return '';
                 return renderAccordionBlock('layer', key, meta.title, meta.icon, layerBlockContents[key]);
             }).join('');
 
             p.innerHTML = html;
-            window.lay = lay; 
+            window.lay = lay;
+            renderStickyHeader();
         }
 
         function renderGlobal() {
@@ -5052,7 +5130,8 @@
 
                 if(isLay) {
                     lay[k]=val;
-                    if(k==='visible'||k==='generatorType') { renderProps(); renderLayers(); }
+                    if(k==='visible'||k==='generatorType'||k==='name') { renderProps(); renderLayers(); renderStickyHeader(); }
+                    if(k==='opacity'||k==='blendMode') { renderLayers(); renderStickyHeader(); }
                 } else {
                     lay.params[k]=val;
                     if(['seamless','useThreshold','useLevels','useFindEdges','usePosterize','brushTool','gradType','spreadMethod','sourceMode','metric','mode','lockScale','blurClampEdge','enableRays','enableRings'].includes(k)) renderProps();
@@ -5653,7 +5732,6 @@
         window.viewport = viewport;
         window.undo = undo;
         window.redo = redo;
-        window.randomizeAllLayers = randomizeAllLayers;
         window.resetProject = resetProject;
         window.resetGlobalSettings = resetGlobalSettings;
         window.addLayer = addLayer;
@@ -5672,7 +5750,8 @@
         window.duplicateLayer = duplicateLayer;
         window.deleteLayer = deleteLayer;
         window.moveLayer = moveLayer;
-        window.randomizeLayer = randomizeLayer;
+        window.randomizeAlgorithm = randomizeAlgorithm;
+        window.renderStickyHeader = renderStickyHeader;
         window.resetLayer = resetLayer;
         window.upd = upd;
         window.showModal = showModal;
