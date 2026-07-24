@@ -1872,8 +1872,6 @@
                         <div class="layer-controls">
                             <button onclick="event.stopPropagation(); toggleMask(${i})" class="layer-btn ${l.isMask?'layer-btn-mask-active':''}" title="Використати як маску">🎭</button>
                             <button onclick="event.stopPropagation(); duplicateLayer(${i})" class="layer-btn" title="Дублювати шар">📋</button>
-                            <button onclick="event.stopPropagation(); moveLayer(${i},-1)" class="layer-btn">▲</button>
-                            <button onclick="event.stopPropagation(); moveLayer(${i},1)" class="layer-btn">▼</button>
                             <button onclick="event.stopPropagation(); deleteLayer(${i})" class="layer-btn layer-btn-delete">✕</button>
                         </div>
                     </div>
@@ -2580,8 +2578,6 @@
             let warpsHTML = lp.warps.map((w, idx) => `
                 <div class="warp-card" data-warp-index="${idx}" style="${w.visible===false?'opacity:0.5;':''}">
                     <div class="warp-controls">
-                        <button type="button" class="warp-btn" title="Перемістити вгору" onclick="moveWarp(${idx}, -1)" ${idx === 0 ? 'disabled style="opacity:0.3;cursor:not-allowed;"' : ''}>▲</button>
-                        <button type="button" class="warp-btn" title="Перемістити вниз" onclick="moveWarp(${idx}, 1)" ${idx === lp.warps.length - 1 ? 'disabled style="opacity:0.3;cursor:not-allowed;"' : ''}>▼</button>
                         <button type="button" class="warp-toggle" onclick="toggleWarp(${idx})" title="${w.visible!==false?'Приховати':'Показати'}">${w.visible!==false?'👁':'🕶'}</button>
                         <button type="button" class="warp-del" onclick="removeWarp(${idx})" title="Видалити">✕</button>
                     </div>
