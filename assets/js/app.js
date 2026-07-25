@@ -378,10 +378,19 @@
         function ensureBuffers(w,h){
             if(b_width!==w || b_height!==h){
                 let size=w*h; b_width=w; b_height=h;
-                blendBuffer=new Float32Array(size); layerBuffer=new Float32Array(size);
-                blurTemp=new Float32Array(size); dispBuffer=new Float32Array(size);
-                pendingMaskTargetBuffer=new Float32Array(size); // буфер для шару, що очікує накладання маски(ок) зверху
-                pendingMaskAlphaBuffer=new Float32Array(size); // накопичена альфа від маски(ок) — окремо від контенту, щоб 0 = "просвічує низ", а не "чорний колір"
+                if (window.globalBufferPool) {
+                    blendBuffer = window.globalBufferPool.acquireFloat32(size);
+                    layerBuffer = window.globalBufferPool.acquireFloat32(size);
+                    blurTemp = window.globalBufferPool.acquireFloat32(size);
+                    dispBuffer = window.globalBufferPool.acquireFloat32(size);
+                    pendingMaskTargetBuffer = window.globalBufferPool.acquireFloat32(size);
+                    pendingMaskAlphaBuffer = window.globalBufferPool.acquireFloat32(size);
+                } else {
+                    blendBuffer=new Float32Array(size); layerBuffer=new Float32Array(size);
+                    blurTemp=new Float32Array(size); dispBuffer=new Float32Array(size);
+                    pendingMaskTargetBuffer=new Float32Array(size);
+                    pendingMaskAlphaBuffer=new Float32Array(size);
+                }
             }
         }
 
@@ -1694,7 +1703,11 @@
                 // Per-layer Caching Mechanism
                 if (!lay.cachedBuffer || lay.isDirty || lay.cachedW !== w || lay.cachedH !== h) {
                     if (!lay.cachedBuffer || lay.cachedBuffer.length !== w * h) {
-                        lay.cachedBuffer = new Float32Array(w * h);
+                        if (window.globalBufferPool) {
+                            lay.cachedBuffer = window.globalBufferPool.acquireFloat32(w * h);
+                        } else {
+                            lay.cachedBuffer = new Float32Array(w * h);
+                        }
                     }
                     lay.cachedW = w;
                     lay.cachedH = h;

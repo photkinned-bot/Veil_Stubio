@@ -49,10 +49,12 @@ export class BrushPoint {
     }
 }
 
-// Reusable Pixel Buffer Manager to avoid re-allocating Uint8ClampedArray
+// Reusable Pixel Buffer Manager to avoid re-allocating Float32Array / Uint8ClampedArray
 export class BufferPool {
     constructor() {
         this.buffers = new Map(); // Key: byteLength, Value: Array of ArrayBuffers
+        this.float32Pools = new Map(); // Key: length, Value: Array of Float32Arrays
+        this.uint8Pools = new Map(); // Key: length, Value: Array of Uint8ClampedArrays
     }
 
     acquire(byteLength) {
@@ -71,7 +73,53 @@ export class BufferPool {
         }
         this.buffers.get(key).push(buffer);
     }
+
+    acquireFloat32(length) {
+        let list = this.float32Pools.get(length);
+        if (list && list.length > 0) {
+            let arr = list.pop();
+            arr.fill(0);
+            return arr;
+        }
+        return new Float32Array(length);
+    }
+
+    releaseFloat32(arr) {
+        if (!arr || !(arr instanceof Float32Array)) return;
+        let key = arr.length;
+        if (!this.float32Pools.has(key)) {
+            this.float32Pools.set(key, []);
+        }
+        this.float32Pools.get(key).push(arr);
+    }
+
+    acquireUint8(length) {
+        let list = this.uint8Pools.get(length);
+        if (list && list.length > 0) {
+            let arr = list.pop();
+            arr.fill(0);
+            return arr;
+        }
+        return new Uint8ClampedArray(length);
+    }
+
+    releaseUint8(arr) {
+        if (!arr || !(arr instanceof Uint8ClampedArray)) return;
+        let key = arr.length;
+        if (!this.uint8Pools.has(key)) {
+            this.uint8Pools.set(key, []);
+        }
+        this.uint8Pools.get(key).push(arr);
+    }
 }
 
 export const brushPointPool = new ObjectPool(() => new BrushPoint(), 250);
 export const globalBufferPool = new BufferPool();
+
+if (typeof window !== 'undefined') {
+    window.ObjectPool = ObjectPool;
+    window.BrushPoint = BrushPoint;
+    window.BufferPool = BufferPool;
+    window.brushPointPool = brushPointPool;
+    window.globalBufferPool = globalBufferPool;
+}
