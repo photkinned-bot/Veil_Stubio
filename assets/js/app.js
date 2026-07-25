@@ -2224,10 +2224,23 @@
             customConfirm(`Скинути всі параметри шару "${lay.name}" до значень за замовчуванням?`, () => {
                 console.log("resetLayer confirmed for:", lay.name);
                 lay.params = freshLayerParams();
+                lay.blendMode = 'normal';
+                lay.opacity = 100;
+                if (lay.paintCanvas) {
+                    let pCtx = lay.paintCanvas.getContext('2d');
+                    pCtx.fillStyle = '#000000';
+                    pCtx.fillRect(0, 0, 1024, 1024);
+                    updatePaintBuffer(lay);
+                }
                 lay.isDirty = true;
-                renderProps(); requestRender();
+                renderLayers();
+                renderStickyHeader();
+                renderProps();
+                requestRender();
+                commitHistorySnapshot();
             });
         }
+        window.resetLayer = resetLayer;
         function resetGlobalSettings() {
             console.log("resetGlobalSettings called");
             customConfirm("Скинути всі глобальні налаштування (корекції, трансформацію, тайлінг) до значень за замовчуванням?", () => {
