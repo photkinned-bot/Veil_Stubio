@@ -55,13 +55,18 @@ export class BufferPool {
         this.buffers = new Map(); // Key: byteLength, Value: Array of ArrayBuffers
         this.float32Pools = new Map(); // Key: length, Value: Array of Float32Arrays
         this.uint8Pools = new Map(); // Key: length, Value: Array of Uint8ClampedArrays
+        this.maxPoolPerKey = 16;
+        this.hits = 0;
+        this.misses = 0;
     }
 
     acquire(byteLength) {
         let list = this.buffers.get(byteLength);
         if (list && list.length > 0) {
+            this.hits++;
             return list.pop();
         }
+        this.misses++;
         return new ArrayBuffer(byteLength);
     }
 
@@ -71,16 +76,21 @@ export class BufferPool {
         if (!this.buffers.has(key)) {
             this.buffers.set(key, []);
         }
-        this.buffers.get(key).push(buffer);
+        let list = this.buffers.get(key);
+        if (list.length < this.maxPoolPerKey) {
+            list.push(buffer);
+        }
     }
 
     acquireFloat32(length) {
         let list = this.float32Pools.get(length);
         if (list && list.length > 0) {
+            this.hits++;
             let arr = list.pop();
             arr.fill(0);
             return arr;
         }
+        this.misses++;
         return new Float32Array(length);
     }
 
@@ -90,16 +100,21 @@ export class BufferPool {
         if (!this.float32Pools.has(key)) {
             this.float32Pools.set(key, []);
         }
-        this.float32Pools.get(key).push(arr);
+        let list = this.float32Pools.get(key);
+        if (list.length < this.maxPoolPerKey) {
+            list.push(arr);
+        }
     }
 
     acquireUint8(length) {
         let list = this.uint8Pools.get(length);
         if (list && list.length > 0) {
+            this.hits++;
             let arr = list.pop();
             arr.fill(0);
             return arr;
         }
+        this.misses++;
         return new Uint8ClampedArray(length);
     }
 
@@ -109,7 +124,18 @@ export class BufferPool {
         if (!this.uint8Pools.has(key)) {
             this.uint8Pools.set(key, []);
         }
-        this.uint8Pools.get(key).push(arr);
+        let list = this.uint8Pools.get(key);
+        if (list.length < this.maxPoolPerKey) {
+            list.push(arr);
+        }
+    }
+
+    prune() {
+        this.buffers.clear();
+        this.float32Pools.clear();
+        this.uint8Pools.clear();
+        this.hits = 0;
+        this.misses = 0;
     }
 }
 

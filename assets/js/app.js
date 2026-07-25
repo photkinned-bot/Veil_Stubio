@@ -144,26 +144,30 @@
 
         const NoiseCache = {
             size: 1024,
+            mask: 1023,
             data: null,
             init() {
                 this.data = new Float32Array(this.size * this.size);
                 for(let y=0; y<this.size; y++) {
+                    let rowOffset = y << 10;
                     for(let x=0; x<this.size; x++) {
-                        this.data[y*this.size + x] = Perlin.noise(x/20, y/20);
+                        this.data[rowOffset | x] = Perlin.noise(x/20, y/20);
                     }
                 }
             },
             get(x, y) {
-                let px = (x % this.size + this.size) % this.size;
-                let py = (y % this.size + this.size) % this.size;
-                let x0 = Math.floor(px), y0 = Math.floor(py);
-                let x1 = (x0 + 1) % this.size, y1 = (y0 + 1) % this.size;
+                let px = x < 0 ? ((x % 1024) + 1024) : (x >= 1024 ? x % 1024 : x);
+                let py = y < 0 ? ((y % 1024) + 1024) : (y >= 1024 ? y % 1024 : y);
+                let x0 = px | 0, y0 = py | 0;
+                let x1 = (x0 + 1) & 1023, y1 = (y0 + 1) & 1023;
                 let fx = px - x0, fy = py - y0;
-                let v00 = this.data[y0*this.size + x0];
-                let v10 = this.data[y1*this.size + x0];
-                let v01 = this.data[y0*this.size + x1];
-                let v11 = this.data[y1*this.size + x1];
-                return Perlin.lerp(fy, Perlin.lerp(fx, v00, v10), Perlin.lerp(fx, v01, v11));
+                let idx0 = y0 << 10;
+                let idx1 = y1 << 10;
+                let v00 = this.data[idx0 | x0];
+                let v10 = this.data[idx1 | x0];
+                let v01 = this.data[idx0 | x1];
+                let v11 = this.data[idx1 | x1];
+                return v00 + fy * (v10 - v00) + fx * (v01 - v00 + fy * (v11 - v10 - v01 + v00));
             }
         }; NoiseCache.init();
 
@@ -184,7 +188,12 @@
         };
 
         const Voronoi = {
-            hash: (x,y) => { let h=Math.sin(x*127.1+y*311.7)*43758.5453; return h-Math.floor(h); },
+            hash: (x, y) => {
+                let n = (x * 1597334677 ^ y * 3812015801) >>> 0;
+                n = (n ^ (n >>> 15)) * 1597334677;
+                n = (n ^ (n >>> 13)) * 3812015801;
+                return ((n ^ (n >>> 16)) >>> 0) / 4294967296;
+            },
             dist: (px,py,qx,qy,m,e) => {
                 let dx=Math.abs(px-qx), dy=Math.abs(py-qy);
                 if(m==='manhattan') return dx+dy; if(m==='chebyshev') return Math.max(dx,dy);
@@ -424,62 +433,95 @@
 
         function applyBoxBlur(buf, tmp, w, h, rad, mode = 'wrap') {
             let scaledRad = Math.max(0, Math.round(rad * (w / 512)));
-            if (scaledRad<=0) return;
-            
+            if (scaledRad <= 0) return;
+            let r = scaledRad;
             let effectiveMode = mode;
             if (typeof mode === 'boolean') {
                 effectiveMode = mode ? 'clamp' : 'wrap';
             }
 
-            for(let y=0;y<h;y++) {
-                let rowOffset = y*w;
-                for(let x=0;x<w;x++){
-                    let sum=0, c=0;
-                    for(let dx=-scaledRad;dx<=scaledRad;dx++){
-                        let nx=x+dx;
-                        if (effectiveMode === 'clamp') {
-                            if (nx < 0) nx = 0;
-                            else if (nx >= w) nx = w - 1;
-                            sum += buf[rowOffset + nx];
-                            c++;
-                        } else if (effectiveMode === 'wrap') {
-                            nx = (nx % w + w) % w;
-                            sum += buf[rowOffset + nx];
-                            c++;
-                        } else {
-                            if (nx >= 0 && nx < w) {
-                                sum += buf[rowOffset + nx];
-                                c++;
-                            }
-                        }
+            let invWindow = 1 / (2 * r + 1);
+
+            // Horizontal Pass O(1) Moving Sum
+            for (let y = 0; y < h; y++) {
+                let rowOffset = y * w;
+                let sum = 0;
+                for (let dx = -r; dx <= r; dx++) {
+                    let nx = dx;
+                    if (effectiveMode === 'clamp') nx = nx < 0 ? 0 : (nx >= w ? w - 1 : nx);
+                    else if (effectiveMode === 'wrap') nx = (nx % w + w) % w;
+                    else nx = nx < 0 ? 0 : (nx >= w ? w - 1 : nx);
+                    sum += buf[rowOffset + nx];
+                }
+                tmp[rowOffset] = sum * invWindow;
+
+                for (let x = 1; x < w; x++) {
+                    let leftX = x - r - 1;
+                    let rightX = x + r;
+                    if (effectiveMode === 'clamp') {
+                        leftX = leftX < 0 ? 0 : leftX;
+                        rightX = rightX >= w ? w - 1 : rightX;
+                    } else if (effectiveMode === 'wrap') {
+                        leftX = (leftX % w + w) % w;
+                        rightX = (rightX % w + w) % w;
+                    } else {
+                        leftX = leftX < 0 ? 0 : leftX;
+                        rightX = rightX >= w ? w - 1 : rightX;
                     }
-                    tmp[rowOffset + x] = sum/c;
+                    sum += buf[rowOffset + rightX] - buf[rowOffset + leftX];
+                    tmp[rowOffset + x] = sum * invWindow;
                 }
             }
-            for(let x=0;x<w;x++) {
-                for(let y=0;y<h;y++){
-                    let sum=0, c=0;
-                    for(let dy=-scaledRad;dy<=scaledRad;dy++){
-                        let ny=y+dy;
-                        if (effectiveMode === 'clamp') {
-                            if (ny < 0) ny = 0;
-                            else if (ny >= h) ny = h - 1;
-                            sum += tmp[ny * w + x];
-                            c++;
-                        } else if (effectiveMode === 'wrap') {
-                            ny = (ny % h + h) % h;
-                            sum += tmp[ny * w + x];
-                            c++;
-                        } else {
-                            if (ny >= 0 && ny < h) {
-                                sum += tmp[ny * w + x];
-                                c++;
-                            }
-                        }
+
+            // Vertical Pass O(1) Moving Sum
+            for (let x = 0; x < w; x++) {
+                let sum = 0;
+                for (let dy = -r; dy <= r; dy++) {
+                    let ny = dy;
+                    if (effectiveMode === 'clamp') ny = ny < 0 ? 0 : (ny >= h ? h - 1 : ny);
+                    else if (effectiveMode === 'wrap') ny = (ny % h + h) % h;
+                    else ny = ny < 0 ? 0 : (ny >= h ? h - 1 : ny);
+                    sum += tmp[ny * w + x];
+                }
+                buf[x] = sum * invWindow;
+
+                for (let y = 1; y < h; y++) {
+                    let topY = y - r - 1;
+                    let bottomY = y + r;
+                    if (effectiveMode === 'clamp') {
+                        topY = topY < 0 ? 0 : topY;
+                        bottomY = bottomY >= h ? h - 1 : bottomY;
+                    } else if (effectiveMode === 'wrap') {
+                        topY = (topY % h + h) % h;
+                        bottomY = (bottomY % h + h) % h;
+                    } else {
+                        topY = topY < 0 ? 0 : topY;
+                        bottomY = bottomY >= h ? h - 1 : bottomY;
                     }
-                    buf[y*w+x] = sum/c;
+                    sum += tmp[bottomY * w + x] - tmp[topY * w + x];
+                    buf[y * w + x] = sum * invWindow;
                 }
             }
+        }
+
+        const gaussianKernelCache = new Map();
+        function getGaussianWeights(kSize) {
+            if (gaussianKernelCache.has(kSize)) {
+                return gaussianKernelCache.get(kSize);
+            }
+            let sigma = Math.max(kSize / 2, 0.5);
+            let weights = new Float32Array(2 * kSize + 1);
+            let weightSum = 0;
+            for (let i = -kSize; i <= kSize; i++) {
+                let wVal = Math.exp(-(i * i) / (2 * sigma * sigma));
+                weights[i + kSize] = wVal;
+                weightSum += wVal;
+            }
+            for (let i = 0; i < weights.length; i++) {
+                weights[i] /= weightSum;
+            }
+            gaussianKernelCache.set(kSize, weights);
+            return weights;
         }
 
         function applyGaussianBlur(buf, tmp, w, h, rad, mode = 'wrap') {
@@ -492,72 +534,54 @@
             }
 
             let kSize = scaledRad;
-            let sigma = Math.max(kSize / 2, 0.5);
-            let weights = new Float32Array(2 * kSize + 1);
-            let weightSum = 0;
-            for (let i = -kSize; i <= kSize; i++) {
-                let wVal = Math.exp(-(i * i) / (2 * sigma * sigma));
-                weights[i + kSize] = wVal;
-                weightSum += wVal;
-            }
-            for (let i = 0; i < weights.length; i++) {
-                weights[i] /= weightSum;
-            }
+            let weights = getGaussianWeights(kSize);
 
             // Horizontal pass
             for (let y = 0; y < h; y++) {
                 let rowOffset = y * w;
                 for (let x = 0; x < w; x++) {
-                    let sum = 0, weightAcc = 0;
+                    let sum = 0;
                     for (let dx = -kSize; dx <= kSize; dx++) {
                         let nx = x + dx;
-                        let wIdx = dx + kSize;
-                        let wVal = weights[wIdx];
+                        let wVal = weights[dx + kSize];
                         if (effectiveMode === 'clamp') {
                             if (nx < 0) nx = 0;
                             else if (nx >= w) nx = w - 1;
                             sum += buf[rowOffset + nx] * wVal;
-                            weightAcc += wVal;
                         } else if (effectiveMode === 'wrap') {
                             nx = (nx % w + w) % w;
                             sum += buf[rowOffset + nx] * wVal;
-                            weightAcc += wVal;
                         } else {
                             if (nx >= 0 && nx < w) {
                                 sum += buf[rowOffset + nx] * wVal;
-                                weightAcc += wVal;
                             }
                         }
                     }
-                    tmp[rowOffset + x] = weightAcc > 0 ? sum / weightAcc : 0;
+                    tmp[rowOffset + x] = sum;
                 }
             }
 
             // Vertical pass
             for (let x = 0; x < w; x++) {
                 for (let y = 0; y < h; y++) {
-                    let sum = 0, weightAcc = 0;
+                    let sum = 0;
                     for (let dy = -kSize; dy <= kSize; dy++) {
                         let ny = y + dy;
-                        let wIdx = dy + kSize;
-                        let wVal = weights[wIdx];
+                        let wVal = weights[dy + kSize];
                         if (effectiveMode === 'clamp') {
                             if (ny < 0) ny = 0;
                             else if (ny >= h) ny = h - 1;
                             sum += tmp[ny * w + x] * wVal;
-                            weightAcc += wVal;
                         } else if (effectiveMode === 'wrap') {
                             ny = (ny % h + h) % h;
                             sum += tmp[ny * w + x] * wVal;
-                            weightAcc += wVal;
                         } else {
                             if (ny >= 0 && ny < h) {
                                 sum += tmp[ny * w + x] * wVal;
-                                weightAcc += wVal;
                             }
                         }
                     }
-                    buf[y * w + x] = weightAcc > 0 ? sum / weightAcc : 0;
+                    buf[y * w + x] = sum;
                 }
             }
         }
@@ -1912,9 +1936,18 @@
                     pendingOp = op; pendingBlendFn = bFn;
                     pendingRemaining = clippedByMasks[lIdx].length;
                 } else {
-                    // Звичайний шар без маскування — поведінка як і раніше
-                    for(let i=0;i<w*h;i++) blendBuffer[i] = firstBlend ? layerBuffer[i] : blendBuffer[i]*(1-op) + bFn(blendBuffer[i],layerBuffer[i])*op;
-                    firstBlend = false;
+                    // Звичайний шар без маскування — швидкі гілки для першого або normal 100% шару
+                    if (firstBlend) {
+                        blendBuffer.set(layerBuffer);
+                        firstBlend = false;
+                    } else if (op === 1.0 && bFn === Blend.normal) {
+                        blendBuffer.set(layerBuffer);
+                    } else {
+                        let oneMinusOp = 1 - op;
+                        for(let i=0; i<w*h; i++) {
+                            blendBuffer[i] = blendBuffer[i] * oneMinusOp + bFn(blendBuffer[i], layerBuffer[i]) * op;
+                        }
+                    }
                 }
             }
 
@@ -1948,7 +1981,11 @@
             }
 
             cx.putImageData(imgData,0,0);
-            if(!isExport) $('renderTime').textContent = `${(performance.now()-start).toFixed(1)} ms`;
+            let totalRenderTimeMs = performance.now() - start;
+            if(!isExport && $('renderTime')) $('renderTime').textContent = `${totalRenderTimeMs.toFixed(1)} ms`;
+            if (window.globalProfiler) {
+                window.globalProfiler.recordFrame(totalRenderTimeMs);
+            }
         }
 
         function renderStickyHeader() {
@@ -6104,3 +6141,89 @@
             setupResizeHandle('resizeLeft', document.querySelector('aside:not(.right-panel)'), 'left'); 
             setupResizeHandle('resizeRight', document.querySelector('.right-panel'), 'right'); 
         });
+
+        let benchmarkInterval = null;
+        window.openBenchmarkModal = function() {
+            let modal = $('benchmarkModal');
+            if (!modal) return;
+            modal.style.display = 'flex';
+            updateBenchmarkLiveMetrics();
+            if (!benchmarkInterval) {
+                benchmarkInterval = setInterval(updateBenchmarkLiveMetrics, 500);
+            }
+        };
+
+        window.closeBenchmarkModal = function() {
+            let modal = $('benchmarkModal');
+            if (modal) modal.style.display = 'none';
+            if (benchmarkInterval) {
+                clearInterval(benchmarkInterval);
+                benchmarkInterval = null;
+            }
+        };
+
+        function updateBenchmarkLiveMetrics() {
+            if (!window.globalProfiler) return;
+            let snap = window.globalProfiler.getSnapshot();
+            if ($('benchLiveFps')) $('benchLiveFps').textContent = `${snap.fps} FPS`;
+            if ($('benchLiveMs')) $('benchLiveMs').textContent = `${snap.lastFrameMs.toFixed(1)} ms / кадр`;
+            if ($('benchLiveMem')) $('benchLiveMem').textContent = `${snap.memoryMB} MB`;
+            if ($('benchLivePool')) $('benchLivePool').textContent = `${snap.pooledBuffersCount} буферів у пулі (${snap.pooledBufferBytesMB} MB)`;
+        }
+
+        window.startAutomatedBenchmark = async function() {
+            if (!window.StressTestRunner || !window.globalProfiler) return;
+            let runBtn = $('runBenchBtn');
+            let progressBox = $('benchProgressBox');
+            let progressBar = $('benchProgressBar');
+            let progressText = $('benchProgressText');
+            let reportBox = $('benchReportBox');
+
+            if (runBtn) runBtn.disabled = true;
+            if (progressBox) progressBox.style.display = 'block';
+            if (reportBox) reportBox.style.display = 'none';
+
+            let runner = new window.StressTestRunner(
+                window.globalProfiler,
+                () => renderProject(),
+                state,
+                (res) => setCanvasRes(res)
+            );
+
+            let report = await runner.runFullBenchmarkSuite((prog) => {
+                if (progressBar) progressBar.style.width = `${prog.percent}%`;
+                if (progressText) progressText.textContent = `[Крок ${prog.step}/4] ${prog.msg}`;
+            });
+
+            if (progressBox) progressBox.style.display = 'none';
+            if (runBtn) runBtn.disabled = false;
+
+            if (report && reportBox) {
+                reportBox.style.display = 'block';
+                if ($('benchGradeBadge')) $('benchGradeBadge').textContent = `ОЦІНКА: ${report.grade}`;
+
+                if ($('benchResReport')) {
+                    let text = '';
+                    for (let r in report.resolutions) {
+                        text += `• <b>${r}×${r}</b>: ${report.resolutions[r].avgMs} ms (${report.resolutions[r].fps} FPS)<br>`;
+                    }
+                    $('benchResReport').innerHTML = text;
+                }
+
+                if ($('benchMultiReport')) {
+                    let text = '';
+                    for (let m in report.multiLayerTest) {
+                        let count = m.replace('_layers', ' шарів');
+                        text += `• <b>${count}</b>: ${report.multiLayerTest[m].avgMs} ms (${report.multiLayerTest[m].fps} FPS)<br>`;
+                    }
+                    $('benchMultiReport').innerHTML = text;
+                }
+
+                if ($('benchStressReport')) {
+                    $('benchStressReport').innerHTML = `
+                        • Час 30 змін параметрів: <b>${report.stressTest.edits30TimeMs} ms</b> (середній: ${report.stressTest.avgMsPerEdit} ms/зміна)<br>
+                        • Використання пам'яті до/після: <b>${report.stressTest.startMemMB} MB → ${report.stressTest.endMemMB} MB</b> (дельта: ${report.stressTest.memoryDeltaMB} MB)
+                    `;
+                }
+            }
+        };
