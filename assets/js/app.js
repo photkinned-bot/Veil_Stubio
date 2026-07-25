@@ -6142,6 +6142,19 @@
             setupResizeHandle('resizeRight', document.querySelector('.right-panel'), 'right'); 
         });
 
+        function setCanvasRes(res) {
+            let cv = $('canvas');
+            if (cv) {
+                cv.width = res;
+                cv.height = res;
+                state.layers.forEach(l => { l.isDirty = true; });
+                if (typeof ensureBuffers === 'function') {
+                    ensureBuffers(res, res);
+                }
+            }
+        }
+        window.setCanvasRes = setCanvasRes;
+
         let benchmarkInterval = null;
         window.openBenchmarkModal = function() {
             let modal = $('benchmarkModal');
@@ -6172,7 +6185,11 @@
         }
 
         window.startAutomatedBenchmark = async function() {
-            if (!window.StressTestRunner || !window.globalProfiler) return;
+            if (!window.StressTestRunner || !window.globalProfiler) {
+                console.warn("Profiler or StressTestRunner not initialized yet. Waiting...");
+                alert("Зачекайте секунду, профілювальник ініціалізується...");
+                return;
+            }
             let runBtn = $('runBenchBtn');
             let progressBox = $('benchProgressBox');
             let progressBar = $('benchProgressBar');
