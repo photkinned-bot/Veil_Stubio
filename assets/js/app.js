@@ -1,4 +1,5 @@
         const $ = id => document.getElementById(id);
+        window.$ = $;
 
         const viewport = {
             scale: 1, angle: 0, x: 0, y: 0, isDragging: false, startX: 0, startY: 0,
@@ -383,6 +384,25 @@
         let canvasBorderIntensity = parseFloat(localStorage.getItem('veil_canvas_border_intensity'));
         if (isNaN(canvasBorderIntensity)) canvasBorderIntensity = 1.0;
         let b_width=0, b_height=0, blendBuffer, layerBuffer, blurTemp, dispBuffer, pendingMaskTargetBuffer, pendingMaskAlphaBuffer;
+
+        function setCanvasRes(res, markDirty = true) {
+            let cv = canvas || $('canvas');
+            if (cv) {
+                if (cv.width !== res || cv.height !== res) {
+                    cv.width = res;
+                    cv.height = res;
+                    if (markDirty && state && state.layers) {
+                        state.layers.forEach(l => { l.isDirty = true; });
+                    }
+                    if (typeof ensureBuffers === 'function') {
+                        ensureBuffers(res, res);
+                    }
+                }
+            }
+        }
+        window.setCanvasRes = setCanvasRes;
+
+
 
         function ensureBuffers(w,h){
             if(b_width!==w || b_height!==h){
@@ -3344,13 +3364,6 @@
             }
         }
 
-        function toggleTilingStamp(enable) {
-            tilingState.stamp_enable = enable;
-            if (enable) tilingState.mask_brush_enable = false;
-            renderTilingPanel();
-            renderTilingView();
-        }
-
         function toggleTilingMaskBrush(enable) {
             tilingState.mask_brush_enable = enable;
             if (enable) tilingState.stamp_enable = false;
@@ -5236,17 +5249,8 @@
                     renderTilingView();
                 } else {
                     if (!suppressRender) {
-                        if (isInteracting && lowResOnEdit) {
-                            if (canvas.width !== 256) {
-                                canvas.width = 256;
-                                canvas.height = 256;
-                            }
-                        } else {
-                            if (canvas.width !== canvasResolution) {
-                                canvas.width = canvasResolution;
-                                canvas.height = canvasResolution;
-                            }
-                        }
+                        let targetRes = (isInteracting && lowResOnEdit) ? 256 : canvasResolution;
+                        setCanvasRes(targetRes, true);
                     }
                     renderProject();
                 }
@@ -5936,6 +5940,9 @@
         window.renderLayers = renderLayers;
         window.renderProps = renderProps;
         window.requestRender = requestRender;
+        window.triggerInteraction = triggerInteraction;
+        window.toggleTilingStamp = toggleTilingStamp;
+        window.toggleTilingMaskBrush = toggleTilingMaskBrush;
         window.toggleSelectingStampSource = toggleSelectingStampSource;
         window.toggleCanvasBorder = toggleCanvasBorder;
         window.setCanvasBorderIntensity = setCanvasBorderIntensity;
@@ -6141,19 +6148,6 @@
             setupResizeHandle('resizeLeft', document.querySelector('aside:not(.right-panel)'), 'left'); 
             setupResizeHandle('resizeRight', document.querySelector('.right-panel'), 'right'); 
         });
-
-        function setCanvasRes(res) {
-            let cv = $('canvas');
-            if (cv) {
-                cv.width = res;
-                cv.height = res;
-                state.layers.forEach(l => { l.isDirty = true; });
-                if (typeof ensureBuffers === 'function') {
-                    ensureBuffers(res, res);
-                }
-            }
-        }
-        window.setCanvasRes = setCanvasRes;
 
         let benchmarkInterval = null;
         window.openBenchmarkModal = function() {

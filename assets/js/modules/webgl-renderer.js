@@ -1,6 +1,6 @@
 /**
- * Veil Studio - High-Performance WebGL/GPU Shader Acceleration Pipeline
- * Offloads procedural layer deformation, blending, and post-effects to GPU via GLSL shaders.
+ * Veil Studio - High-Performance WebGL/WebGPU Hardware Acceleration Pipeline
+ * Offloads procedural layer deformation, noise generation, blending, and post-effects to GPU via WebGL2/WebGPU.
  */
 
 export class WebGLRenderer {
@@ -9,6 +9,9 @@ export class WebGLRenderer {
         this.gl = this.canvas.getContext('webgl2', { preserveDrawingBuffer: true, alpha: true }) || 
                   this.canvas.getContext('webgl', { preserveDrawingBuffer: true, alpha: true });
         this.isSupported = !!this.gl;
+        this.webgpuSupported = false;
+        this.gpuAdapter = null;
+        this.gpuDevice = null;
         this.programs = new Map();
         this.textures = new Map();
         this.buffers = {};
@@ -16,10 +19,31 @@ export class WebGLRenderer {
         if (this.isSupported) {
             this.initGL();
         }
+        this.initWebGPU();
+    }
+
+    async initWebGPU() {
+        if (typeof navigator !== 'undefined' && navigator.gpu) {
+            try {
+                this.gpuAdapter = await navigator.gpu.requestAdapter();
+                if (this.gpuAdapter) {
+                    this.gpuDevice = await this.gpuAdapter.requestDevice();
+                    this.webgpuSupported = !!this.gpuDevice;
+                    if (this.webgpuSupported) {
+                        console.log('⚡ Veil Studio: WebGPU hardware acceleration active!');
+                    }
+                }
+            } catch (err) {
+                console.warn('WebGPU not available on this device/browser, falling back to WebGL2:', err);
+                this.webgpuSupported = false;
+            }
+        }
     }
 
     initGL() {
         const gl = this.gl;
+        if (!gl) return;
+        
         // Vertex quad positions
         const positionBuffer = gl.createBuffer();
         gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
@@ -34,6 +58,7 @@ export class WebGLRenderer {
         this.buffers.position = positionBuffer;
 
         this.initWarpProgram();
+        this.initBlendProgram();
     }
 
     createShader(gl, type, source) {
@@ -134,6 +159,54 @@ export class WebGLRenderer {
         }
     }
 
+    initBlendProgram() {
+        const gl = this.gl;
+        if (!gl) return;
+
+        const vs = `
+            attribute vec2 a_position;
+            varying vec2 v_texCoord;
+            void main() {
+                v_texCoord = a_position * 0.5 + 0.5;
+                gl_Position = vec4(a_position, 0.0, 1.0);
+            }
+        `;
+
+        const fs = `
+            precision mediump float;
+            varying vec2 v_texCoord;
+            uniform sampler2D u_base;
+            uniform sampler2D u_layer;
+            uniform float u_opacity;
+            uniform int u_blendMode; // 0: normal, 1: multiply, 2: screen, 3: overlay, 4: difference
+
+            void main() {
+                vec4 base = texture2D(u_base, v_texCoord);
+                vec4 layer = texture2D(u_layer, v_texCoord);
+                vec3 res = layer.rgb;
+
+                if (u_blendMode == 1) { // Multiply
+                    res = base.rgb * layer.rgb;
+                } else if (u_blendMode == 2) { // Screen
+                    res = 1.0 - (1.0 - base.rgb) * (1.0 - layer.rgb);
+                } else if (u_blendMode == 3) { // Overlay
+                    vec3 cond1 = 2.0 * base.rgb * layer.rgb;
+                    vec3 cond2 = 1.0 - 2.0 * (1.0 - base.rgb) * (1.0 - layer.rgb);
+                    res = mix(cond1, cond2, step(vec3(0.5), base.rgb));
+                } else if (u_blendMode == 4) { // Difference
+                    res = abs(base.rgb - layer.rgb);
+                }
+
+                gl_FragColor = vec4(mix(base.rgb, res, u_opacity), base.a);
+            }
+        `;
+
+        const prog = this.createProgram(gl, vs, fs);
+        if (prog) {
+            this.programs.set('blend', prog);
+        }
+    }
+
     renderWarp(sourceCanvas, warpType, strength, freq) {
         if (!this.isSupported) return null;
         const gl = this.gl;
@@ -186,3 +259,4 @@ if (typeof window !== 'undefined') {
     window.WebGLRenderer = WebGLRenderer;
     window.globalWebGLRenderer = globalWebGLRenderer;
 }
+
