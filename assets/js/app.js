@@ -1982,17 +1982,70 @@
                 }
             }
 
-            let gg=state.global.gamma||1, gc=state.global.contrast||1, gv=state.global.vignette||0, gr=state.global.grain||0, gi=state.global.invert===true;
+            let gg=state.global.gamma||1, gc=state.global.contrast||1, gr=state.global.grain||0, gi=state.global.invert===true;
+            let g = state.global;
+
+            // Lightroom Vignette Parameters
+            let vAmt = g.vignetteAmount !== undefined ? g.vignetteAmount : (g.vignette ? -Math.round(g.vignette * 100) : 0);
+            let vMid = (g.vignetteMidpoint !== undefined ? g.vignetteMidpoint : 50) / 100;
+            let vFeath = Math.max(0.01, (g.vignetteFeather !== undefined ? g.vignetteFeather : 50) / 100);
+            let vRound = (g.vignetteRoundness !== undefined ? g.vignetteRoundness : 0) / 100;
+            let vHigh = (g.vignetteHighlights !== undefined ? g.vignetteHighlights : 0) / 100;
+            let vCX = g.vignetteCenterX !== undefined ? g.vignetteCenterX : 0.5;
+            let vCY = g.vignetteCenterY !== undefined ? g.vignetteCenterY : 0.5;
+
+            let hasVignette = (vAmt !== 0);
+            let aspect = w / h;
+
+            let amtNorm = vAmt / 100; 
+            let vWidth = Math.max(0.05, vFeath * 1.2);
+            let vMinT = vMid * 1.2 - vWidth / 2;
+            let invVWidth = 1.0 / vWidth;
 
             for(let y=0; y<h; y++){
-                let dy=y/h-0.5;
+                let ny = y / h - vCY;
                 for(let x=0; x<w; x++){
                     let px_idx = y*w+x, v = blendBuffer[px_idx];
 
                     if(gi) v=1-v;
                     if(gc!==1) v=(v-0.5)*gc+0.5;
                     if(gg!==1 && v>0) v=Math.pow(v,1/gg);
-                    if(gv>0) v*=Math.max(0, 1-Math.sqrt((x/w-0.5)**2+dy**2)*gv*1.5);
+
+                    if (hasVignette) {
+                        let nx = x / w - vCX;
+                        let dEllipse = 2.0 * Math.sqrt(nx * nx + ny * ny);
+                        let d;
+                        if (vRound > 0) {
+                            let dCircle = 2.0 * Math.sqrt(nx * nx + (ny * aspect) * (ny * aspect));
+                            d = dEllipse * (1.0 - vRound) + dCircle * vRound;
+                        } else if (vRound < 0) {
+                            let dBox = 2.0 * Math.max(Math.abs(nx), Math.abs(ny));
+                            let rAbs = -vRound;
+                            d = dEllipse * (1.0 - rAbs) + dBox * rAbs;
+                        } else {
+                            d = dEllipse;
+                        }
+
+                        let t = (d - vMinT) * invVWidth;
+                        if (t > 1.0) t = 1.0;
+                        else if (t < 0.0) t = 0.0;
+                        let falloff = t * t * (3.0 - 2.0 * t);
+
+                        let factor;
+                        if (amtNorm < 0) {
+                            let darken = -amtNorm * falloff;
+                            if (vHigh > 0) {
+                                let lum = v > 1 ? 1 : (v < 0 ? 0 : v);
+                                darken *= (1.0 - vHigh * lum * lum);
+                            }
+                            factor = 1.0 - darken;
+                        } else {
+                            let brighten = amtNorm * falloff;
+                            factor = 1.0 + brighten;
+                        }
+                        v *= Math.max(0, factor);
+                    }
+
                     if(gr>0) v+=(Math.random()-0.5)*(gr/255);
                     
                     let cv=Math.max(0,Math.min(255,Math.floor(v*255))), px=px_idx*4;
@@ -2205,7 +2258,15 @@
         }
 
         function freshGlobalSettings() {
-            return { gamma:1, contrast:1, vignette:0, grain:10, blur:0, blurType:'gaussian', blurClampEdge:false,
+            return { gamma:1, contrast:1, vignette:0, 
+                vignetteAmount: 0,
+                vignetteMidpoint: 50,
+                vignetteFeather: 50,
+                vignetteRoundness: 0,
+                vignetteHighlights: 0,
+                vignetteCenterX: 0.5,
+                vignetteCenterY: 0.5,
+                grain:10, blur:0, blurType:'gaussian', blurClampEdge:false,
                 globalZoom:1, globalRotation:0, globalOffsetX:0, globalOffsetY:0,
                 tileMode:'off', tileRepeatX:2, tileRepeatY:2, tileMirrorX:true, tileMirrorY:true,
                 tileSeamOffsetX:0, tileSeamOffsetY:0, blendCurve:'smooth',
@@ -3202,10 +3263,44 @@
             `;
 
             // Block: fx
+            let vAmt = g.vignetteAmount !== undefined ? g.vignetteAmount : (g.vignette ? -Math.round(g.vignette * 100) : 0);
+            let vMid = g.vignetteMidpoint !== undefined ? g.vignetteMidpoint : 50;
+            let vFeath = g.vignetteFeather !== undefined ? g.vignetteFeather : 50;
+            let vRound = g.vignetteRoundness !== undefined ? g.vignetteRoundness : 0;
+            let vHigh = g.vignetteHighlights !== undefined ? g.vignetteHighlights : 0;
+            let vCX = g.vignetteCenterX !== undefined ? g.vignetteCenterX : 0.5;
+            let vCY = g.vignetteCenterY !== undefined ? g.vignetteCenterY : 0.5;
+
             globalBlockContents.fx = `
                 ${createSlider("Контраст", "contrast", 0.5, 2, 0.05, g.contrast, true, 1)}
                 ${createSlider("Гамма", "gamma", 0.2, 3, 0.05, g.gamma, true, 1)}
-                ${createSlider("Віньєтка", "vignette", 0, 1, 0.05, g.vignette, true, 0)}
+                
+                <div style="background: rgba(255,255,255,0.03); border: 1px solid var(--border-color, #27272a); border-radius: 8px; padding: 10px; margin: 10px 0;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                        <span class="property-label" style="font-weight:700; color:var(--primary-color, #3b82f6); margin:0;">📷 Віньєтка (Lightroom)</span>
+                        <button type="button" class="reset-btn" title="Скинути віньєтку" onclick="applyVignettePreset('reset')">↺</button>
+                    </div>
+                    
+                    ${createSlider("Інтенсивність (Amount)", "vignetteAmount", -100, 100, 1, vAmt, true, 0)}
+                    
+                    <div class="property-group" style="margin-top:6px; margin-bottom:8px;">
+                        <label class="property-label" style="font-size:10px; margin-bottom:4px;">Пресети віньєтки</label>
+                        <div class="gen-grid" style="grid-template-columns:repeat(4,1fr); gap:4px;">
+                            <button type="button" onclick="applyVignettePreset('dark')" class="gen-btn" style="font-size:10px; padding:4px 2px;" title="Класична темна віньєтка">Темна</button>
+                            <button type="button" onclick="applyVignettePreset('soft')" class="gen-btn" style="font-size:10px; padding:4px 2px;" title="М'який фокус">М'яка</button>
+                            <button type="button" onclick="applyVignettePreset('dramatic')" class="gen-btn" style="font-size:10px; padding:4px 2px;" title="Драматичний прямокутник">Прямокут.</button>
+                            <button type="button" onclick="applyVignettePreset('light')" class="gen-btn" style="font-size:10px; padding:4px 2px;" title="Світле сяйво">Світла</button>
+                        </div>
+                    </div>
+
+                    ${createSlider("Середина (Midpoint)", "vignetteMidpoint", 0, 100, 1, vMid, true, 50)}
+                    ${createSlider("Розмиття країв (Feather)", "vignetteFeather", 0, 100, 1, vFeath, true, 50)}
+                    ${createSlider("Округлість (Roundness)", "vignetteRoundness", -100, 100, 1, vRound, true, 0)}
+                    ${createSlider("Захист світлих тонів (Highlights)", "vignetteHighlights", 0, 100, 1, vHigh, true, 0)}
+                    ${createSlider("Центр X (Position X)", "vignetteCenterX", 0, 1, 0.01, vCX, true, 0.5)}
+                    ${createSlider("Центр Y (Position Y)", "vignetteCenterY", 0, 1, 0.01, vCY, true, 0.5)}
+                </div>
+
                 ${createSlider("Глобальне розмиття", "blur", 0, 100, 1, g.blur||0, true, 0)}
                 <div class="property-group" style="margin-top:-6px;">
                     <label class="property-label" style="font-size:11px; margin-bottom:4px;">Тип розмиття</label>
@@ -3237,6 +3332,62 @@
 
             $('propertiesPanel').innerHTML = html;
         }
+
+        window.applyVignettePreset = function(preset) {
+            if (!state.global) return;
+            switch (preset) {
+                case 'dark':
+                    state.global.vignetteAmount = -50;
+                    state.global.vignetteMidpoint = 50;
+                    state.global.vignetteFeather = 50;
+                    state.global.vignetteRoundness = 0;
+                    state.global.vignetteHighlights = 20;
+                    state.global.vignetteCenterX = 0.5;
+                    state.global.vignetteCenterY = 0.5;
+                    break;
+                case 'soft':
+                    state.global.vignetteAmount = -40;
+                    state.global.vignetteMidpoint = 30;
+                    state.global.vignetteFeather = 85;
+                    state.global.vignetteRoundness = 20;
+                    state.global.vignetteHighlights = 50;
+                    state.global.vignetteCenterX = 0.5;
+                    state.global.vignetteCenterY = 0.5;
+                    break;
+                case 'dramatic':
+                    state.global.vignetteAmount = -75;
+                    state.global.vignetteMidpoint = 40;
+                    state.global.vignetteFeather = 30;
+                    state.global.vignetteRoundness = -70;
+                    state.global.vignetteHighlights = 10;
+                    state.global.vignetteCenterX = 0.5;
+                    state.global.vignetteCenterY = 0.5;
+                    break;
+                case 'light':
+                    state.global.vignetteAmount = 50;
+                    state.global.vignetteMidpoint = 50;
+                    state.global.vignetteFeather = 60;
+                    state.global.vignetteRoundness = 0;
+                    state.global.vignetteHighlights = 0;
+                    state.global.vignetteCenterX = 0.5;
+                    state.global.vignetteCenterY = 0.5;
+                    break;
+                case 'reset':
+                default:
+                    state.global.vignetteAmount = 0;
+                    state.global.vignetteMidpoint = 50;
+                    state.global.vignetteFeather = 50;
+                    state.global.vignetteRoundness = 0;
+                    state.global.vignetteHighlights = 0;
+                    state.global.vignetteCenterX = 0.5;
+                    state.global.vignetteCenterY = 0.5;
+                    break;
+            }
+            state.global.vignette = Math.abs(state.global.vignetteAmount / 100);
+            renderGlobal();
+            requestRender();
+            commitHistorySnapshot();
+        };
 
         function setTileMode(mode) {
             state.global.tileMode = mode;
@@ -5271,15 +5422,24 @@
             triggerInteraction();
 
             if (isGlobal) {
+                let parsedVal;
                 if (typeof v === 'boolean') {
-                    state.global[k] = v;
+                    parsedVal = v;
                 } else if (v === 'true' || v === 'false') {
-                    state.global[k] = (v === 'true');
+                    parsedVal = (v === 'true');
                 } else if (typeof v === 'string' && isNaN(Number(v))) {
-                    state.global[k] = v;
+                    parsedVal = v;
                 } else {
-                    state.global[k] = parseFloat(v);
+                    parsedVal = parseFloat(v);
                 }
+                state.global[k] = parsedVal;
+
+                if (k === 'vignetteAmount') {
+                    state.global.vignette = Math.abs(parsedVal / 100);
+                } else if (k === 'vignette') {
+                    state.global.vignetteAmount = -parsedVal * 100;
+                }
+
                 const COORD_PARAMS = ['globalZoom', 'globalRotation', 'globalOffsetX', 'globalOffsetY', 'tileRepeatX', 'tileRepeatY', 'tileSeamOffsetX', 'tileSeamOffsetY', 'forceSeamlessSoftness', 'blur', 'blurClampEdge', 'blurType'];
                 if (COORD_PARAMS.includes(k)) {
                     invalidateCaches();
