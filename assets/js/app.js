@@ -473,6 +473,86 @@
             }
         }
 
+        function applyGaussianBlur(buf, tmp, w, h, rad, mode = 'wrap') {
+            if (!rad || rad <= 0) return;
+            let scaledRad = Math.max(1, Math.round(rad * (w / 512)));
+
+            let effectiveMode = mode;
+            if (typeof mode === 'boolean') {
+                effectiveMode = mode ? 'clamp' : 'wrap';
+            }
+
+            let kSize = scaledRad;
+            let sigma = Math.max(kSize / 2, 0.5);
+            let weights = new Float32Array(2 * kSize + 1);
+            let weightSum = 0;
+            for (let i = -kSize; i <= kSize; i++) {
+                let wVal = Math.exp(-(i * i) / (2 * sigma * sigma));
+                weights[i + kSize] = wVal;
+                weightSum += wVal;
+            }
+            for (let i = 0; i < weights.length; i++) {
+                weights[i] /= weightSum;
+            }
+
+            // Horizontal pass
+            for (let y = 0; y < h; y++) {
+                let rowOffset = y * w;
+                for (let x = 0; x < w; x++) {
+                    let sum = 0, weightAcc = 0;
+                    for (let dx = -kSize; dx <= kSize; dx++) {
+                        let nx = x + dx;
+                        let wIdx = dx + kSize;
+                        let wVal = weights[wIdx];
+                        if (effectiveMode === 'clamp') {
+                            if (nx < 0) nx = 0;
+                            else if (nx >= w) nx = w - 1;
+                            sum += buf[rowOffset + nx] * wVal;
+                            weightAcc += wVal;
+                        } else if (effectiveMode === 'wrap') {
+                            nx = (nx % w + w) % w;
+                            sum += buf[rowOffset + nx] * wVal;
+                            weightAcc += wVal;
+                        } else {
+                            if (nx >= 0 && nx < w) {
+                                sum += buf[rowOffset + nx] * wVal;
+                                weightAcc += wVal;
+                            }
+                        }
+                    }
+                    tmp[rowOffset + x] = weightAcc > 0 ? sum / weightAcc : 0;
+                }
+            }
+
+            // Vertical pass
+            for (let x = 0; x < w; x++) {
+                for (let y = 0; y < h; y++) {
+                    let sum = 0, weightAcc = 0;
+                    for (let dy = -kSize; dy <= kSize; dy++) {
+                        let ny = y + dy;
+                        let wIdx = dy + kSize;
+                        let wVal = weights[wIdx];
+                        if (effectiveMode === 'clamp') {
+                            if (ny < 0) ny = 0;
+                            else if (ny >= h) ny = h - 1;
+                            sum += tmp[ny * w + x] * wVal;
+                            weightAcc += wVal;
+                        } else if (effectiveMode === 'wrap') {
+                            ny = (ny % h + h) % h;
+                            sum += tmp[ny * w + x] * wVal;
+                            weightAcc += wVal;
+                        } else {
+                            if (ny >= 0 && ny < h) {
+                                sum += tmp[ny * w + x] * wVal;
+                                weightAcc += wVal;
+                            }
+                        }
+                    }
+                    buf[y * w + x] = weightAcc > 0 ? sum / weightAcc : 0;
+                }
+            }
+        }
+
         function applyEdgeDetection(buf, tmp, w, h) {
             let step = Math.max(1, Math.round(w / 512));
             for(let i=0;i<w*h;i++) tmp[i]=buf[i];
@@ -1768,22 +1848,27 @@
                             lay.cachedBuffer[idx] = Math.max(0, Math.min(1, v));
                         }
                     }
-
-                    if(p.useFindEdges) applyEdgeDetection(lay.cachedBuffer, blurTemp, w, h);
-                    if(p.blur>0) {
-                        let isTiled = (state.global.tileMode && state.global.tileMode !== 'off') || !!p.seamless;
-                        let blurMode = isTiled ? 'wrap' : (p.blurClampEdge ? 'clamp' : 'wrap');
-                        applyBoxBlur(lay.cachedBuffer, blurTemp, w, h, parseInt(p.blur), blurMode);
-                    }
                 }
 
                 layerBuffer.set(lay.cachedBuffer);
+
+                if (p.useFindEdges) applyEdgeDetection(layerBuffer, blurTemp, w, h);
+                if (p.blur > 0) {
+                    let isTiled = (state.global.tileMode && state.global.tileMode !== 'off') || !!p.seamless;
+                    let blurMode = isTiled ? 'wrap' : (p.blurClampEdge ? 'clamp' : 'wrap');
+                    let bType = p.blurType || 'gaussian';
+                    if (bType === 'box') {
+                        applyBoxBlur(layerBuffer, blurTemp, w, h, parseInt(p.blur), blurMode);
+                    } else {
+                        applyGaussianBlur(layerBuffer, blurTemp, w, h, parseInt(p.blur), blurMode);
+                    }
+                }
 
                 if (lay.isMask) {
                     // Шар-маска сам НІКОЛИ не потрапляє у blendBuffer напряму — його
                     // яскравість (0..1) стає ПОПІКСЕЛЬНОЮ АЛЬФОЮ цільового шару під ним:
                     // біле в масці = ціль повністю видима, чорне = ціль прозора і крізь
-                    // неї видно те, що НИЖЧЕ по стеку (а не суцільний чорний колір).
+                    // неї видно те, що НИЖЧЕ по стек (а не суцільний чорний колір).
                     // Якщо цілі немає (низ стеку) — pendingRemaining==0, маска ігнорується.
                     if (pendingRemaining > 0) {
                         for (let i=0;i<w*h;i++) pendingMaskAlphaBuffer[i] *= layerBuffer[i];
@@ -1823,7 +1908,12 @@
             if(state.global.blur>0) {
                 let isGlobalTiled = (state.global.tileMode && state.global.tileMode !== 'off');
                 let globalBlurMode = isGlobalTiled ? 'wrap' : (state.global.blurClampEdge ? 'clamp' : 'wrap');
-                applyBoxBlur(blendBuffer, blurTemp, w, h, parseInt(state.global.blur), globalBlurMode);
+                let gBType = state.global.blurType || 'gaussian';
+                if (gBType === 'box') {
+                    applyBoxBlur(blendBuffer, blurTemp, w, h, parseInt(state.global.blur), globalBlurMode);
+                } else {
+                    applyGaussianBlur(blendBuffer, blurTemp, w, h, parseInt(state.global.blur), globalBlurMode);
+                }
             }
 
             let gg=state.global.gamma||1, gc=state.global.contrast||1, gv=state.global.vignette||0, gr=state.global.grain||0, gi=state.global.invert===true;
@@ -1901,15 +1991,15 @@
                 <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; align-items:end;">
                     <div>
                         <label class="property-label" style="font-size:10px; margin-bottom:2px;">Режим накладання (Blend)</label>
-                        <select id="sticky_lay_blend" onchange="upd('blendMode',this.value,true)" class="form-control" style="height:30px; font-size:11px; width:100%;">
+                        <select id="sticky_lay_blend" onchange="upd('blendMode',this.value,false)" class="form-control" style="height:30px; font-size:11px; width:100%;">
                             ${['normal','multiply','screen','overlay','difference','colorburn','colordodge','heightblend','exclusion','hardlight','lineardodge','linearburn'].map(o=>`<option value="${o}" ${lay.blendMode===o?'selected':''}>${o}</option>`).join('')}
                         </select>
                     </div>
                     <div>
                         <label class="property-label" style="font-size:10px; margin-bottom:2px;">Непрозорість (%)</label>
                         <div style="display:flex; gap:4px; align-items:center;">
-                            <input type="range" id="rng_lay_opacity" min="0" max="100" step="1" value="${lay.opacity}" data-no-random oninput="$('num_lay_opacity').value=this.value; upd('opacity',this.value,true)" onchange="commitHistorySnapshot();" ondblclick="resetSliderEl(this,100)" style="height:4px; flex:1;">
-                            <input type="number" class="num-input" id="num_lay_opacity" step="1" value="${lay.opacity}" oninput="$('rng_lay_opacity').value=this.value; upd('opacity',this.value,true)" onchange="commitHistorySnapshot();" ondblclick="resetSliderEl(this,100)" style="width:48px; padding:2px; font-size:11px; flex-shrink:0;">
+                            <input type="range" id="rng_lay_opacity" min="0" max="100" step="1" value="${lay.opacity}" data-no-random oninput="$('num_lay_opacity').value=this.value; upd('opacity',this.value,false)" onchange="commitHistorySnapshot();" ondblclick="resetSliderEl(this,100)" style="height:4px; flex:1;">
+                            <input type="number" class="num-input" id="num_lay_opacity" step="1" value="${lay.opacity}" oninput="$('rng_lay_opacity').value=this.value; upd('opacity',this.value,false)" onchange="commitHistorySnapshot();" ondblclick="resetSliderEl(this,100)" style="width:48px; padding:2px; font-size:11px; flex-shrink:0;">
                         </div>
                     </div>
                 </div>
@@ -2038,14 +2128,14 @@
         // значення за замовчуванням через || / ?? у renderProps()/evalGenerator()
         // самі, щойно з'являються на екрані для свого типу генератора.
         function freshLayerParams() {
-            return { seamless:false, scale:10, scaleX:10, scaleY:10, lockScale:true, layerScale:1, contrast:1, brightness:1, angle:0, blur:0, blurClampEdge:false,
+            return { seamless:false, scale:10, scaleX:10, scaleY:10, lockScale:true, layerScale:1, contrast:1, brightness:1, angle:0, blur:0, blurType:'gaussian', blurClampEdge:false,
                 offsetX:0, offsetY:0, invert:false, warps:[],
                 useThreshold:false, thresholdVal:50, useLevels:false, levelMin:0, levelMax:100,
                 usePosterize:false, posterizeLevels:4, useFindEdges:false };
         }
 
         function freshGlobalSettings() {
-            return { gamma:1, contrast:1, vignette:0, grain:10, blur:0, blurClampEdge:false,
+            return { gamma:1, contrast:1, vignette:0, grain:10, blur:0, blurType:'gaussian', blurClampEdge:false,
                 globalZoom:1, globalRotation:0, globalOffsetX:0, globalOffsetY:0,
                 tileMode:'off', tileRepeatX:2, tileRepeatY:2, tileMirrorX:true, tileMirrorY:true,
                 tileSeamOffsetX:0, tileSeamOffsetY:0, blendCurve:'smooth',
@@ -2370,16 +2460,16 @@
             }
         };
 
-        // label, key, min, max, step, val, isLay, def (за замовчуванням = val), noRandom (виключити з рандомізації)
-        function createSlider(label, key, min, max, step, val, isLay, def, noRandom) {
-            let id = isLay ? 'lay_'+key : 'glob_'+key;
+        // label, key, min, max, step, val, isGlobal, def (за замовчуванням = val), noRandom (виключити з рандомізації)
+        function createSlider(label, key, min, max, step, val, isGlobal, def, noRandom) {
+            let id = isGlobal ? 'glob_'+key : 'lay_'+key;
             if (def === undefined) def = val;
             let nr = noRandom ? ' data-no-random' : '';
             return `<div class="property-group">
                 <label class="property-label">${label}</label>
                 <div style="display:flex; gap:6px; align-items:center;">
-                    <input type="range" id="rng_${id}" min="${min}" max="${max}" step="${step}" value="${val}"${nr} oninput="$('num_${id}').value=this.value; upd('${key}',this.value,${isLay})" onchange="commitHistorySnapshot();" ondblclick="resetSliderEl(this,${def})">
-                    <input type="number" class="num-input" id="num_${id}" step="${step}" value="${val}" oninput="$('rng_${id}').value=this.value; upd('${key}',this.value,${isLay})" onchange="commitHistorySnapshot();" ondblclick="resetSliderEl(this,${def})">
+                    <input type="range" id="rng_${id}" min="${min}" max="${max}" step="${step}" value="${val}"${nr} oninput="$('num_${id}').value=this.value; upd('${key}',this.value,${!!isGlobal})" onchange="commitHistorySnapshot();" ondblclick="resetSliderEl(this,${def})">
+                    <input type="number" class="num-input" id="num_${id}" step="${step}" value="${val}" oninput="$('rng_${id}').value=this.value; upd('${key}',this.value,${!!isGlobal})" onchange="commitHistorySnapshot();" ondblclick="resetSliderEl(this,${def})">
                     <button type="button" class="reset-btn" title="Скинути за замовчуванням (${def})" onclick="resetSliderEl($('rng_${id}'),${def})">↺</button>
                 </div>
             </div>`;
@@ -2863,7 +2953,7 @@
                         <button onclick="randomizeAlgorithm(state.layers.findIndex(l=>l.id==='${lay.id}'))" class="btn btn-secondary" style="padding:3px 8px; font-size:11px;" title="Рандомізувати параметри алгоритму (сід, масштаб, зсув тощо)">🎲 Рандом алгоритм</button>
                     </div>
                     <div class="gen-grid" style="grid-template-columns:repeat(3,1fr);">
-                        ${['gradient','paint','simplex','perlin','voronoi','fbm','ridged','sine','radial','spiral','hexagon','pixel_noise','white_noise','checkerboard','dots','weave','value_noise','cellular','spider_web', 'cymatics'].map(t=>`<button onclick="upd('generatorType','${t}',true)" class="gen-btn ${lay.generatorType===t?'active':''}">${t}</button>`).join('')}
+                        ${['gradient','paint','simplex','perlin','voronoi','fbm','ridged','sine','radial','spiral','hexagon','pixel_noise','white_noise','checkerboard','dots','weave','value_noise','cellular','spider_web', 'cymatics'].map(t=>`<button onclick="upd('generatorType','${t}',false)" class="gen-btn ${lay.generatorType===t?'active':''}">${t}</button>`).join('')}
                     </div>
                 </div>
                 ${algoSpecificHTML}
@@ -2902,7 +2992,14 @@
                 </div>
                 ${createSlider("Яскравість шару", "brightness", 0, 2, 0.05, lp.brightness, false, 1)}
                 ${createSlider("Контраст шару", "contrast", 0.1, 3, 0.05, lp.contrast, false, 1)}
-                ${createSlider("Розмиття (px)", "blur", 0, 15, 1, lp.blur||0, false, 0)}
+                ${createSlider("Розмиття (px)", "blur", 0, 100, 1, lp.blur||0, false, 0)}
+                <div class="property-group" style="margin-top:-6px;">
+                    <label class="property-label" style="font-size:11px; margin-bottom:4px;">Тип розмиття</label>
+                    <div class="gen-grid" style="grid-template-columns:repeat(2,1fr);">
+                        <button onclick="upd('blurType','gaussian')" class="gen-btn ${(lp.blurType||'gaussian')==='gaussian'?'active':''}">Гаус (Gaussian)</button>
+                        <button onclick="upd('blurType','box')" class="gen-btn ${lp.blurType==='box'?'active':''}">Бокс (Box)</button>
+                    </div>
+                </div>
                 <div class="property-group" style="margin-top:-6px;">
                     <label class="checkbox-label" style="font-size:11px; display:flex; align-items:center; gap:6px;">
                         <input type="checkbox" ${lp.blurClampEdge ? 'checked' : ''} onchange="upd('blurClampEdge', this.checked)">
@@ -3026,7 +3123,14 @@
                 ${createSlider("Контраст", "contrast", 0.5, 2, 0.05, g.contrast, true, 1)}
                 ${createSlider("Гамма", "gamma", 0.2, 3, 0.05, g.gamma, true, 1)}
                 ${createSlider("Віньєтка", "vignette", 0, 1, 0.05, g.vignette, true, 0)}
-                ${createSlider("Глобальне розмиття", "blur", 0, 20, 1, g.blur||0, true, 0)}
+                ${createSlider("Глобальне розмиття", "blur", 0, 100, 1, g.blur||0, true, 0)}
+                <div class="property-group" style="margin-top:-6px;">
+                    <label class="property-label" style="font-size:11px; margin-bottom:4px;">Тип розмиття</label>
+                    <div class="gen-grid" style="grid-template-columns:repeat(2,1fr);">
+                        <button onclick="upd('blurType','gaussian',true)" class="gen-btn ${(g.blurType||'gaussian')==='gaussian'?'active':''}">Гаус (Gaussian)</button>
+                        <button onclick="upd('blurType','box',true)" class="gen-btn ${g.blurType==='box'?'active':''}">Бокс (Box)</button>
+                    </div>
+                </div>
                 <div class="property-group" style="margin-top:-6px;">
                     <label class="checkbox-label" style="font-size:11px; display:flex; align-items:center; gap:6px;">
                         <input type="checkbox" ${g.blurClampEdge ? 'checked' : ''} onchange="state.global.blurClampEdge=this.checked; invalidateCaches(); requestRender(); commitHistorySnapshot();">
@@ -5095,43 +5199,60 @@
             }, 250);
         }
 
-        function upd(k,v,isLay=false){
-            let lay=state.layers.find(l=>l.id===state.selectedLayerId);
+        function upd(k, v, isGlobal = false) {
+            let lay = state.layers.find(l => l.id === state.selectedLayerId);
             triggerInteraction();
-            if(isLay && k in state.global) { 
+
+            if (isGlobal) {
                 if (typeof v === 'boolean') {
                     state.global[k] = v;
                 } else if (v === 'true' || v === 'false') {
                     state.global[k] = (v === 'true');
+                } else if (typeof v === 'string' && isNaN(Number(v))) {
+                    state.global[k] = v;
                 } else {
                     state.global[k] = parseFloat(v);
                 }
-                const COORD_PARAMS = ['globalZoom', 'globalRotation', 'globalOffsetX', 'globalOffsetY', 'tileRepeatX', 'tileRepeatY', 'tileSeamOffsetX', 'tileSeamOffsetY', 'forceSeamlessSoftness', 'blur', 'blurClampEdge'];
+                const COORD_PARAMS = ['globalZoom', 'globalRotation', 'globalOffsetX', 'globalOffsetY', 'tileRepeatX', 'tileRepeatY', 'tileSeamOffsetX', 'tileSeamOffsetY', 'forceSeamlessSoftness', 'blur', 'blurClampEdge', 'blurType'];
                 if (COORD_PARAMS.includes(k)) {
                     invalidateCaches();
                 }
-                if(!suppressRender) requestRender();
+                if (['blurType', 'tileMode', 'blendCurve', 'forceSeamless'].includes(k)) {
+                    renderGlobal();
+                }
+                if (!suppressRender) requestRender();
                 scheduleHistorySnapshot();
                 return;
             }
-            if(lay){
+
+            if (lay) {
                 let val = v;
                 if (v === 'true' || v === true) val = true;
                 else if (v === 'false' || v === false) val = false;
+                else if (typeof v === 'string' && isNaN(Number(v))) val = v;
                 else if (!isNaN(v)) val = parseFloat(v);
 
-                lay.isDirty = true;
-
-                if(isLay) {
-                    lay[k]=val;
-                    if(k==='visible'||k==='generatorType'||k==='name') { renderProps(); renderLayers(); renderStickyHeader(); }
-                    if(k==='opacity'||k==='blendMode') { renderLayers(); renderStickyHeader(); }
+                if (['visible', 'generatorType', 'name', 'opacity', 'blendMode'].includes(k)) {
+                    lay[k] = val;
+                    if (['visible', 'generatorType', 'name'].includes(k)) { 
+                        lay.isDirty = true;
+                        renderProps(); 
+                        renderLayers(); 
+                        renderStickyHeader(); 
+                    }
+                    if (['opacity', 'blendMode'].includes(k)) { 
+                        renderLayers(); 
+                        renderStickyHeader(); 
+                    }
                 } else {
-                    lay.params[k]=val;
-                    if(['seamless','useThreshold','useLevels','useFindEdges','usePosterize','brushTool','gradType','spreadMethod','sourceMode','metric','mode','lockScale','blurClampEdge','enableRays','enableRings'].includes(k)) renderProps();
-                    if(String(k).startsWith('brush')) updateBrushPreview();
+                    lay.params[k] = val;
+                    lay.isDirty = true;
+                    if (['seamless', 'useThreshold', 'useLevels', 'useFindEdges', 'usePosterize', 'brushTool', 'gradType', 'spreadMethod', 'sourceMode', 'metric', 'mode', 'lockScale', 'blurClampEdge', 'enableRays', 'enableRings', 'blurType'].includes(k)) {
+                        renderProps();
+                    }
+                    if (String(k).startsWith('brush')) updateBrushPreview();
                 }
-                if(!suppressRender) requestRender();
+                if (!suppressRender) requestRender();
                 scheduleHistorySnapshot();
             }
         }
