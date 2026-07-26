@@ -1709,19 +1709,29 @@
             // однієї чи кількох масок над ним, перш ніж потрапити у blendBuffer.
             let pendingRemaining = 0, pendingOp = 1, pendingBlendFn = Blend.normal;
 
-            // Check if displacement warp is used by any visible layer to avoid compute cost of dispBuffer
+            // Check if displacement warp is used by any visible layer or globally
             let hasDisplacement = false;
-            for (let i = 0; i < state.layers.length; i++) {
-                let l = state.layers[i];
-                if (l.visible && l.params.warps) {
-                    for (let wIdx = 0; wIdx < l.params.warps.length; wIdx++) {
-                        if (l.params.warps[wIdx].type === 'displacement' && l.params.warps[wIdx].visible !== false) {
-                            hasDisplacement = true;
-                            break;
-                        }
+            if (state.global.warps) {
+                for (let wIdx = 0; wIdx < state.global.warps.length; wIdx++) {
+                    if (state.global.warps[wIdx].type === 'displacement' && state.global.warps[wIdx].visible !== false) {
+                        hasDisplacement = true;
+                        break;
                     }
                 }
-                if (hasDisplacement) break;
+            }
+            if (!hasDisplacement) {
+                for (let i = 0; i < state.layers.length; i++) {
+                    let l = state.layers[i];
+                    if (l.visible && l.params.warps) {
+                        for (let wIdx = 0; wIdx < l.params.warps.length; wIdx++) {
+                            if (l.params.warps[wIdx].type === 'displacement' && l.params.warps[wIdx].visible !== false) {
+                                hasDisplacement = true;
+                                break;
+                            }
+                        }
+                    }
+                    if (hasDisplacement) break;
+                }
             }
 
             let dispBufferPopulated = false;
@@ -1789,6 +1799,67 @@
                                     nx = rx - 0.5; ny = ry - 0.5;
                                 }
                                 nx += 0.5; ny += 0.5;
+                            }
+                            // --- Глобальні деформатори (warps) ---
+                            if (state.global.warps && state.global.warps.length > 0) {
+                                for (let wIdx = 0; wIdx < state.global.warps.length; wIdx++) {
+                                    let wModifier = state.global.warps[wIdx];
+                                    if (wModifier.type === 'none' || wModifier.visible === false) continue;
+                                    let st = Number(wModifier.strength) / 100;
+                                    let fq = Math.max(0.1, Number(wModifier.freq) || 4);
+                                    
+                                    let cdx = nx - 0.5, cdy = ny - 0.5;
+                                    let cdist = Math.sqrt(cdx*cdx + cdy*cdy);
+
+                                    if (wModifier.type === 'displacement') { 
+                                        let ox = dispBuffer[idx] - 0.5;
+                                        let oy = NoiseCache.get(nx*fq + 37, ny*fq + 71) - 0.5;
+                                        nx += ox*st; ny += oy*st;
+                                    }
+                                    else if (wModifier.type === 'vortex') { 
+                                        let a = cdist * st * 15; 
+                                        nx = 0.5 + cdx*Math.cos(a) - cdy*Math.sin(a); 
+                                        ny = 0.5 + cdx*Math.sin(a) + cdy*Math.cos(a); 
+                                    }
+                                    else if (wModifier.type === 'twirl') { 
+                                        let falloff = Math.max(0, 1 - (cdist / (fq * 0.25))); 
+                                        let a = falloff * st * 10;
+                                        nx = 0.5 + cdx*Math.cos(a) - cdy*Math.sin(a);
+                                        ny = 0.5 + cdx*Math.sin(a) + cdy*Math.cos(a);
+                                    }
+                                    else if (wModifier.type === 'sine') { 
+                                        const waveX = Math.sin(ny * fq * Math.PI) * st * 0.1;
+                                        const waveY = Math.cos(nx * fq * Math.PI) * st * 0.1;
+                                        nx += waveX; ny += waveY;
+                                    }
+                                    else if (wModifier.type === 'bulge') { 
+                                        let power = Math.exp(-cdist * fq);
+                                        let scale = 1 + power * st;
+                                        nx = 0.5 + cdx * scale;
+                                        ny = 0.5 + cdy * scale;
+                                    }
+                                    else if (wModifier.type === 'noise') { 
+                                        let noX = NoiseCache.get(nx*fq, ny*fq) - 0.5; 
+                                        let noY = NoiseCache.get(nx*fq + 100, ny*fq + 100) - 0.5; 
+                                        nx += noX * (st * 0.2); 
+                                        ny += noY * (st * 0.2); 
+                                    }
+                                    else if (wModifier.type === 'domain_warp') {
+                                        let offX = (NoiseCache.get(nx*fq, ny*fq) - 0.5) * st;
+                                        let offY = (NoiseCache.get(nx*fq + 100, ny*fq + 100) - 0.5) * st;
+                                        nx += offX; ny += offY;
+                                    }
+                                    else if (wModifier.type === 'distortion') {
+                                        nx += Math.sin(cdx * fq * Math.PI) * (st * 0.1);
+                                        ny += Math.cos(cdy * fq * Math.PI) * (st * 0.1);
+                                    }
+                                    else if (wModifier.type === 'polar') {
+                                        let r = cdist * fq;
+                                        let theta = Math.atan2(cdy, cdx) / (Math.PI * 2);
+                                        nx = 0.5 + r * Math.cos(theta * Math.PI * 2) * st;
+                                        ny = 0.5 + r * Math.sin(theta * Math.PI * 2) * st;
+                                    }
+                                }
                             }
                             // --- кінець глобального блоку; далі — незмінна логіка шару ---
                             
@@ -2274,7 +2345,8 @@
                 globalZoom:1, globalRotation:0, globalOffsetX:0, globalOffsetY:0,
                 tileMode:'off', tileRepeatX:2, tileRepeatY:2, tileMirrorX:true, tileMirrorY:true,
                 tileSeamOffsetX:0, tileSeamOffsetY:0, blendCurve:'smooth',
-                forceSeamless:false, forceSeamlessSoftness:1 };
+                forceSeamless:false, forceSeamlessSoftness:1,
+                warps: [] };
         }
 
         function addLayer(){
@@ -2608,6 +2680,64 @@
             }
         };
 
+        window.addGlobalWarp = function() {
+            if (!state.global) state.global = freshGlobalSettings();
+            if (!state.global.warps) state.global.warps = [];
+            state.global.warps.push({ type: 'none', strength: 10, freq: 4, visible: true });
+            invalidateCaches();
+            renderGlobal();
+            requestRender();
+            commitHistorySnapshot();
+        };
+
+        window.removeGlobalWarp = function(idx) {
+            if (!state.global || !state.global.warps) return;
+            state.global.warps.splice(idx, 1);
+            invalidateCaches();
+            renderGlobal();
+            requestRender();
+            commitHistorySnapshot();
+        };
+
+        window.toggleGlobalWarp = function(idx) {
+            if (!state.global || !state.global.warps || !state.global.warps[idx]) return;
+            state.global.warps[idx].visible = state.global.warps[idx].visible === false ? true : false;
+            invalidateCaches();
+            renderGlobal();
+            requestRender();
+            commitHistorySnapshot();
+        };
+
+        window.moveGlobalWarp = function(idx, direction) {
+            if (!state.global || !state.global.warps) return;
+            let warps = state.global.warps;
+            let targetIdx = idx + direction;
+            if (targetIdx < 0 || targetIdx >= warps.length) return;
+
+            let temp = warps[idx];
+            warps[idx] = warps[targetIdx];
+            warps[targetIdx] = temp;
+
+            invalidateCaches();
+            renderGlobal();
+            requestRender();
+            commitHistorySnapshot();
+        };
+
+        window.updateGlobalWarp = function(idx, key, val) {
+            if (!state.global || !state.global.warps || !state.global.warps[idx]) return;
+            triggerInteraction();
+            state.global.warps[idx][key] = (key === 'type') ? val : parseFloat(val);
+            invalidateCaches();
+            if (key === 'type') renderGlobal();
+            if (!suppressRender) requestRender();
+            if (key === 'type') {
+                commitHistorySnapshot();
+            } else {
+                scheduleHistorySnapshot();
+            }
+        };
+
         // label, key, min, max, step, val, isGlobal, def (за замовчуванням = val), noRandom (виключити з рандомізації)
         function createSlider(label, key, min, max, step, val, isGlobal, def, noRandom) {
             let id = isGlobal ? 'glob_'+key : 'lay_'+key;
@@ -2797,8 +2927,8 @@
                 states: { algo: false, transform: false, fx: false, warps: false }
             },
             global: {
-                order: ['fx', 'transform', 'tiling'],
-                states: { fx: false, transform: false, tiling: false }
+                order: ['transform', 'warps', 'tiling', 'fx'],
+                states: { transform: false, warps: false, tiling: false, fx: false }
             }
         };
 
@@ -2812,6 +2942,9 @@
                 }
                 if (parsed.global && Array.isArray(parsed.global.order)) {
                     accordionConfig.global.order = parsed.global.order;
+                    if (!accordionConfig.global.order.includes('warps')) {
+                        accordionConfig.global.order.push('warps');
+                    }
                     if (parsed.global.states) accordionConfig.global.states = parsed.global.states;
                 }
             }
@@ -3240,9 +3373,46 @@
 
         function renderGlobal() {
             let g = state.global;
+            if (!g.warps) g.warps = [];
             let modeBtn = (m, label) => `<button onclick="setTileMode('${m}')" class="gen-btn ${g.tileMode===m?'active':''}">${label}</button>`;
 
             let globalBlockContents = {};
+
+            // Block: warps
+            let globalWarpsHTML = (g.warps || []).map((w, idx) => `
+                <div class="warp-card" data-warp-index="${idx}" style="${w.visible===false?'opacity:0.5;':''}">
+                    <div class="warp-controls">
+                        <button type="button" class="warp-toggle" onclick="toggleGlobalWarp(${idx})" title="${w.visible!==false?'Приховати':'Показати'}">${w.visible!==false?'👁':'🕶'}</button>
+                        <button type="button" class="warp-del" onclick="removeGlobalWarp(${idx})" title="Видалити">✕</button>
+                    </div>
+                    <label class="property-label" style="margin-top:2px;">Глобальний деформатор №${idx+1}</label>
+                    <select onchange="updateGlobalWarp(${idx}, 'type', this.value)" class="form-control" style="margin-bottom:8px; margin-top:4px;">
+                        <option value="none" ${w.type==='none'?'selected':''}>Немає</option>
+                        <option value="displacement" ${w.type==='displacement'?'selected':''}>Displacement</option>
+                        <option value="vortex" ${w.type==='vortex'?'selected':''}>Vortex</option>
+                        <option value="twirl" ${w.type==='twirl'?'selected':''}>Twirl (Spiral Falloff)</option>
+                        <option value="sine" ${w.type==='sine'?'selected':''}>Sine</option>
+                        <option value="bulge" ${w.type==='bulge'?'selected':''}>Pinch/Bulge</option>
+                        <option value="noise" ${w.type==='noise'?'selected':''}>Perlin Noise</option>
+                        <option value="domain_warp" ${w.type==='domain_warp'?'selected':''}>Domain Warp</option>
+                        <option value="distortion" ${w.type==='distortion'?'selected':''}>Дісторсія</option>
+                        <option value="polar" ${w.type==='polar'?'selected':''}>Полярні координати</option>
+                    </select>
+                    ${w.type !== 'none' ? `
+                    <div style="margin-bottom:4px;">${sliderRow(-100, 100, 1, w.strength, 10, `updateGlobalWarp(${idx}, 'strength', this.value)`)}</div>
+                    ${sliderRow(0.1, 20, 0.1, w.freq, 4, `updateGlobalWarp(${idx}, 'freq', this.value)`)}` : ''}
+                </div>
+            `).join('');
+
+            globalBlockContents.warps = `
+                <div class="property-group" style="margin-bottom:0;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                        <label class="property-label" style="margin:0;">Глобальні деформації</label>
+                        <button onclick="addGlobalWarp()" class="btn btn-primary" style="padding:4px 8px; font-size:10px;">+ Додати</button>
+                    </div>
+                    ${globalWarpsHTML || '<div style="font-size:11px; color:var(--text-muted);">Деформатори відсутні. Натисніть "+ Додати", щоб додати викривлення на всі шари.</div>'}
+                </div>
+            `;
 
             // Block: transform
             globalBlockContents.transform = `
@@ -3357,6 +3527,7 @@
 
             let blockMeta = {
                 transform: { title: "Глобальна Трансформація", icon: "🌐" },
+                warps: { title: "Глобальні Деформатори (Warps)", icon: "🌀" },
                 tiling: { title: "Глобальний Тайлінг", icon: "🔁" },
                 fx: { title: "Глобальна Корекція", icon: "🎚️" }
             };
@@ -5389,6 +5560,8 @@
         }
 
         function afterHistoryRestore() {
+            if (!state.global) state.global = freshGlobalSettings();
+            if (!state.global.warps) state.global.warps = [];
             if (!state.layers.find(l => l.id === state.selectedLayerId)) {
                 state.selectedLayerId = state.layers.length ? state.layers[0].id : null;
             }
@@ -6113,6 +6286,11 @@
         window.redo = redo;
         window.resetProject = resetProject;
         window.resetGlobalSettings = resetGlobalSettings;
+        window.addGlobalWarp = addGlobalWarp;
+        window.removeGlobalWarp = removeGlobalWarp;
+        window.toggleGlobalWarp = toggleGlobalWarp;
+        window.moveGlobalWarp = moveGlobalWarp;
+        window.updateGlobalWarp = updateGlobalWarp;
         window.addLayer = addLayer;
         window.switchRightTab = switchRightTab;
         window.openSaveModal = openSaveModal;
