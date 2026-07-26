@@ -2058,6 +2058,10 @@
             if(!isExport && $('renderTime')) $('renderTime').textContent = `${totalRenderTimeMs.toFixed(1)} ms`;
             if (window.globalProfiler) {
                 window.globalProfiler.recordFrame(totalRenderTimeMs);
+                if (!isExport && $('fpsInfo')) {
+                    let snap = window.globalProfiler.getSnapshot();
+                    $('fpsInfo').textContent = `${snap.fps} FPS`;
+                }
             }
         }
 
@@ -3090,15 +3094,42 @@
             if(lay.generatorType==='voronoi') algoSpecificHTML+=`<div class="property-group grid-2"><div><label class="property-label">Метрика</label><select class="form-control" onchange="upd('metric',this.value)"><option value="euclidean" ${lp.metric==='euclidean'?'selected':''}>Euclidean</option><option value="manhattan" ${lp.metric==='manhattan'?'selected':''}>Manhattan</option><option value="chebyshev" ${lp.metric==='chebyshev'?'selected':''}>Chebyshev</option></select></div><div><label class="property-label">Режим</label><select class="form-control" onchange="upd('mode',this.value)"><option value="f1" ${lp.mode==='f1'?'selected':''}>F1</option><option value="f2" ${lp.mode==='f2'?'selected':''}>F2</option><option value="f2_minus_f1" ${lp.mode==='f2_minus_f1'?'selected':''}>F2-F1</option></select></div></div>`;
             if(lay.generatorType==='sine') algoSpecificHTML+=createSlider("Фаза зсуву", "phase", 0, 6.28, 0.1, lp.phase||0, false, 0);
 
+            const algoLabels = {
+                'gradient': 'Градієнт (Gradient)',
+                'paint': 'Малювання (Paint Canvas)',
+                'simplex': 'Simplex Noise',
+                'perlin': 'Perlin Noise',
+                'voronoi': 'Вороной (Voronoi)',
+                'fbm': 'FBM (Fractal Brownian Motion)',
+                'ridged': 'Ridged Multifractal',
+                'sine': 'Синусоїда (Sine Waves)',
+                'radial': 'Радіальний (Radial Waves)',
+                'spiral': 'Спіраль (Spiral)',
+                'hexagon': 'Шестикутники (Hexagon Grid)',
+                'pixel_noise': 'Піксельний шум (Pixel Noise)',
+                'white_noise': 'Білий шум (White Noise)',
+                'checkerboard': 'Шахматка (Checkerboard)',
+                'dots': 'Точки / Сітка (Dots)',
+                'weave': 'Плетіння (Weave Pattern)',
+                'value_noise': 'Value Noise',
+                'cellular': 'Клітинний шум (Cellular)',
+                'spider_web': 'Павутина (Spider Web)',
+                'cymatics': 'Кіматика (Cymatics)'
+            };
+
+            const algoOptions = Object.keys(algoLabels).map(t => 
+                `<option value="${t}" ${lay.generatorType === t ? 'selected' : ''}>${algoLabels[t]}</option>`
+            ).join('');
+
             layerBlockContents.algo = `
                 <div class="property-group" style="margin-bottom:12px;">
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
-                        <label class="property-label" style="margin:0;">Алгоритм (Algorithm)</label>
+                        <label class="property-label" style="margin:0;">Алгоритм</label>
                         <button onclick="randomizeAlgorithm(state.layers.findIndex(l=>l.id==='${lay.id}'))" class="btn btn-secondary" style="padding:3px 8px; font-size:11px;" title="Рандомізувати параметри алгоритму (сід, масштаб, зсув тощо)">🎲 Рандом алгоритм</button>
                     </div>
-                    <div class="gen-grid" style="grid-template-columns:repeat(3,1fr);">
-                        ${['gradient','paint','simplex','perlin','voronoi','fbm','ridged','sine','radial','spiral','hexagon','pixel_noise','white_noise','checkerboard','dots','weave','value_noise','cellular','spider_web', 'cymatics'].map(t=>`<button onclick="upd('generatorType','${t}',false)" class="gen-btn ${lay.generatorType===t?'active':''}">${t}</button>`).join('')}
-                    </div>
+                    <select class="form-control" onchange="upd('generatorType', this.value, false); renderProps();" style="width:100%; height:32px; font-size:12px; font-weight:600;">
+                        ${algoOptions}
+                    </select>
                 </div>
                 ${algoSpecificHTML}
             `;
@@ -3270,6 +3301,7 @@
             let vHigh = g.vignetteHighlights !== undefined ? g.vignetteHighlights : 0;
             let vCX = g.vignetteCenterX !== undefined ? g.vignetteCenterX : 0.5;
             let vCY = g.vignetteCenterY !== undefined ? g.vignetteCenterY : 0.5;
+            let isVignetteOpen = window.vignetteDetailsOpen ? 'open' : '';
 
             globalBlockContents.fx = `
                 ${createSlider("Контраст", "contrast", 0.5, 2, 0.05, g.contrast, true, 1)}
@@ -3277,28 +3309,33 @@
                 
                 <div style="background: rgba(255,255,255,0.03); border: 1px solid var(--border-color, #27272a); border-radius: 8px; padding: 10px; margin: 10px 0;">
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-                        <span class="property-label" style="font-weight:700; color:var(--primary-color, #3b82f6); margin:0;">📷 Віньєтка (Lightroom)</span>
+                        <span class="property-label" style="font-weight:700; color:var(--primary-color, #3b82f6); margin:0;">📷 Віньєтка</span>
                         <button type="button" class="reset-btn" title="Скинути віньєтку" onclick="applyVignettePreset('reset')">↺</button>
                     </div>
                     
                     ${createSlider("Інтенсивність (Amount)", "vignetteAmount", -100, 100, 1, vAmt, true, 0)}
                     
-                    <div class="property-group" style="margin-top:6px; margin-bottom:8px;">
-                        <label class="property-label" style="font-size:10px; margin-bottom:4px;">Пресети віньєтки</label>
-                        <div class="gen-grid" style="grid-template-columns:repeat(4,1fr); gap:4px;">
-                            <button type="button" onclick="applyVignettePreset('dark')" class="gen-btn" style="font-size:10px; padding:4px 2px;" title="Класична темна віньєтка">Темна</button>
-                            <button type="button" onclick="applyVignettePreset('soft')" class="gen-btn" style="font-size:10px; padding:4px 2px;" title="М'який фокус">М'яка</button>
-                            <button type="button" onclick="applyVignettePreset('dramatic')" class="gen-btn" style="font-size:10px; padding:4px 2px;" title="Драматичний прямокутник">Прямокут.</button>
-                            <button type="button" onclick="applyVignettePreset('light')" class="gen-btn" style="font-size:10px; padding:4px 2px;" title="Світле сяйво">Світла</button>
-                        </div>
-                    </div>
+                    <details id="vignette_details" ${isVignetteOpen} ontoggle="window.vignetteDetailsOpen=this.open;" style="margin-top:8px; border-top:1px solid rgba(255,255,255,0.08); padding-top:6px;">
+                        <summary style="font-size:11px; font-weight:600; color:var(--text-muted, #a1a1aa); cursor:pointer; user-select:none; padding:4px 0;">⚙️ Розширені налаштування</summary>
+                        <div style="margin-top:8px;">
+                            <div class="property-group" style="margin-bottom:8px;">
+                                <label class="property-label" style="font-size:10px; margin-bottom:4px;">Пресети віньєтки</label>
+                                <div class="gen-grid" style="grid-template-columns:repeat(4,1fr); gap:4px;">
+                                    <button type="button" onclick="applyVignettePreset('dark')" class="gen-btn" style="font-size:10px; padding:4px 2px;" title="Класична темна віньєтка">Темна</button>
+                                    <button type="button" onclick="applyVignettePreset('soft')" class="gen-btn" style="font-size:10px; padding:4px 2px;" title="М'який фокус">М'яка</button>
+                                    <button type="button" onclick="applyVignettePreset('dramatic')" class="gen-btn" style="font-size:10px; padding:4px 2px;" title="Драматичний прямокутник">Прямокут.</button>
+                                    <button type="button" onclick="applyVignettePreset('light')" class="gen-btn" style="font-size:10px; padding:4px 2px;" title="Світле сяйво">Світла</button>
+                                </div>
+                            </div>
 
-                    ${createSlider("Середина (Midpoint)", "vignetteMidpoint", 0, 100, 1, vMid, true, 50)}
-                    ${createSlider("Розмиття країв (Feather)", "vignetteFeather", 0, 100, 1, vFeath, true, 50)}
-                    ${createSlider("Округлість (Roundness)", "vignetteRoundness", -100, 100, 1, vRound, true, 0)}
-                    ${createSlider("Захист світлих тонів (Highlights)", "vignetteHighlights", 0, 100, 1, vHigh, true, 0)}
-                    ${createSlider("Центр X (Position X)", "vignetteCenterX", 0, 1, 0.01, vCX, true, 0.5)}
-                    ${createSlider("Центр Y (Position Y)", "vignetteCenterY", 0, 1, 0.01, vCY, true, 0.5)}
+                            ${createSlider("Середина (Midpoint)", "vignetteMidpoint", 0, 100, 1, vMid, true, 50)}
+                            ${createSlider("Розмиття країв (Feather)", "vignetteFeather", 0, 100, 1, vFeath, true, 50)}
+                            ${createSlider("Округлість (Roundness)", "vignetteRoundness", -100, 100, 1, vRound, true, 0)}
+                            ${createSlider("Захист світлих тонів (Highlights)", "vignetteHighlights", 0, 100, 1, vHigh, true, 0)}
+                            ${createSlider("Центр X (Position X)", "vignetteCenterX", 0, 1, 0.01, vCX, true, 0.5)}
+                            ${createSlider("Центр Y (Position Y)", "vignetteCenterY", 0, 1, 0.01, vCY, true, 0.5)}
+                        </div>
+                    </details>
                 </div>
 
                 ${createSlider("Глобальне розмиття", "blur", 0, 100, 1, g.blur||0, true, 0)}
@@ -6398,3 +6435,24 @@
                 }
             }
         };
+
+        // --- Realtime FPS Ticker ---
+        (function initRealtimeFpsMeter() {
+            let lastTime = performance.now();
+            let frameCount = 0;
+            function fpsTick() {
+                let now = performance.now();
+                frameCount++;
+                if (now - lastTime >= 500) {
+                    let calculatedFps = Math.min(120, Math.round((frameCount * 1000) / (now - lastTime)));
+                    frameCount = 0;
+                    lastTime = now;
+                    let fpsEl = $('fpsInfo');
+                    if (fpsEl) {
+                        fpsEl.textContent = `${calculatedFps} FPS`;
+                    }
+                }
+                requestAnimationFrame(fpsTick);
+            }
+            requestAnimationFrame(fpsTick);
+        })();
