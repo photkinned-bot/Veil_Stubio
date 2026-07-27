@@ -9,14 +9,15 @@
 <body>
     <header>
         <div class="logo-area">
-            <h1 class="logo-title">VEIL STUDIO PRO</h1>
+            <h1 class="logo-title">VEIL STUDIO</h1>
+            <span class="badge">PRO 2.0</span>
         </div>
         <div class="header-buttons">
             <button onclick="resetProject()" class="btn btn-secondary" title="Скинути весь проєкт до початкового стану">↺ Скинути</button>
             <button onclick="exportVeilFile()" class="btn btn-secondary" title="Завантажити проєкт у файл .veil">💾 Зберегти .veil</button>
             <button onclick="triggerVeilImport()" class="btn btn-secondary" title="Відкрити файл проєкту (.veil / .json)">📂 Відкрити</button>
             <button onclick="openProjectManagerModal()" class="btn btn-secondary" title="Управління проєктом та слотами IDB">⚙️ Проєкти</button>
-            <button onclick="openBenchmarkModal()" class="btn btn-secondary" style="border-color:#10b981; color:#10b981;" title="Запустити профілювальник та тест навантаження">⚡ Бенчмарк</button>
+            <button onclick="openBenchmarkModal()" class="btn btn-secondary" style="border-color:rgba(16, 185, 129, 0.4); color:#10b981; background:rgba(16, 185, 129, 0.08);" title="Запустити профілювальник та тест навантаження">⚡ Бенчмарк</button>
             <button onclick="openPNGExportModal()" class="btn btn-primary">Експорт PNG</button>
             <input type="file" id="importVeilFile" style="display:none;" accept=".veil,.json" onchange="importProjectFile(event)">
         </div>
@@ -26,7 +27,7 @@
         <aside>
             <div class="panel-header">
                 <h2 class="panel-title">Шари</h2>
-                <button onclick="addLayer()" class="btn btn-secondary" style="padding:4px 8px; font-size:11px;">+ Шар</button>
+                <button onclick="addLayer()" class="btn btn-primary" style="padding:4px 10px; font-size:11px;">+ Шар</button>
             </div>
             <div id="layersList" class="layers-list"></div>
         </aside>
