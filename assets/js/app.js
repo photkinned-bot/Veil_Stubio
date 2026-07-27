@@ -7,6 +7,7 @@
         const translations = {
             uk: {
                 app_title: "Veil Studio — Процедурний Генератор Текстур",
+                logo_subtitle: "текстурний генератор",
                 badge_pro: "PRO 1.0",
                 made_in_ukraine: "Зроблено в Україні",
                 made_in_ukraine_short: "UA",
@@ -174,6 +175,7 @@
             },
             en: {
                 app_title: "Veil Studio — Procedural Texture Generator",
+                logo_subtitle: "texture generator",
                 badge_pro: "PRO 1.0",
                 made_in_ukraine: "Made in Ukraine",
                 made_in_ukraine_short: "UA",
