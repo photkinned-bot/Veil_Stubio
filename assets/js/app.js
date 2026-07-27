@@ -6191,6 +6191,9 @@
 
         function scheduleHistorySnapshot() {
             if (!historyReady || isPainting || strokeBackupActive || isRestoringHistory) return;
+            if (typeof updateAutosaveUI === 'function') {
+                updateAutosaveUI('Є зміни...', '#f59e0b', 'Проєкт змінено, очікується автозбереження');
+            }
             clearTimeout(historyTimer);
             historyTimer = setTimeout(() => {
                 if (!isPainting && !strokeBackupActive && !isRestoringHistory) {
@@ -6217,6 +6220,10 @@
             if (history.length > MAX_HISTORY) { history.shift(); }
             historyIndex = history.length - 1;
             updateHistoryButtons();
+
+            if (typeof scheduleAutoSave === 'function') {
+                scheduleAutoSave();
+            }
         }
 
         function undo() {
@@ -6586,6 +6593,198 @@
             }
         }
 
+        // --- Безшовне фонове Автозбереження (Zero-Performance Impact) ---
+        let autoSaveTimer = null;
+        let isAutoSaving = false;
+        const AUTOSAVE_DEBOUNCE_MS = 2500;
+        const IDB_AUTOSAVE_KEY = 'autosave_draft';
+
+        function updateAutosaveUI(statusText, dotColor = '#10b981', title = '') {
+            let elText = $('autosaveStatusText');
+            let elDot = $('autosaveDot');
+            if (elText) elText.textContent = statusText;
+            if (elDot) elDot.style.background = dotColor;
+            let meta = $('autosaveMeta');
+            if (meta && title) meta.title = title;
+        }
+
+        function scheduleAutoSave() {
+            updateAutosaveUI('Є зміни...', '#f59e0b', 'Проєкт змінено, очікується автозбереження');
+            if (autoSaveTimer) clearTimeout(autoSaveTimer);
+            autoSaveTimer = setTimeout(() => {
+                requestAutoSaveIdle();
+            }, AUTOSAVE_DEBOUNCE_MS);
+        }
+
+        function requestAutoSaveIdle() {
+            if (isPainting || strokeBackupActive || isRestoringHistory) {
+                if (autoSaveTimer) clearTimeout(autoSaveTimer);
+                autoSaveTimer = setTimeout(() => requestAutoSaveIdle(), 1500);
+                return;
+            }
+
+            if (typeof window.requestIdleCallback === 'function') {
+                window.requestIdleCallback(() => performAutoSave(), { timeout: 3000 });
+            } else {
+                setTimeout(() => performAutoSave(), 50);
+            }
+        }
+
+        async function performAutoSave() {
+            if (isAutoSaving || isPainting || strokeBackupActive || isRestoringHistory) return;
+            isAutoSaving = true;
+            updateAutosaveUI('Збереження...', '#3b82f6', 'Фонове автозбереження чернетки...');
+
+            try {
+                const db = await openVeilIDB();
+                const paintBlobs = {};
+                const paintCrops = {};
+
+                if (state && state.layers) {
+                    for (const lay of state.layers) {
+                        if (lay.generatorType === 'paint') {
+                            ensureLayerPaintCanvas(lay);
+                            if (lay.paintCanvas) {
+                                const comp = compressPaintCanvas(lay.paintCanvas);
+                                if (comp.dataUrl) {
+                                    const blob = await canvasToBlobAsync(lay.paintCanvas);
+                                    if (blob) {
+                                        paintBlobs[lay.id] = blob;
+                                        paintCrops[lay.id] = comp.crop;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                const stateClean = JSON.parse(JSON.stringify(state, (key, value) => {
+                    if (key === 'paintCanvas' || key === 'paintBuffer' || key === 'paintDataUrl') {
+                        return undefined;
+                    }
+                    return value;
+                }));
+
+                const now = new Date();
+                const timeStr = now.toLocaleTimeString('uk-UA', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+                const record = {
+                    id: IDB_AUTOSAVE_KEY,
+                    name: '⚡ Автозбережена чернетка',
+                    isAutoSave: true,
+                    updatedAt: Date.now(),
+                    dateStr: `${now.toLocaleDateString('uk-UA')} ${timeStr}`,
+                    layerCount: state.layers ? state.layers.length : 0,
+                    state: stateClean,
+                    paintBlobs,
+                    paintCrops,
+                    tilingState: (typeof tilingState !== 'undefined' && tilingState) ? JSON.parse(JSON.stringify(tilingState)) : null
+                };
+
+                const tx = db.transaction(IDB_STORE, 'readwrite');
+                const store = tx.objectStore(IDB_STORE);
+                await new Promise((resolve, reject) => {
+                    const req = store.put(record);
+                    req.onsuccess = resolve;
+                    req.onerror = reject;
+                });
+
+                localStorage.setItem('veil_has_autosave', 'true');
+                localStorage.setItem('veil_autosave_time', timeStr.slice(0, 5));
+
+                updateAutosaveUI(`Збережено о ${timeStr.slice(0, 5)}`, '#10b981', `Останнє автозбереження: ${record.dateStr}`);
+            } catch (e) {
+                console.warn('Помилка фонового автозбереження:', e);
+                updateAutosaveUI('Помилка автозбереження', '#ef4444', e.message);
+            } finally {
+                isAutoSaving = false;
+            }
+        }
+
+        async function restoreAutoSaveDraftOnBoot() {
+            try {
+                if (localStorage.getItem('veil_has_autosave') !== 'true') return false;
+                const db = await openVeilIDB();
+                const tx = db.transaction(IDB_STORE, 'readonly');
+                const store = tx.objectStore(IDB_STORE);
+                const record = await new Promise((resolve, reject) => {
+                    const req = store.get(IDB_AUTOSAVE_KEY);
+                    req.onsuccess = () => resolve(req.result);
+                    req.onerror = reject;
+                });
+
+                if (!record || !record.state || !record.state.layers || record.state.layers.length === 0) {
+                    return false;
+                }
+
+                setState(record.state);
+                if (!state.global) state.global = freshGlobalSettings();
+
+                state.layers.forEach(l => {
+                    l.isDirty = true;
+                    if (!l.params) l.params = freshLayerParams();
+                    if (!l.params.warps) l.params.warps = [];
+                });
+
+                if (!state.layers.find(l => l.id === state.selectedLayerId)) {
+                    state.selectedLayerId = state.layers.length ? state.layers[0].id : null;
+                }
+
+                if (record.paintBlobs) {
+                    const paintPromises = state.layers.filter(l => l.generatorType === 'paint').map(async (lay) => {
+                        ensureLayerPaintCanvas(lay, false);
+                        const pCtx = lay.paintCanvas.getContext('2d');
+                        pCtx.fillStyle = '#000000';
+                        pCtx.fillRect(0, 0, 1024, 1024);
+
+                        const blob = record.paintBlobs[lay.id];
+                        if (blob) {
+                            let bitmap = null;
+                            if (typeof createImageBitmap === 'function') {
+                                try { bitmap = await createImageBitmap(blob); } catch(e){}
+                            }
+                            if (bitmap) {
+                                const crop = record.paintCrops ? record.paintCrops[lay.id] : null;
+                                if (crop && typeof crop.x === 'number') {
+                                    pCtx.drawImage(bitmap, crop.x, crop.y, crop.w, crop.h);
+                                } else {
+                                    pCtx.drawImage(bitmap, 0, 0, 1024, 1024);
+                                }
+                                if (typeof bitmap.close === 'function') bitmap.close();
+                            } else {
+                                const url = URL.createObjectURL(blob);
+                                await new Promise((res) => {
+                                    const img = new Image();
+                                    img.onload = () => {
+                                        pCtx.drawImage(img, 0, 0, 1024, 1024);
+                                        URL.revokeObjectURL(url);
+                                        res();
+                                    };
+                                    img.onerror = () => { URL.revokeObjectURL(url); res(); };
+                                    img.src = url;
+                                });
+                            }
+                        }
+                        updatePaintBuffer(lay);
+                        lay.isDirty = true;
+                    });
+                    await Promise.all(paintPromises);
+                }
+
+                invalidateCaches();
+                renderLayers();
+                if (typeof currentTab !== 'undefined' && currentTab === 'global') renderGlobal(); else renderProps();
+                requestRender();
+
+                const timeStr = localStorage.getItem('veil_autosave_time') || record.dateStr;
+                updateAutosaveUI(`Відновлено (${timeStr})`, '#10b981', `Відновлено автозбережену чернетку: ${record.dateStr}`);
+                return true;
+            } catch (e) {
+                console.warn('Не вдалося відновити автозбережену чернетку:', e);
+                return false;
+            }
+        }
+
         async function getIDBSlotsList() {
             try {
                 const db = await openVeilIDB();
@@ -6620,10 +6819,12 @@
 
             container.innerHTML = slots.map(slot => {
                 let layersText = `${slot.layerCount || 0} ${slot.layerCount === 1 ? 'шар' : (slot.layerCount >= 2 && slot.layerCount <= 4) ? 'шари' : 'шарів'}`;
+                let isAuto = slot.isAutoSave || slot.id === IDB_AUTOSAVE_KEY;
+                let badgeHtml = isAuto ? `<span style="background:rgba(245, 158, 11, 0.2); color:#f59e0b; border:1px solid rgba(245, 158, 11, 0.4); padding:1px 6px; border-radius:4px; font-size:10px; margin-left:6px; font-weight:600;">Чернетка</span>` : '';
                 return `
-                <div class="idb-slot-card">
+                <div class="idb-slot-card" style="${isAuto ? 'border: 1px solid rgba(245, 158, 11, 0.35); background: rgba(245, 158, 11, 0.04);' : ''}">
                     <div class="idb-slot-info">
-                        <div class="idb-slot-title">${slot.name}</div>
+                        <div class="idb-slot-title" style="display:flex; align-items:center;">${slot.name} ${badgeHtml}</div>
                         <div class="idb-slot-meta">${slot.dateStr} | ${layersText}</div>
                     </div>
                     <div style="display:flex; gap:4px; flex-shrink:0;">
@@ -7018,6 +7219,10 @@
         window.toggleCanvasBorder = toggleCanvasBorder;
         window.setCanvasBorderIntensity = setCanvasBorderIntensity;
         window.toggleBorderSliderPopover = toggleBorderSliderPopover;
+        window.scheduleAutoSave = scheduleAutoSave;
+        window.performAutoSave = performAutoSave;
+        window.restoreAutoSaveDraftOnBoot = restoreAutoSaveDraftOnBoot;
+        window.updateAutosaveUI = updateAutosaveUI;
 
         function initCanvasControlsUI() {
             if ($('chkLowRes')) $('chkLowRes').checked = lowResOnEdit;
@@ -7178,7 +7383,7 @@
             });
         }
 
-        document.addEventListener('DOMContentLoaded', () => { 
+        document.addEventListener('DOMContentLoaded', async () => { 
             canvas=$('canvas'); 
             ctx=canvas.getContext('2d'); 
             initCanvasControlsUI();
@@ -7212,12 +7417,31 @@
                 canvas.addEventListener('dragstart', e => e.preventDefault());
             }
 
-            renderLayers(); 
-            switchRightTab('layer'); 
-            requestRender(); 
-            initHistory(); 
+            // Автоматичне відновлення автозбереженої чернетки під час старту
+            let restoredDraft = await restoreAutoSaveDraftOnBoot();
+            if (!restoredDraft) {
+                renderLayers(); 
+                switchRightTab('layer'); 
+                requestRender(); 
+                initHistory(); 
+            } else {
+                switchRightTab('layer');
+            }
+
             setupResizeHandle('resizeLeft', document.querySelector('aside:not(.right-panel)'), 'left'); 
             setupResizeHandle('resizeRight', document.querySelector('.right-panel'), 'right'); 
+
+            // Безпечне збереження перед закриттям або перемиканням вкладки
+            window.addEventListener('beforeunload', () => {
+                if (typeof performAutoSave === 'function') {
+                    performAutoSave();
+                }
+            });
+            document.addEventListener('visibilitychange', () => {
+                if (document.visibilityState === 'hidden' && typeof performAutoSave === 'function') {
+                    performAutoSave();
+                }
+            });
         });
 
         let benchmarkInterval = null;
