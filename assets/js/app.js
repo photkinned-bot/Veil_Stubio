@@ -957,7 +957,24 @@
             let updateFn = isGlobal ? 'updateGlobalWarp' : 'updateWarp';
             let toggleFn = isGlobal ? 'toggleGlobalWarp' : 'toggleWarp';
             let removeFn = isGlobal ? 'removeGlobalWarp' : 'removeWarp';
-            let warpLabel = isGlobal ? `Глобальний деформатор №${idx+1}` : `Деформатор №${idx+1}`;
+            let warpLabel = isGlobal ? `Глобальний №${idx+1}` : `Деформатор №${idx+1}`;
+            let isExpanded = w.expanded !== false;
+
+            const typeNames = {
+                'none': 'Вимкнено',
+                'point_deformer': '🎯 Точковий',
+                'displacement': 'Displacement',
+                'vortex': 'Vortex',
+                'twirl': 'Twirl',
+                'sine': 'Sine',
+                'bulge': 'Pinch/Bulge',
+                'noise': 'Perlin Noise',
+                'domain_warp': 'Domain Warp',
+                'distortion': 'Дісторсія',
+                'polar': 'Полярні'
+            };
+            let typeBadge = typeNames[w.type] || w.type || 'Немає';
+            let warpIcon = w.type === 'point_deformer' ? '🎯' : (w.type === 'none' ? '⚪' : '🌀');
 
             if (w.type === 'point_deformer') {
                 if (!w.points || !Array.isArray(w.points) || w.points.length === 0) {
@@ -976,14 +993,14 @@
 
                 let pointsHTML = w.points.map((pt, pIdx) => {
                     let isActive = (w.activePointIndex === pIdx);
-                    let isExpanded = pt.expanded !== false;
+                    let isPtExpanded = pt.expanded !== false;
                     let typeName = typeLabels[pt.type] || pt.type || 'Inflate';
 
                     return `
                         <div class="deformer-point-card ${isActive ? 'active-point' : ''}" style="margin-bottom:8px; border:1px solid ${isActive ? 'rgba(245,158,11,0.5)' : 'rgba(255,255,255,0.1)'}; border-radius:6px; background:${isActive ? 'rgba(245,158,11,0.06)' : 'rgba(255,255,255,0.02)'}; padding:6px 8px;">
                             <div class="deformer-point-header" onclick="toggleDeformerPointExpanded(${isGlobal}, ${idx}, ${pIdx})" style="display:flex; justify-content:space-between; align-items:center; cursor:pointer; user-select:none; padding:2px 0;">
                                 <div style="display:flex; align-items:center; gap:6px;">
-                                    <span style="font-size:10px; color:var(--text-muted);">${isExpanded ? '▾' : '▸'}</span>
+                                    <span style="font-size:10px; color:var(--text-muted);">${isPtExpanded ? '▾' : '▸'}</span>
                                     <span style="font-weight:700; font-size:11px; color:${isActive ? '#f59e0b' : '#3b82f6'};">📍 Точка #${pIdx+1}</span>
                                     <span style="font-size:10px; color:var(--text-muted); background:rgba(255,255,255,0.08); padding:1px 6px; border-radius:4px;">${typeName}</span>
                                 </div>
@@ -992,7 +1009,7 @@
                                 </div>
                             </div>
 
-                            <div class="deformer-point-body" style="display:${isExpanded ? 'block' : 'none'}; padding-top:8px; margin-top:6px; border-top:1px solid rgba(255,255,255,0.08);" onclick="event.stopPropagation()">
+                            <div class="deformer-point-body" style="display:${isPtExpanded ? 'block' : 'none'}; padding-top:8px; margin-top:6px; border-top:1px solid rgba(255,255,255,0.08);" onclick="event.stopPropagation()">
                                 <div class="property-group" style="margin-bottom:6px;">
                                     <label class="property-label">Алгоритм деформації</label>
                                     <select onchange="updateDeformerPoint(${isGlobal}, ${idx}, ${pIdx}, 'type', this.value)" class="form-control" style="font-size:11px; height:28px;">
@@ -1023,15 +1040,70 @@
                 }).join('');
 
                 return `
-                    <div class="warp-card" data-warp-index="${idx}" style="${w.visible===false?'opacity:0.5;':''}">
-                        <div class="warp-controls">
+                    <div class="warp-card accordion-block" data-warp-index="${idx}" style="${w.visible===false?'opacity:0.6;':''}">
+                        <div class="accordion-header" onclick="toggleWarpExpanded(${isGlobal}, ${idx})" style="padding: 6px 10px;">
+                            <div class="accordion-header-left">
+                                <span class="accordion-chevron ${isExpanded ? 'open' : ''}">▼</span>
+                                <span style="font-weight:700;">${warpIcon} ${warpLabel}</span>
+                                <span class="badge" style="background:rgba(59,130,246,0.15); color:var(--primary-color); font-size:9px;">${typeBadge}</span>
+                            </div>
+                            <div class="warp-controls" onclick="event.stopPropagation()">
+                                <button type="button" class="warp-toggle" onclick="${toggleFn}(${idx})" title="${w.visible!==false?'Приховати':'Показати'}">${w.visible!==false?'👁':'🕶'}</button>
+                                <button type="button" class="warp-del" onclick="${removeFn}(${idx})" title="Видалити">✕</button>
+                            </div>
+                        </div>
+                        
+                        <div class="warp-card-body ${isExpanded ? '' : 'collapsed'}" style="padding: 10px; border-top: 1px solid var(--border-color); ${isExpanded ? '' : 'display:none;'}">
+                            <label class="property-label" style="margin-top:2px;">Тип деформатора</label>
+                            <select onchange="${updateFn}(${idx}, 'type', this.value)" class="form-control" style="margin-bottom:8px; margin-top:4px;">
+                                <option value="none" ${w.type==='none'?'selected':''}>Немає</option>
+                                <option value="point_deformer" selected>🎯 Точковий деформатор (Deformer Studio)</option>
+                                <option value="displacement" ${w.type==='displacement'?'selected':''}>Displacement</option>
+                                <option value="vortex" ${w.type==='vortex'?'selected':''}>Vortex</option>
+                                <option value="twirl" ${w.type==='twirl'?'selected':''}>Twirl (Spiral Falloff)</option>
+                                <option value="sine" ${w.type==='sine'?'selected':''}>Sine</option>
+                                <option value="bulge" ${w.type==='bulge'?'selected':''}>Pinch/Bulge</option>
+                                <option value="noise" ${w.type==='noise'?'selected':''}>Perlin Noise</option>
+                                <option value="domain_warp" ${w.type==='domain_warp'?'selected':''}>Domain Warp</option>
+                                <option value="distortion" ${w.type==='distortion'?'selected':''}>Дісторсія</option>
+                                <option value="polar" ${w.type==='polar'?'selected':''}>Полярні координати</option>
+                            </select>
+                            
+                            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; background:rgba(0,0,0,0.25); padding:4px 6px; border-radius:4px;">
+                                <label class="checkbox-label" style="margin:0; font-size:11px;">
+                                    <input type="checkbox" ${w.showHandles!==false?'checked':''} onchange="toggleDeformerHandles(${isGlobal}, ${idx}, this.checked)">
+                                    🎯 Маркери на канвасі
+                                </label>
+                                <button type="button" class="btn btn-primary" style="padding:2px 6px; font-size:10px;" onclick="addPointToDeformer(${isGlobal}, ${idx})">+ Точка</button>
+                            </div>
+
+                            <div style="max-height:320px; overflow-y:auto; padding-right:2px;">
+                                ${pointsHTML}
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+
+            return `
+                <div class="warp-card accordion-block" data-warp-index="${idx}" style="${w.visible===false?'opacity:0.6;':''}">
+                    <div class="accordion-header" onclick="toggleWarpExpanded(${isGlobal}, ${idx})" style="padding: 6px 10px;">
+                        <div class="accordion-header-left">
+                            <span class="accordion-chevron ${isExpanded ? 'open' : ''}">▼</span>
+                            <span style="font-weight:700;">${warpIcon} ${warpLabel}</span>
+                            <span class="badge" style="background:rgba(59,130,246,0.15); color:var(--primary-color); font-size:9px;">${typeBadge}</span>
+                        </div>
+                        <div class="warp-controls" onclick="event.stopPropagation()">
                             <button type="button" class="warp-toggle" onclick="${toggleFn}(${idx})" title="${w.visible!==false?'Приховати':'Показати'}">${w.visible!==false?'👁':'🕶'}</button>
                             <button type="button" class="warp-del" onclick="${removeFn}(${idx})" title="Видалити">✕</button>
                         </div>
-                        <label class="property-label" style="margin-top:2px;">${warpLabel}</label>
+                    </div>
+
+                    <div class="warp-card-body ${isExpanded ? '' : 'collapsed'}" style="padding: 10px; border-top: 1px solid var(--border-color); ${isExpanded ? '' : 'display:none;'}">
+                        <label class="property-label" style="margin-top:2px;">Тип деформатора</label>
                         <select onchange="${updateFn}(${idx}, 'type', this.value)" class="form-control" style="margin-bottom:8px; margin-top:4px;">
                             <option value="none" ${w.type==='none'?'selected':''}>Немає</option>
-                            <option value="point_deformer" selected>🎯 Точковий деформатор (Deformer Studio)</option>
+                            <option value="point_deformer" ${w.type==='point_deformer'?'selected':''}>🎯 Точковий деформатор (Deformer Studio)</option>
                             <option value="displacement" ${w.type==='displacement'?'selected':''}>Displacement</option>
                             <option value="vortex" ${w.type==='vortex'?'selected':''}>Vortex</option>
                             <option value="twirl" ${w.type==='twirl'?'selected':''}>Twirl (Spiral Falloff)</option>
@@ -1042,45 +1114,16 @@
                             <option value="distortion" ${w.type==='distortion'?'selected':''}>Дісторсія</option>
                             <option value="polar" ${w.type==='polar'?'selected':''}>Полярні координати</option>
                         </select>
-                        
-                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; background:rgba(0,0,0,0.25); padding:4px 6px; border-radius:4px;">
-                            <label class="checkbox-label" style="margin:0; font-size:11px;">
-                                <input type="checkbox" ${w.showHandles!==false?'checked':''} onchange="toggleDeformerHandles(${isGlobal}, ${idx}, this.checked)">
-                                🎯 Маркери на канвасі
-                            </label>
-                            <button type="button" class="btn btn-primary" style="padding:2px 6px; font-size:10px;" onclick="addPointToDeformer(${isGlobal}, ${idx})">+ Точка</button>
+                        ${w.type !== 'none' ? `
+                        <div style="margin-bottom:4px;">
+                            <label class="property-label" style="font-size:10px; margin-bottom:2px;">Сила (Strength)</label>
+                            ${sliderRow(-100, 100, 1, w.strength !== undefined ? w.strength : 10, 10, `${updateFn}(${idx}, 'strength', this.value)`)}
                         </div>
-
-                        <div style="max-height:320px; overflow-y:auto; padding-right:2px;">
-                            ${pointsHTML}
-                        </div>
+                        <div style="margin-bottom:4px;">
+                            <label class="property-label" style="font-size:10px; margin-bottom:2px;">Частота / Масштаб (Frequency)</label>
+                            ${sliderRow(0.1, 20, 0.1, w.freq !== undefined ? w.freq : 4, 4, `${updateFn}(${idx}, 'freq', this.value)`)}
+                        </div>` : ''}
                     </div>
-                `;
-            }
-
-            return `
-                <div class="warp-card" data-warp-index="${idx}" style="${w.visible===false?'opacity:0.5;':''}">
-                    <div class="warp-controls">
-                        <button type="button" class="warp-toggle" onclick="${toggleFn}(${idx})" title="${w.visible!==false?'Приховати':'Показати'}">${w.visible!==false?'👁':'🕶'}</button>
-                        <button type="button" class="warp-del" onclick="${removeFn}(${idx})" title="Видалити">✕</button>
-                    </div>
-                    <label class="property-label" style="margin-top:2px;">${warpLabel}</label>
-                    <select onchange="${updateFn}(${idx}, 'type', this.value)" class="form-control" style="margin-bottom:8px; margin-top:4px;">
-                        <option value="none" ${w.type==='none'?'selected':''}>Немає</option>
-                        <option value="point_deformer" ${w.type==='point_deformer'?'selected':''}>🎯 Точковий деформатор (Deformer Studio)</option>
-                        <option value="displacement" ${w.type==='displacement'?'selected':''}>Displacement</option>
-                        <option value="vortex" ${w.type==='vortex'?'selected':''}>Vortex</option>
-                        <option value="twirl" ${w.type==='twirl'?'selected':''}>Twirl (Spiral Falloff)</option>
-                        <option value="sine" ${w.type==='sine'?'selected':''}>Sine</option>
-                        <option value="bulge" ${w.type==='bulge'?'selected':''}>Pinch/Bulge</option>
-                        <option value="noise" ${w.type==='noise'?'selected':''}>Perlin Noise</option>
-                        <option value="domain_warp" ${w.type==='domain_warp'?'selected':''}>Domain Warp</option>
-                        <option value="distortion" ${w.type==='distortion'?'selected':''}>Дісторсія</option>
-                        <option value="polar" ${w.type==='polar'?'selected':''}>Полярні координати</option>
-                    </select>
-                    ${w.type !== 'none' ? `
-                    <div style="margin-bottom:4px;">${sliderRow(-100, 100, 1, w.strength, 10, `${updateFn}(${idx}, 'strength', this.value)`)}</div>
-                    ${sliderRow(0.1, 20, 0.1, w.freq, 4, `${updateFn}(${idx}, 'freq', this.value)`)}` : ''}
                 </div>
             `;
         }
@@ -3288,11 +3331,19 @@
             suppressRender = false;
         }
 
+        window.toggleWarpExpanded = function(isGlobal, idx) {
+            let w = isGlobal ? (state.global.warps && state.global.warps[idx]) : (state.selectedLayerId && state.layers.find(l=>l.id===state.selectedLayerId)?.params?.warps?.[idx]);
+            if (!w) return;
+            w.expanded = (w.expanded === undefined) ? false : !w.expanded;
+            if (isGlobal) renderGlobal();
+            else renderProps();
+        };
+
         window.addWarp = function() {
             let lay = state.layers.find(l=>l.id===state.selectedLayerId);
             if (!lay) return;
             if(!lay.params.warps) lay.params.warps = [];
-            lay.params.warps.push({type: 'none', strength: 10, freq: 4, visible: true});
+            lay.params.warps.push({type: 'none', strength: 10, freq: 4, visible: true, expanded: true});
             lay.isDirty = true;
             renderProps();
             requestRender();
@@ -3367,7 +3418,7 @@
         window.addGlobalWarp = function() {
             if (!state.global) state.global = freshGlobalSettings();
             if (!state.global.warps) state.global.warps = [];
-            state.global.warps.push({ type: 'none', strength: 10, freq: 4, visible: true });
+            state.global.warps.push({ type: 'none', strength: 10, freq: 4, visible: true, expanded: true });
             invalidateCaches();
             renderGlobal();
             requestRender();
