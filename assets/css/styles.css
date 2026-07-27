@@ -86,6 +86,73 @@ header {
     letter-spacing: 0.04em;
 }
 
+/* Flag Badge & Made in Ukraine indicator */
+.ua-flag-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    padding: 3px 8px;
+    border-radius: 5px;
+    cursor: default;
+    transition: var(--transition);
+    user-select: none;
+}
+
+.ua-flag-badge:hover {
+    background: rgba(255, 255, 255, 0.09);
+    border-color: rgba(255, 255, 255, 0.22);
+}
+
+.ua-flag-icon {
+    display: block;
+    border-radius: 2px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+    flex-shrink: 0;
+}
+
+.ua-flag-text {
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--text-secondary);
+    letter-spacing: 0.03em;
+}
+
+/* Language Switcher */
+.lang-switcher-container {
+    display: inline-flex;
+    align-items: center;
+    background: var(--input-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 5px;
+    padding: 2px;
+    gap: 2px;
+    margin-right: 4px;
+}
+
+.lang-btn {
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    font-size: 11px;
+    font-weight: 700;
+    padding: 3px 8px;
+    border-radius: 3px;
+    cursor: pointer;
+    transition: var(--transition);
+}
+
+.lang-btn:hover {
+    color: var(--text-color);
+}
+
+.lang-btn.active {
+    background: var(--primary-color);
+    color: #ffffff;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+}
+
 .header-buttons {
     display: flex;
     gap: 8px;

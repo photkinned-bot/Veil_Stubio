@@ -1,6 +1,393 @@
         const $ = id => document.getElementById(id);
         window.$ = $;
 
+        // --- i18n Localization Engine ---
+        let currentLang = localStorage.getItem('veil_language') || 'uk';
+
+        const translations = {
+            uk: {
+                app_title: "Veil Studio — Процедурний Генератор Текстур",
+                badge_pro: "PRO 1.0",
+                made_in_ukraine: "Зроблено в Україні",
+                made_in_ukraine_short: "UA",
+                btn_reset: "↺ Скинути",
+                btn_reset_title: "Скинути весь проєкт до початкового стану",
+                btn_save: "💾 Зберегти .veil",
+                btn_save_title: "Завантажити проєкт у файл .veil",
+                btn_open: "📂 Відкрити",
+                btn_open_title: "Відкрити файл проєкту (.veil / .json)",
+                btn_projects: "⚙️ Проєкти",
+                btn_projects_title: "Управління проєктом та слотами IDB",
+                btn_benchmark: "⚡ Бенчмарк",
+                btn_benchmark_title: "Запустити профілювальник та тест навантаження",
+                btn_export_png: "Експорт PNG",
+
+                panel_layers: "Шари",
+                btn_add_layer: "+ Шар",
+                res_label: "Роздільна здатність:",
+                render_label: "Рендер:",
+                fps_label: "FPS:",
+                scale_label: "Масштаб:",
+                autosave_title: "Клацніть для перегляду збережених проєктів",
+                autosave_active: "Автозбереження: Активне",
+                redo_title: "Повторити (Redo)",
+                undo_title: "Скасувати (Undo)",
+                zoom_in_title: "Збільшити",
+                zoom_out_title: "Зменшити",
+                rotate_left_title: "Повернути вліво",
+                rotate_right_title: "Повернути вправо",
+                reset_view_title: "Скинути перегляд",
+                res_selector_title: "Роздільна здатність канвасу",
+                fast_preview_title: "Тимчасово знижувати якість до 256x256 при перетягуванні повзунків",
+                fast_preview_label: "Швидкий прев'ю",
+                canvas_border_title: "Увімкнути / вимкнути рамку та ефекти навколо канвасу",
+                border_label: "Рамка",
+                border_intensity_title: "Натисніть для налаштування інтенсивності",
+                border_intensity_label: "Інтенсивність",
+
+                title_layer_props: "Властивості шару",
+                title_global_props: "Глобальні ефекти",
+                title_tiling_props: "Безшовний Тайлінг PRO",
+                tab_layer: "Шар",
+                tab_global: "Глобальні",
+                tab_tiling: "Тайлінг",
+
+                confirm_title: "Підтвердження",
+                btn_cancel: "Скасувати",
+                btn_confirm: "Підтвердити",
+
+                png_title: "Експорт PNG",
+                png_res: "Роздільна здатність",
+                png_instruction: "Затисніть картинку та виберіть \"Зберегти в Фото\" (на мобільному) або ПКМ -> \"Зберегти картинку як\" (на ПК).",
+                png_rendering: "Рендеринг...",
+                btn_close: "Закрити",
+
+                pm_title: "Менеджер проєктів Veil Studio",
+                pm_tab_file: "💾 Файл .veil",
+                pm_tab_idb: "⚡ Локальні слоти",
+                pm_tab_text: "📝 Текстовий код",
+                pm_rec_badge: "⭐ РЕКОМЕНДОВАНИЙ СПОСІБ",
+                pm_rec_desc: "Зберігайте проєкт у компактний файл .veil на диск. Всі шари, геометрія та намальовані маски зберігаються без втрат і завантажуються миттєво.",
+                pm_download_veil: "Завантажити файл проєкту (.veil)",
+                pm_open_veil: "Відкрити файл проєкту (.veil / .json)",
+                pm_slot_placeholder: "Назва слоту (необов'язково)...",
+                pm_quick_save: "⚡ Швидке збереження",
+                pm_saved_slots: "Збережені слоти у браузері",
+                pm_json_code: "Код поточного проєкту (JSON)",
+                pm_copy_clipboard: "Скопіювати у буфер",
+                pm_paste_label: "Вставити код проєкту з буфера",
+                pm_paste_placeholder: "Вставте JSON код сюди...",
+                pm_read_clipboard: "📋 Читати з буфера",
+                pm_load: "Завантажити",
+
+                bench_title: "Профілювальник & Тест Навантаження",
+                bench_fps_label: "ЧАС КАДРУ (FPS)",
+                bench_mem_label: "ПАМ'ЯТЬ HEAP",
+                bench_opt_label: "ОПТИМІЗАЦІЇ",
+                bench_opt_active: "6/6 Активні",
+                bench_run_title: "Автоматичне стрес-тестування продуктивності",
+                bench_run_desc: "Запускає комплексний аналіз: тест швидкості на 256/512/1024, навантаження 5/10/20 шарів, та 30 швидких деформацій для оцінки використання пам'яті.",
+                bench_run_btn: "🚀 Запустити Повний Стрес-Тест",
+                bench_report_title: "ЗВІТ ПРОДУКТИВНОСТІ",
+                bench_grade: "ОЦІНКА: A+",
+                bench_res_label: "ЧАС РЕНДЕРУ ПО РОЗДІЛЬНОСТІ",
+                bench_multi_label: "БАГАТОШАРОВЕ НАВАНТАЖЕННЯ",
+                bench_stress_label: "СТРЕС-ТЕСТ ДИНАМІЧНОЇ ЗМІНИ 30 ПАРАМЕТРІВ",
+                bench_success_footer: "✓ Усі критичні алгоритми (Voronoi bitwise hash, sliding box blur, kernel pooling, TypedArray fast-path) підтверджено та оптимізовано!",
+
+                layer_default_name: "Шар 1",
+                new_layer_name: "Новий шар",
+                copy_suffix: "(Копія)",
+                acc_algo: "Алгоритм та Генератор",
+                acc_transform: "Трансформація та Масштаб",
+                acc_fx: "Локальні Ефекти",
+                acc_warps: "Деформатори (Warps)",
+                acc_gtform: "Глобальна Трансформація",
+                acc_gwarps: "Глобальні Деформатори (Warps)",
+                acc_gtiling: "Глобальний Тайлінг",
+                acc_gfx: "Глобальна Корекція",
+                reset_default_title: "Скинути за замовчуванням ({def})",
+                reset_project_confirm: "Скинути ВЕСЬ проєкт до початкового стану? Усі шари та глобальні налаштування буде втрачено.",
+                reset_layer_confirm: "Скинути всі параметри шару \"{name}\" до значень за замовчуванням?",
+                reset_global_confirm: "Скинути всі глобальні налаштування (корекції, трансформацію, тайлінг) до значень за замовчуванням?",
+                drag_layer_tooltip: "Затисніть мишою або пальцем та перетягніть шар",
+                hide_layer_tooltip: "Приховати шар",
+                show_layer_tooltip: "Показати шар",
+                mask_no_target_tooltip: "Маска: немає шару знизу — не відображається",
+                mask_target_tooltip: "Цей шар працює як маска для шару знизу",
+                mask_badge: "МАСКА",
+                use_as_mask_tooltip: "Використати як маску",
+                duplicate_layer_tooltip: "Дублювати шар",
+                delete_layer_tooltip: "Видалити шар",
+                lbl_layer_name: "Назва шару",
+                btn_reset_layer: "↺ Скинути шар",
+                blend_mode_label: "Режим накладання (Blend)",
+                opacity_label: "Непрозорість (%)",
+
+                "Розмір пензля": "Розмір пензля",
+                "Інтервал (Крок)": "Інтервал (Крок)",
+                "Сила (Непрозорість %)": "Сила (Непрозорість %)",
+                "Зона м'якості": "Зона м'якості",
+                "Спад градієнта": "Спад градієнта",
+                "Кут нахилу пензля": "Кут нахилу пензля",
+                "Форма (Стиснення)": "Форма (Стиснення)",
+                "Частота": "Частота",
+                "Фаза": "Фаза",
+                "К-ть Джерел": "К-ть Джерел",
+                "Симетрія": "Симетрія",
+                "Товщина лінії": "Товщина лінії",
+                "Кількість променів": "Кількість променів",
+                "Кількість кілець": "Кількість кілець",
+                "Товщина кілець": "Товщина кілець",
+                "Товщина променів": "Товщина променів",
+                "Wobble (Хвилювання)": "Wobble (Хвилювання)",
+                "Jitter (Джиттер)": "Jitter (Джиттер)",
+                "Fractal (Фрактал)": "Fractal (Фрактал)",
+                "Хвиля кілець: Амплітуда": "Хвиля кілець: Амплітуда",
+                "Хвиля кілець: Частота": "Хвиля кілець: Частота",
+                "Хвиля променів: Амплітуда": "Хвиля променів: Амплітуда",
+                "Хвиля променів: Частота": "Хвиля променів: Частота",
+                "Центр X (Position X)": "Центр X (Position X)",
+                "Центр Y (Position Y)": "Центр Y (Position Y)",
+                "Пропорції / Еліпсис": "Пропорції / Еліпсис",
+                "Середня точка (Midpoint)": "Середня точка (Midpoint)",
+                "Октави": "Октави",
+                "Кількість рукавів (Arms)": "Кількість рукавів (Arms)",
+                "Фаза зсуву": "Фаза зсуву",
+                "Зсув X": "Зсув X",
+                "Зсув Y": "Зсув Y",
+                "Масштаб Шару (Zoom)": "Масштаб Шару (Zoom)",
+                "Кут обертання (−180° … +180°)": "Кут обертання (−180° … +180°)",
+                "Яскравість шару": "Яскравість шару",
+                "Контраст шару": "Контраст шару",
+                "Розмиття (px)": "Розмиття (px)",
+                "Масштаб (Zoom)": "Масштаб (Zoom)",
+                "Поворот": "Поворот",
+                "Глобальна Яскравість": "Глобальна Яскравість",
+                "Глобальний Контраст": "Глобальний Контраст",
+                "Глобальне Розмиття": "Глобальне Розмиття",
+                "Глобальна Віньєтка": "Глобальна Віньєтка",
+                "Глобальне Зерно / Шум": "Глобальне Зерно / Шум",
+                "Глобальна Гама": "Глобальна Гама",
+                "Контраст": "Контраст",
+                "Гамма": "Гамма"
+            },
+            en: {
+                app_title: "Veil Studio — Procedural Texture Generator",
+                badge_pro: "PRO 1.0",
+                made_in_ukraine: "Made in Ukraine",
+                made_in_ukraine_short: "UA",
+                btn_reset: "↺ Reset",
+                btn_reset_title: "Reset entire project to default state",
+                btn_save: "💾 Save .veil",
+                btn_save_title: "Download project to .veil file",
+                btn_open: "📂 Open",
+                btn_open_title: "Open project file (.veil / .json)",
+                btn_projects: "⚙️ Projects",
+                btn_projects_title: "Manage project & IDB slots",
+                btn_benchmark: "⚡ Benchmark",
+                btn_benchmark_title: "Run profiler and stress test",
+                btn_export_png: "Export PNG",
+
+                panel_layers: "Layers",
+                btn_add_layer: "+ Layer",
+                res_label: "Resolution:",
+                render_label: "Render:",
+                fps_label: "FPS:",
+                scale_label: "Scale:",
+                autosave_title: "Click to view saved projects",
+                autosave_active: "Autosave: Active",
+                redo_title: "Redo",
+                undo_title: "Undo",
+                zoom_in_title: "Zoom In",
+                zoom_out_title: "Zoom Out",
+                rotate_left_title: "Rotate Left",
+                rotate_right_title: "Rotate Right",
+                reset_view_title: "Reset View",
+                res_selector_title: "Canvas Resolution",
+                fast_preview_title: "Temporarily reduce resolution to 256x256 while dragging sliders",
+                fast_preview_label: "Fast Preview",
+                canvas_border_title: "Toggle border and effects around canvas",
+                border_label: "Border",
+                border_intensity_title: "Click to adjust intensity",
+                border_intensity_label: "Intensity",
+
+                title_layer_props: "Layer Properties",
+                title_global_props: "Global Effects",
+                title_tiling_props: "Seamless Tiling PRO",
+                tab_layer: "Layer",
+                tab_global: "Global",
+                tab_tiling: "Tiling",
+
+                confirm_title: "Confirmation",
+                btn_cancel: "Cancel",
+                btn_confirm: "Confirm",
+
+                png_title: "Export PNG",
+                png_res: "Resolution",
+                png_instruction: "Long press the image and select 'Save to Photos' (mobile) or Right-click -> 'Save image as' (PC).",
+                png_rendering: "Rendering...",
+                btn_close: "Close",
+
+                pm_title: "Veil Studio Project Manager",
+                pm_tab_file: "💾 .veil File",
+                pm_tab_idb: "⚡ Local Slots",
+                pm_tab_text: "📝 Text Code",
+                pm_rec_badge: "⭐ RECOMMENDED METHOD",
+                pm_rec_desc: "Save your project as a compact .veil file to disk. All layers, geometry, and drawn masks are saved lossless and load instantly.",
+                pm_download_veil: "Download Project File (.veil)",
+                pm_open_veil: "Open Project File (.veil / .json)",
+                pm_slot_placeholder: "Slot name (optional)...",
+                pm_quick_save: "⚡ Quick Save",
+                pm_saved_slots: "Saved slots in browser",
+                pm_json_code: "Current Project Code (JSON)",
+                pm_copy_clipboard: "Copy to Clipboard",
+                pm_paste_label: "Paste project code from clipboard",
+                pm_paste_placeholder: "Paste JSON code here...",
+                pm_read_clipboard: "📋 Read Clipboard",
+                pm_load: "Load",
+
+                bench_title: "Profiler & Stress Test Benchmark",
+                bench_fps_label: "FRAME TIME (FPS)",
+                bench_mem_label: "HEAP MEMORY",
+                bench_opt_label: "OPTIMIZATIONS",
+                bench_opt_active: "6/6 Active",
+                bench_run_title: "Automated Performance Stress Testing",
+                bench_run_desc: "Runs comprehensive suite: speed test at 256/512/1024, load test with 5/10/20 layers, and 30 rapid deformer steps to evaluate memory usage.",
+                bench_run_btn: "🚀 Run Full Stress Test",
+                bench_report_title: "PERFORMANCE REPORT",
+                bench_grade: "GRADE: A+",
+                bench_res_label: "RENDER TIME BY RESOLUTION",
+                bench_multi_label: "MULTI-LAYER LOAD",
+                bench_stress_label: "DYNAMIC STRESS TEST (30 PARAMS)",
+                bench_success_footer: "✓ All critical algorithms (Voronoi bitwise hash, sliding box blur, kernel pooling, TypedArray fast-path) verified and optimized!",
+
+                layer_default_name: "Layer 1",
+                new_layer_name: "New Layer",
+                copy_suffix: "(Copy)",
+                acc_algo: "Algorithm & Generator",
+                acc_transform: "Transform & Scale",
+                acc_fx: "Local Effects",
+                acc_warps: "Deformers (Warps)",
+                acc_gtform: "Global Transform",
+                acc_gwarps: "Global Deformers (Warps)",
+                acc_gtiling: "Global Tiling",
+                acc_gfx: "Global Correction",
+                reset_default_title: "Reset to default ({def})",
+                reset_project_confirm: "Reset ENTIRE project to initial state? All layers and global settings will be lost.",
+                reset_layer_confirm: "Reset all parameters of layer \"{name}\" to defaults?",
+                reset_global_confirm: "Reset all global settings (corrections, transform, tiling) to default values?",
+                drag_layer_tooltip: "Click and drag layer",
+                hide_layer_tooltip: "Hide layer",
+                show_layer_tooltip: "Show layer",
+                mask_no_target_tooltip: "Mask: no target layer below",
+                mask_target_tooltip: "This layer works as a mask for layer below",
+                mask_badge: "MASK",
+                use_as_mask_tooltip: "Use as mask",
+                duplicate_layer_tooltip: "Duplicate layer",
+                delete_layer_tooltip: "Delete layer",
+                lbl_layer_name: "Layer Name",
+                btn_reset_layer: "↺ Reset Layer",
+                blend_mode_label: "Blend Mode",
+                opacity_label: "Opacity (%)",
+
+                "Розмір пензля": "Brush Size",
+                "Інтервал (Крок)": "Interval / Spacing",
+                "Сила (Непрозорість %)": "Strength (Opacity %)",
+                "Зона м'якості": "Softness Zone",
+                "Спад градієнта": "Gradient Falloff",
+                "Кут нахилу пензля": "Brush Angle",
+                "Форма (Стиснення)": "Shape (Squash)",
+                "Частота": "Frequency",
+                "Фаза": "Phase",
+                "К-ть Джерел": "Source Count",
+                "Симетрія": "Symmetry",
+                "Товщина лінії": "Line Width",
+                "Кількість променів": "Ray Count",
+                "Кількість кілець": "Ring Count",
+                "Товщина кілець": "Ring Thickness",
+                "Товщина променів": "Ray Thickness",
+                "Wobble (Хвилювання)": "Wobble",
+                "Jitter (Джиттер)": "Jitter",
+                "Fractal (Фрактал)": "Fractal",
+                "Хвиля кілець: Амплітуда": "Ring Wave: Amplitude",
+                "Хвиля кілець: Частота": "Ring Wave: Frequency",
+                "Хвиля променів: Амплітуда": "Ray Wave: Amplitude",
+                "Хвиля променів: Частота": "Ray Wave: Frequency",
+                "Центр X (Position X)": "Center X",
+                "Центр Y (Position Y)": "Center Y",
+                "Пропорції / Еліпсис": "Aspect Ratio / Ellipsis",
+                "Середня точка (Midpoint)": "Midpoint",
+                "Октави": "Octaves",
+                "Кількість рукавів (Arms)": "Arms Count",
+                "Фаза зсуву": "Shift Phase",
+                "Зсув X": "Offset X",
+                "Зсув Y": "Offset Y",
+                "Масштаб Шару (Zoom)": "Layer Scale (Zoom)",
+                "Кут обертання (−180° … +180°)": "Rotation Angle (−180° … +180°)",
+                "Яскравість шару": "Layer Brightness",
+                "Контраст шару": "Layer Contrast",
+                "Розмиття (px)": "Blur (px)",
+                "Масштаб (Zoom)": "Global Zoom",
+                "Поворот": "Global Rotation",
+                "Глобальна Яскравість": "Global Brightness",
+                "Глобальний Контраст": "Global Contrast",
+                "Глобальне Розмиття": "Global Blur",
+                "Глобальна Віньєтка": "Global Vignette",
+                "Глобальне Зерно / Шум": "Global Grain / Noise",
+                "Глобальна Гама": "Global Gamma",
+                "Контраст": "Contrast",
+                "Гамма": "Gamma"
+            }
+        };
+
+        function t(key, replacements) {
+            let str = (translations[currentLang] && translations[currentLang][key]) ||
+                      (translations.uk && translations.uk[key]) || key;
+            if (replacements) {
+                for (const [k, v] of Object.entries(replacements)) {
+                    str = str.replace(new RegExp(`\\{${k}\\}`, 'g'), v);
+                }
+            }
+            return str;
+        }
+
+        function setLanguage(lang) {
+            if (lang !== 'uk' && lang !== 'en') lang = 'uk';
+            currentLang = lang;
+            localStorage.setItem('veil_language', lang);
+            document.documentElement.lang = lang;
+
+            const btnUA = $('langBtnUA');
+            const btnEN = $('langBtnEN');
+            if (btnUA && btnEN) {
+                btnUA.classList.toggle('active', lang === 'uk');
+                btnEN.classList.toggle('active', lang === 'en');
+            }
+
+            document.querySelectorAll('[data-i18n]').forEach(el => {
+                const k = el.getAttribute('data-i18n');
+                if (k) el.textContent = t(k);
+            });
+
+            document.querySelectorAll('[data-i18n-title]').forEach(el => {
+                const k = el.getAttribute('data-i18n-title');
+                if (k) el.title = t(k);
+            });
+
+            document.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
+                const k = el.getAttribute('data-i18n-placeholder');
+                if (k) el.placeholder = t(k);
+            });
+
+            if (typeof renderLayers === 'function') renderLayers();
+            if (typeof renderStickyHeader === 'function') renderStickyHeader();
+            if (typeof currentTab !== 'undefined' && typeof switchRightTab === 'function') switchRightTab(currentTab);
+        }
+
+        window.t = t;
+        window.setLanguage = setLanguage;
+
         const viewport = {
             scale: 1, angle: 0, x: 0, y: 0, isDragging: false, startX: 0, startY: 0,
             update: function() {
@@ -2901,20 +3288,20 @@
             headerEl.innerHTML = `
                 <div style="display:flex; justify-content:space-between; align-items:flex-end; gap:8px; margin-bottom:8px;">
                     <div style="flex:1;">
-                        <label class="property-label" style="font-size:10px; margin-bottom:2px;">Назва шару</label>
+                        <label class="property-label" style="font-size:10px; margin-bottom:2px;">${t('lbl_layer_name')}</label>
                         <input type="text" id="sticky_lay_name" value="${lay.name}" onchange="lay.name=this.value;renderLayers();renderStickyHeader();" class="form-control" style="height:30px; font-size:12px;">
                     </div>
-                    <button id="sticky_lay_reset" onclick="resetLayer(${layerIdx})" class="btn btn-secondary" style="height:30px; padding:0 8px; font-size:11px; white-space:nowrap; flex-shrink:0;" title="Скинути ВСІ параметри цього шару">↺ Скинути шар</button>
+                    <button id="sticky_lay_reset" onclick="resetLayer(${layerIdx})" class="btn btn-secondary" style="height:30px; padding:0 8px; font-size:11px; white-space:nowrap; flex-shrink:0;" title="${t('btn_reset_layer')}">${t('btn_reset_layer')}</button>
                 </div>
                 <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; align-items:end;">
                     <div>
-                        <label class="property-label" style="font-size:10px; margin-bottom:2px;">Режим накладання (Blend)</label>
+                        <label class="property-label" style="font-size:10px; margin-bottom:2px;">${t('blend_mode_label')}</label>
                         <select id="sticky_lay_blend" onchange="upd('blendMode',this.value,false)" class="form-control" style="height:30px; font-size:11px; width:100%;">
                             ${['normal','multiply','screen','overlay','difference','colorburn','colordodge','heightblend','exclusion','hardlight','lineardodge','linearburn'].map(o=>`<option value="${o}" ${lay.blendMode===o?'selected':''}>${o}</option>`).join('')}
                         </select>
                     </div>
                     <div>
-                        <label class="property-label" style="font-size:10px; margin-bottom:2px;">Непрозорість (%)</label>
+                        <label class="property-label" style="font-size:10px; margin-bottom:2px;">${t('opacity_label')}</label>
                         <div style="display:flex; gap:4px; align-items:center;">
                             <input type="range" id="rng_lay_opacity" min="0" max="100" step="1" value="${lay.opacity}" data-no-random oninput="$('num_lay_opacity').value=this.value; upd('opacity',this.value,false)" onchange="commitHistorySnapshot();" ondblclick="resetSliderEl(this,100)" style="height:4px; flex:1;">
                             <input type="number" class="num-input" id="num_lay_opacity" step="1" value="${lay.opacity}" oninput="$('rng_lay_opacity').value=this.value; upd('opacity',this.value,false)" onchange="commitHistorySnapshot();" ondblclick="resetSliderEl(this,100)" style="width:48px; padding:2px; font-size:11px; flex-shrink:0;">
@@ -2933,7 +3320,7 @@
             renderStickyHeader();
 
             if (tab === 'tiling') {
-                $('rightPanelTitle').innerText = "Безшовний Тайлінг PRO";
+                $('rightPanelTitle').innerText = t('title_tiling_props');
                 if (!tilingState.hasImage) {
                     captureProjectToTiling();
                 } else {
@@ -2941,7 +3328,7 @@
                     requestRender();
                 }
             } else {
-                $('rightPanelTitle').innerText = tab==='layer'?"Властивості шару":"Глобальні ефекти";
+                $('rightPanelTitle').innerText = tab==='layer'? t('title_layer_props') : t('title_global_props');
                 if (tilingState.stamp_enable) {
                     toggleTilingStamp(false);
                 }
@@ -3003,8 +3390,8 @@
         function renderLayers() {
             let { maskTargetIndex, clippedByMasks } = computeMaskRelationships();
             $('layersList').innerHTML = state.layers.map((l,i) => {
-                let isMasked = !!clippedByMasks[i]; // цей шар кліпається маскою(ами), що йдуть над ним
-                let maskHasNoTarget = l.isMask && maskTargetIndex[i] === -1; // маска в самому низу — не відображається
+                let isMasked = !!clippedByMasks[i];
+                let maskHasNoTarget = l.isMask && maskTargetIndex[i] === -1;
                 return `
                 <div class="layer-card ${l.id===state.selectedLayerId?'active':''} ${l.isMask?'is-mask':''} ${maskHasNoTarget?'is-mask-empty':''} ${isMasked?'is-masked-target':''} ${!l.visible?'is-hidden':''}" 
                      data-layer-id="${l.id}" 
@@ -3012,16 +3399,16 @@
                      onclick="state.selectedLayerId='${l.id}';switchRightTab('layer');renderLayers();renderProps();">
                     <div class="layer-row-top">
                         <div class="layer-info">
-                            <span class="drag-handle" title="Затисніть мишою або пальцем та перетягніть шар" onpointerdown="handleLayerPointerDown(event, ${i})" onclick="event.stopPropagation()">⣿</span>
-                            ${isMasked?'<span class="mask-link-icon" title="Кліпується маскою зверху">⤷</span>':''}
-                            <button onclick="event.stopPropagation(); toggleLayerVisibility(${i})" class="layer-btn ${l.visible?'layer-visible':'layer-hidden'}" title="${l.visible?'Приховати шар':'Показати шар'}" style="padding:0; margin-right:4px;">${l.visible?'👁':'🕶'}</button>
+                            <span class="drag-handle" title="${t('drag_layer_tooltip')}" onpointerdown="handleLayerPointerDown(event, ${i})" onclick="event.stopPropagation()">⣿</span>
+                            ${isMasked?`<span class="mask-link-icon" title="${t('mask_target_tooltip')}">⤷</span>`:''}
+                            <button onclick="event.stopPropagation(); toggleLayerVisibility(${i})" class="layer-btn ${l.visible?'layer-visible':'layer-hidden'}" title="${l.visible?t('hide_layer_tooltip'):t('show_layer_tooltip')}" style="padding:0; margin-right:4px;">${l.visible?'👁':'🕶'}</button>
                             <span class="layer-name">${l.name}</span>
-                            ${l.isMask?`<span class="mask-badge" title="${maskHasNoTarget?'Маска: немає шару знизу — не відображається':'Цей шар працює як маска для шару знизу'}">МАСКА</span>`:''}
+                            ${l.isMask?`<span class="mask-badge" title="${maskHasNoTarget?t('mask_no_target_tooltip'):t('mask_target_tooltip')}">${t('mask_badge')}</span>`:''}
                         </div>
                         <div class="layer-controls">
-                            <button onclick="event.stopPropagation(); toggleMask(${i})" class="layer-btn ${l.isMask?'layer-btn-mask-active':''}" title="Використати як маску">🎭</button>
-                            <button onclick="event.stopPropagation(); duplicateLayer(${i})" class="layer-btn" title="Дублювати шар">📋</button>
-                            <button onclick="event.stopPropagation(); deleteLayer(${i})" class="layer-btn layer-btn-delete">✕</button>
+                            <button onclick="event.stopPropagation(); toggleMask(${i})" class="layer-btn ${l.isMask?'layer-btn-mask-active':''}" title="${t('use_as_mask_tooltip')}">🎭</button>
+                            <button onclick="event.stopPropagation(); duplicateLayer(${i})" class="layer-btn" title="${t('duplicate_layer_tooltip')}">📋</button>
+                            <button onclick="event.stopPropagation(); deleteLayer(${i})" class="layer-btn layer-btn-delete" title="${t('delete_layer_tooltip')}">✕</button>
                         </div>
                     </div>
                     <div class="layer-meta"><span>${l.generatorType.toUpperCase()}</span><span>${l.blendMode.toUpperCase()} | ${l.opacity}%</span></div>
@@ -3071,7 +3458,7 @@
 
         function addLayer(){
             let id='l'+Date.now();
-            state.layers.unshift({id, name:'Новий шар', visible:true, opacity:100, blendMode:'normal', generatorType:'simplex', isMask:false, params: freshLayerParams()});
+            state.layers.unshift({id, name: t('new_layer_name'), visible:true, opacity:100, blendMode:'normal', generatorType:'simplex', isMask:false, params: freshLayerParams()});
             state.selectedLayerId=id; 
             commitHistorySnapshot();
             renderLayers(); switchRightTab('layer'); requestRender();
@@ -3081,7 +3468,7 @@
             let orig = state.layers[i];
             let newL = JSON.parse(JSON.stringify(orig));
             newL.id = 'l' + Date.now();
-            newL.name = orig.name + ' (Копія)';
+            newL.name = orig.name + ' ' + t('copy_suffix');
             state.layers.splice(i, 0, newL);
             state.selectedLayerId = newL.id; 
             commitHistorySnapshot();
@@ -3148,7 +3535,7 @@
                 console.error("resetLayer error: Layer not found at index", i);
                 return;
             }
-            customConfirm(`Скинути всі параметри шару "${lay.name}" до значень за замовчуванням?`, () => {
+            customConfirm(t('reset_layer_confirm', {name: lay.name}), () => {
                 console.log("resetLayer confirmed for:", lay.name);
                 lay.params = freshLayerParams();
                 lay.blendMode = 'normal';
@@ -3170,7 +3557,7 @@
         window.resetLayer = resetLayer;
         function resetGlobalSettings() {
             console.log("resetGlobalSettings called");
-            customConfirm("Скинути всі глобальні налаштування (корекції, трансформацію, тайлінг) до значень за замовчуванням?", () => {
+            customConfirm(t('reset_global_confirm'), () => {
                 console.log("resetGlobalSettings confirmed");
                 state.global = freshGlobalSettings();
                 invalidateCaches();
@@ -3179,11 +3566,11 @@
         }
         function resetProject() {
             console.log("resetProject called");
-            customConfirm("Скинути ВЕСЬ проєкт до початкового стану? Усі шари та глобальні налаштування буде втрачено.", () => {
+            customConfirm(t('reset_project_confirm'), () => {
                 console.log("resetProject confirmed");
                 let id = 'l'+Date.now();
                 setState({
-                    layers: [{ id, name:'Шар 1', visible:true, opacity:100, blendMode:'normal', generatorType:'simplex', isMask:false, params: freshLayerParams() }],
+                    layers: [{ id, name: t('layer_default_name'), visible:true, opacity:100, blendMode:'normal', generatorType:'simplex', isMask:false, params: freshLayerParams() }],
                     selectedLayerId: id,
                     global: freshGlobalSettings()
                 });
@@ -3486,11 +3873,11 @@
             if (def === undefined) def = val;
             let nr = noRandom ? ' data-no-random' : '';
             return `<div class="property-group">
-                <label class="property-label">${label}</label>
+                <label class="property-label">${t(label)}</label>
                 <div style="display:flex; gap:6px; align-items:center;">
                     <input type="range" id="rng_${id}" min="${min}" max="${max}" step="${step}" value="${val}"${nr} oninput="$('num_${id}').value=this.value; upd('${key}',this.value,${!!isGlobal})" onchange="commitHistorySnapshot();" ondblclick="resetSliderEl(this,${def})">
                     <input type="number" class="num-input" id="num_${id}" step="${step}" value="${val}" oninput="$('rng_${id}').value=this.value; upd('${key}',this.value,${!!isGlobal})" onchange="commitHistorySnapshot();" ondblclick="resetSliderEl(this,${def})">
-                    <button type="button" class="reset-btn" title="Скинути за замовчуванням (${def})" onclick="resetSliderEl($('rng_${id}'),${def})">↺</button>
+                    <button type="button" class="reset-btn" title="${t('reset_default_title', {def})}" onclick="resetSliderEl($('rng_${id}'),${def})">↺</button>
                 </div>
             </div>`;
         }
@@ -4072,10 +4459,10 @@
             `;
 
             let blockMeta = {
-                algo: { title: "Алгоритм та Генератор", icon: "🎨" },
-                transform: { title: "Трансформація та Масштаб", icon: "📐" },
-                fx: { title: "Локальні Ефекти", icon: "✨" },
-                warps: { title: "Деформатори (Warps)", icon: "🌀" }
+                algo: { title: t("acc_algo"), icon: "🎨" },
+                transform: { title: t("acc_transform"), icon: "📐" },
+                fx: { title: t("acc_fx"), icon: "✨" },
+                warps: { title: t("acc_warps"), icon: "🌀" }
             };
 
             // Build panel HTML by rendering accordion blocks in current order
@@ -4222,10 +4609,10 @@
             `;
 
             let blockMeta = {
-                transform: { title: "Глобальна Трансформація", icon: "🌐" },
-                warps: { title: "Глобальні Деформатори (Warps)", icon: "🌀" },
-                tiling: { title: "Глобальний Тайлінг", icon: "🔁" },
-                fx: { title: "Глобальна Корекція", icon: "🎚️" }
+                transform: { title: t("acc_gtform"), icon: "🌐" },
+                warps: { title: t("acc_gwarps"), icon: "🌀" },
+                tiling: { title: t("acc_gtiling"), icon: "🔁" },
+                fx: { title: t("acc_gfx"), icon: "🎚️" }
             };
 
             let html = accordionConfig.global.order.map(key => {
@@ -4604,13 +4991,13 @@
             return `
                 <div class="control-group">
                     <div class="control-label">
-                        <span>${label}</span>
+                        <span>${t(label)}</span>
                         <span class="control-value" id="tiling_val_${key}">${val}${suffix}</span>
                     </div>
                     <div style="display:flex; gap:6px; align-items:center;">
                         <input type="range" id="rng_tiling_${key}" min="${min}" max="${max}" step="${step}" value="${val}" oninput="updTiling('${key}', this.value, '${suffix}'); if ($('num_tiling_${key}')) $('num_tiling_${key}').value=this.value;">
                         <input type="number" class="num-input" id="num_tiling_${key}" min="${min}" max="${max}" step="${step}" value="${val}" oninput="updTiling('${key}', this.value, '${suffix}'); if ($('rng_tiling_${key}')) $('rng_tiling_${key}').value=this.value;">
-                        <button type="button" class="reset-btn" title="Скинути за замовчуванням (${defVal})" onclick="updTiling('${key}', ${defVal}, '${suffix}'); if ($('rng_tiling_${key}')) $('rng_tiling_${key}').value=${defVal}; if ($('num_tiling_${key}')) $('num_tiling_${key}').value=${defVal};">↺</button>
+                        <button type="button" class="reset-btn" title="${t('reset_default_title', {def: defVal})}" onclick="updTiling('${key}', ${defVal}, '${suffix}'); if ($('rng_tiling_${key}')) $('rng_tiling_${key}').value=${defVal}; if ($('num_tiling_${key}')) $('num_tiling_${key}').value=${defVal};">↺</button>
                     </div>
                 </div>
             `;
@@ -7416,6 +7803,10 @@
                 canvas.addEventListener('selectstart', e => e.preventDefault());
                 canvas.addEventListener('dragstart', e => e.preventDefault());
             }
+
+            // Restore saved language or default to 'uk'
+            let initialLang = localStorage.getItem('veil_language') || 'uk';
+            setLanguage(initialLang);
 
             // Автоматичне відновлення автозбереженої чернетки під час старту
             let restoredDraft = await restoreAutoSaveDraftOnBoot();

@@ -3,22 +3,33 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Veil Studio — Процедурний Генератор Текстур</title>
+    <title data-i18n="app_title">Veil Studio — Процедурний Генератор Текстур</title>
     <link rel="stylesheet" href="assets/css/styles.css">
 </head>
 <body>
     <header>
         <div class="logo-area">
             <h1 class="logo-title">VEIL STUDIO</h1>
-            <span class="badge">PRO 2.0</span>
+            <span class="badge" data-i18n="badge_pro">PRO 1.0</span>
+            <div class="ua-flag-badge" id="uaFlagBadge" title="Зроблено в Україні" data-i18n-title="made_in_ukraine">
+                <svg class="ua-flag-icon" width="20" height="14" viewBox="0 0 20 14" rx="2" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <rect width="20" height="7" fill="#0057B7"/>
+                    <rect y="7" width="20" height="7" fill="#FFD700"/>
+                </svg>
+                <span class="ua-flag-text" data-i18n="made_in_ukraine_short">UA</span>
+            </div>
         </div>
         <div class="header-buttons">
-            <button onclick="resetProject()" class="btn btn-secondary" title="Скинути весь проєкт до початкового стану">↺ Скинути</button>
-            <button onclick="exportVeilFile()" class="btn btn-secondary" title="Завантажити проєкт у файл .veil">💾 Зберегти .veil</button>
-            <button onclick="triggerVeilImport()" class="btn btn-secondary" title="Відкрити файл проєкту (.veil / .json)">📂 Відкрити</button>
-            <button onclick="openProjectManagerModal()" class="btn btn-secondary" title="Управління проєктом та слотами IDB">⚙️ Проєкти</button>
-            <button onclick="openBenchmarkModal()" class="btn btn-secondary" style="border-color:rgba(16, 185, 129, 0.4); color:#10b981; background:rgba(16, 185, 129, 0.08);" title="Запустити профілювальник та тест навантаження">⚡ Бенчмарк</button>
-            <button onclick="openPNGExportModal()" class="btn btn-primary">Експорт PNG</button>
+            <div class="lang-switcher-container">
+                <button id="langBtnUA" class="lang-btn active" onclick="setLanguage('uk')" title="Українська мова">UA</button>
+                <button id="langBtnEN" class="lang-btn" onclick="setLanguage('en')" title="English language">EN</button>
+            </div>
+            <button onclick="resetProject()" class="btn btn-secondary" title="Скинути весь проєкт до початкового стану" data-i18n="btn_reset" data-i18n-title="btn_reset_title">↺ Скинути</button>
+            <button onclick="exportVeilFile()" class="btn btn-secondary" title="Завантажити проєкт у файл .veil" data-i18n="btn_save" data-i18n-title="btn_save_title">💾 Зберегти .veil</button>
+            <button onclick="triggerVeilImport()" class="btn btn-secondary" title="Відкрити файл проєкту (.veil / .json)" data-i18n="btn_open" data-i18n-title="btn_open_title">📂 Відкрити</button>
+            <button onclick="openProjectManagerModal()" class="btn btn-secondary" title="Управління проєктом та слотами IDB" data-i18n="btn_projects" data-i18n-title="btn_projects_title">⚙️ Проєкти</button>
+            <button onclick="openBenchmarkModal()" class="btn btn-secondary" style="border-color:rgba(16, 185, 129, 0.4); color:#10b981; background:rgba(16, 185, 129, 0.08);" title="Запустити профілювальник та тест навантаження" data-i18n="btn_benchmark" data-i18n-title="btn_benchmark_title">⚡ Бенчмарк</button>
+            <button onclick="openPNGExportModal()" class="btn btn-primary" data-i18n="btn_export_png">Експорт PNG</button>
             <input type="file" id="importVeilFile" style="display:none;" accept=".veil,.json" onchange="importProjectFile(event)">
         </div>
     </header>
@@ -26,8 +37,8 @@
     <div class="main-container">
         <aside>
             <div class="panel-header">
-                <h2 class="panel-title">Шари</h2>
-                <button onclick="addLayer()" class="btn btn-primary" style="padding:4px 10px; font-size:11px;">+ Шар</button>
+                <h2 class="panel-title" data-i18n="panel_layers">Шари</h2>
+                <button onclick="addLayer()" class="btn btn-primary" style="padding:4px 10px; font-size:11px;" data-i18n="btn_add_layer">+ Шар</button>
             </div>
             <div id="layersList" class="layers-list"></div>
         </aside>
@@ -35,24 +46,24 @@
 
         <main>
             <div class="canvas-meta">
-                <div>Роздільна здатність: <span style="color:#f4f4f5;" id="resolutionInfo">512 × 512</span></div>
-                <div>Рендер: <span id="renderTime" style="color:#f59e0b;">0.0 ms</span></div>
-                <div>FPS: <span id="fpsInfo" style="color:#10b981;">60 FPS</span></div>
-                <div>Масштаб: <span id="viewScaleInfo" style="color:#3b82f6;">100%</span></div>
-                <div id="autosaveMeta" style="display:flex; align-items:center; gap:6px; margin-left:auto; font-size:11px; color:var(--text-muted); cursor:pointer;" onclick="openProjectManagerModal('idb')" title="Клацніть для перегляду збережених проєктів">
+                <div><span data-i18n="res_label">Роздільна здатність:</span> <span style="color:#f4f4f5;" id="resolutionInfo">512 × 512</span></div>
+                <div><span data-i18n="render_label">Рендер:</span> <span id="renderTime" style="color:#f59e0b;">0.0 ms</span></div>
+                <div><span data-i18n="fps_label">FPS:</span> <span id="fpsInfo" style="color:#10b981;">60 FPS</span></div>
+                <div><span data-i18n="scale_label">Масштаб:</span> <span id="viewScaleInfo" style="color:#3b82f6;">100%</span></div>
+                <div id="autosaveMeta" style="display:flex; align-items:center; gap:6px; margin-left:auto; font-size:11px; color:var(--text-muted); cursor:pointer;" onclick="openProjectManagerModal('idb')" title="Клацніть для перегляду збережених проєктів" data-i18n-title="autosave_title">
                     <span id="autosaveDot" style="width:7px; height:7px; border-radius:50%; background:#10b981; display:inline-block; transition: background 0.3s;"></span>
-                    <span id="autosaveStatusText">Автозбереження: Активне</span>
+                    <span id="autosaveStatusText" data-i18n="autosave_active">Автозбереження: Активне</span>
                 </div>
             </div>
 
             <div class="canvas-history-controls">
-                <button id="btnRedo" onclick="redo()" class="btn btn-secondary history-btn" title="Повторити (Redo)" disabled>
+                <button id="btnRedo" onclick="redo()" class="btn btn-secondary history-btn" title="Повторити (Redo)" data-i18n-title="redo_title" disabled>
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round">
                         <path d="M21 7v6h-6"/>
                         <path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3l3 2.7"/>
                     </svg>
                 </button>
-                <button id="btnUndo" onclick="undo()" class="btn btn-secondary history-btn" title="Скасувати (Undo)" disabled>
+                <button id="btnUndo" onclick="undo()" class="btn btn-secondary history-btn" title="Скасувати (Undo)" data-i18n-title="undo_title" disabled>
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round">
                         <path d="M3 7v6h6"/>
                         <path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/>
@@ -65,37 +76,37 @@
             </div>
 
             <div class="viewport-controls">
-                <button class="viewport-btn" onclick="viewport.zoom(0.1)" title="Збільшити">➕</button>
-                <button class="viewport-btn" onclick="viewport.zoom(-0.1)" title="Зменшити">➖</button>
-                <button class="viewport-btn" onclick="viewport.rotate(-15)" title="Повернути вліво">↺</button>
-                <button class="viewport-btn" onclick="viewport.rotate(15)" title="Повернути вправо">↻</button>
-                <button class="viewport-btn" onclick="viewport.reset()" title="Скинути перегляд" style="font-size:11px; width:auto; padding:0 8px;">Reset</button>
+                <button class="viewport-btn" onclick="viewport.zoom(0.1)" title="Збільшити" data-i18n-title="zoom_in_title">➕</button>
+                <button class="viewport-btn" onclick="viewport.zoom(-0.1)" title="Зменшити" data-i18n-title="zoom_out_title">➖</button>
+                <button class="viewport-btn" onclick="viewport.rotate(-15)" title="Повернути вліво" data-i18n-title="rotate_left_title">↺</button>
+                <button class="viewport-btn" onclick="viewport.rotate(15)" title="Повернути вправо" data-i18n-title="rotate_right_title">↻</button>
+                <button class="viewport-btn" onclick="viewport.reset()" title="Скинути перегляд" data-i18n-title="reset_view_title" style="font-size:11px; width:auto; padding:0 8px;">Reset</button>
                 
                 <div class="control-divider"></div>
                 
-                <div class="res-selector" title="Роздільна здатність канвасу">
+                <div class="res-selector" title="Роздільна здатність канвасу" data-i18n-title="res_selector_title">
                     <button id="resBtn512" class="res-btn active" onclick="setCanvasResolution(512)">512</button>
                     <button id="resBtn1024" class="res-btn" onclick="setCanvasResolution(1024)">1024</button>
                 </div>
                 
                 <div class="control-divider"></div>
                 
-                <label class="lowres-toggle-label" title="Тимчасово знижувати якість до 256x256 при перетягуванні повзунків">
+                <label class="lowres-toggle-label" title="Тимчасово знижувати якість до 256x256 при перетягуванні повзунків" data-i18n-title="fast_preview_title">
                     <input type="checkbox" id="chkLowRes" onchange="setLowResOnEdit(this.checked)">
-                    <span>Швидкий прев'ю</span>
+                    <span data-i18n="fast_preview_label">Швидкий прев'ю</span>
                 </label>
 
                 <div class="control-divider"></div>
 
                 <div id="borderControlWrapper" class="border-control-wrapper">
-                    <label class="lowres-toggle-label" title="Увімкнути / вимкнути рамку та ефекти навколо канвасу">
+                    <label class="lowres-toggle-label" title="Увімкнути / вимкнути рамку та ефекти навколо канвасу" data-i18n-title="canvas_border_title">
                         <input type="checkbox" id="chkCanvasBorder" onchange="toggleCanvasBorder(this.checked)">
-                        <span class="clickable-border-label" onclick="toggleBorderSliderPopover(event)" title="Натисніть для налаштування інтенсивності">Рамка</span>
+                        <span class="clickable-border-label" onclick="toggleBorderSliderPopover(event)" title="Натисніть для налаштування інтенсивності" data-i18n="border_label" data-i18n-title="border_intensity_title">Рамка</span>
                     </label>
 
                     <div id="borderSliderPopover" class="border-slider-popover hidden">
                         <div class="popover-header">
-                            <span>Інтенсивність</span>
+                            <span data-i18n="border_intensity_label">Інтенсивність</span>
                             <span id="borderIntensityValText">100%</span>
                         </div>
                         <input type="range" id="rngBorderIntensity" min="0" max="100" value="100" oninput="setCanvasBorderIntensity(this.value)">
@@ -107,11 +118,11 @@
         <div class="resize-handle" id="resizeRight"></div>
         <aside class="right-panel">
             <div class="panel-header">
-                <h2 class="panel-title" id="rightPanelTitle">Властивості шару</h2>
+                <h2 class="panel-title" id="rightPanelTitle" data-i18n="title_layer_props">Властивості шару</h2>
                 <div style="display:flex; gap:4px;">
-                    <button id="btnTabLayer" class="btn btn-primary" style="padding:4px 8px; font-size:11px;" onclick="switchRightTab('layer')">Шар</button>
-                    <button id="btnTabGlobal" class="btn btn-secondary" style="padding:4px 8px; font-size:11px;" onclick="switchRightTab('global')">Глобальні</button>
-                    <button id="btnTabTiling" class="btn btn-secondary" style="padding:4px 8px; font-size:11px;" onclick="switchRightTab('tiling')">Тайлінг</button>
+                    <button id="btnTabLayer" class="btn btn-primary" style="padding:4px 8px; font-size:11px;" onclick="switchRightTab('layer')" data-i18n="tab_layer">Шар</button>
+                    <button id="btnTabGlobal" class="btn btn-secondary" style="padding:4px 8px; font-size:11px;" onclick="switchRightTab('global')" data-i18n="tab_global">Глобальні</button>
+                    <button id="btnTabTiling" class="btn btn-secondary" style="padding:4px 8px; font-size:11px;" onclick="switchRightTab('tiling')" data-i18n="tab_tiling">Тайлінг</button>
                     <input type="file" id="tilingImageInput" accept="image/*" style="display:none;" onchange="handleTilingImageUpload(event)">
                 </div>
             </div>
@@ -124,14 +135,14 @@
     <div id="confirmModal" class="modal-overlay">
         <div class="modal-card" style="max-width: 380px;">
             <div class="modal-header">
-                <h3 class="modal-title" id="confirmModalTitle">Підтвердження</h3>
+                <h3 class="modal-title" id="confirmModalTitle" data-i18n="confirm_title">Підтвердження</h3>
                 <button class="modal-close" onclick="$('confirmModal').style.display='none'">✕</button>
             </div>
             <div class="modal-body" style="text-align: center;">
                 <p id="confirmModalMessage" style="font-size: 13px; color: var(--text-color); margin-bottom: 10px;"></p>
                 <div style="display: flex; gap: 12px; justify-content: center; margin-top: 10px;">
-                    <button class="btn btn-secondary" onclick="$('confirmModal').style.display='none'">Скасувати</button>
-                    <button id="confirmModalBtn" class="btn btn-primary" style="min-width: 100px;">Підтвердити</button>
+                    <button class="btn btn-secondary" onclick="$('confirmModal').style.display='none'" data-i18n="btn_cancel">Скасувати</button>
+                    <button id="confirmModalBtn" class="btn btn-primary" style="min-width: 100px;" data-i18n="btn_confirm">Підтвердити</button>
                 </div>
             </div>
         </div>
@@ -140,12 +151,12 @@
     <div id="pngModal" class="modal-overlay">
         <div class="modal-card">
             <div class="modal-header">
-                <h3 class="modal-title">Експорт PNG</h3>
+                <h3 class="modal-title" data-i18n="png_title">Експорт PNG</h3>
                 <button class="modal-close" onclick="$('pngModal').style.display='none'">✕</button>
             </div>
             <div class="modal-body">
                 <div class="property-group">
-                    <label class="property-label">Роздільна здатність</label>
+                    <label class="property-label" data-i18n="png_res">Роздільна здатність</label>
                     <div class="gen-grid" style="grid-template-columns:repeat(4,1fr);" id="exportResGrid">
                         <button onclick="renderExportPreview(1024)" class="gen-btn" id="exportRes1024">1024</button>
                         <button onclick="renderExportPreview(2048)" class="gen-btn" id="exportRes2048">2048</button>
@@ -153,41 +164,41 @@
                         <button onclick="renderExportPreview(8192)" class="gen-btn" id="exportRes8192">8192</button>
                     </div>
                 </div>
-                <p class="modal-instruction">Затисніть картинку та виберіть "Зберегти в Фото" (на мобільному) або ПКМ -> "Зберегти картинку як" (на ПК).</p>
-                <div id="exportRenderingIndicator" style="display:none; text-align:center; color:var(--text-muted); font-size:12px;">Рендеринг...</div>
+                <p class="modal-instruction" data-i18n="png_instruction">Затисніть картинку та виберіть "Зберегти в Фото" (на мобільному) або ПКМ -> "Зберегти картинку як" (на ПК).</p>
+                <div id="exportRenderingIndicator" style="display:none; text-align:center; color:var(--text-muted); font-size:12px;" data-i18n="png_rendering">Рендеринг...</div>
                 <img id="modalPngPreview" class="modal-image-preview">
-                <button class="btn btn-secondary" onclick="$('pngModal').style.display='none'">Закрити</button>
+                <button class="btn btn-secondary" onclick="$('pngModal').style.display='none'" data-i18n="btn_close">Закрити</button>
             </div>
         </div>
     </div>
     <div id="projectManagerModal" class="modal-overlay">
         <div class="modal-card" style="max-width: 520px;">
             <div class="modal-header">
-                <h3 class="modal-title">Менеджер проєктів Veil Studio</h3>
+                <h3 class="modal-title" data-i18n="pm_title">Менеджер проєктів Veil Studio</h3>
                 <button class="modal-close" onclick="closeModal('projectManagerModal')">✕</button>
             </div>
             <div class="modal-body">
                 <div class="modal-tabs">
-                    <button id="tabBtnFile" class="modal-tab-btn active" onclick="switchProjectTab('file')">💾 Файл .veil</button>
-                    <button id="tabBtnIdb" class="modal-tab-btn" onclick="switchProjectTab('idb')">⚡ Локальні слоти</button>
-                    <button id="tabBtnText" class="modal-tab-btn" onclick="switchProjectTab('text')">📝 Текстовий код</button>
+                    <button id="tabBtnFile" class="modal-tab-btn active" onclick="switchProjectTab('file')" data-i18n="pm_tab_file">💾 Файл .veil</button>
+                    <button id="tabBtnIdb" class="modal-tab-btn" onclick="switchProjectTab('idb')" data-i18n="pm_tab_idb">⚡ Локальні слоти</button>
+                    <button id="tabBtnText" class="modal-tab-btn" onclick="switchProjectTab('text')" data-i18n="pm_tab_text">📝 Текстовий код</button>
                 </div>
 
                 <!-- Tab 1: File (.veil) -->
                 <div id="projectTabFile" class="project-tab-content">
                     <div style="background: rgba(59, 130, 246, 0.1); border: 1px solid rgba(59, 130, 246, 0.3); padding: 10px 12px; border-radius: var(--radius); margin-bottom: 12px;">
-                        <span style="font-size: 10px; font-weight: 800; color: var(--primary-color); letter-spacing: 0.05em; display: block; margin-bottom: 2px;">⭐ РЕКОМЕНДОВАНИЙ СПОСІБ</span>
-                        <p style="font-size: 11px; color: var(--text-color); margin: 0; line-height: 1.4;">
+                        <span style="font-size: 10px; font-weight: 800; color: var(--primary-color); letter-spacing: 0.05em; display: block; margin-bottom: 2px;" data-i18n="pm_rec_badge">⭐ РЕКОМЕНДОВАНИЙ СПОСІБ</span>
+                        <p style="font-size: 11px; color: var(--text-color); margin: 0; line-height: 1.4;" data-i18n="pm_rec_desc">
                             Зберігайте проєкт у компактний файл <strong>.veil</strong> на диск. Всі шари, геометрія та намальовані маски зберігаються без втрат і завантажуються миттєво.
                         </p>
                     </div>
 
                     <div style="display: flex; flex-direction: column; gap: 10px; margin-top: 8px;">
                         <button class="btn btn-primary" style="padding: 10px; font-size: 13px; display: flex; align-items: center; justify-content: center; gap: 8px;" onclick="exportVeilFile()">
-                            <span>💾</span> <span>Завантажити файл проєкту (.veil)</span>
+                            <span>💾</span> <span data-i18n="pm_download_veil">Завантажити файл проєкту (.veil)</span>
                         </button>
                         <button class="btn btn-secondary" style="padding: 10px; font-size: 13px; display: flex; align-items: center; justify-content: center; gap: 8px;" onclick="triggerVeilImport()">
-                            <span>📂</span> <span>Відкрити файл проєкту (.veil / .json)</span>
+                            <span>📂</span> <span data-i18n="pm_open_veil">Відкрити файл проєкту (.veil / .json)</span>
                         </button>
                     </div>
                 </div>
@@ -195,12 +206,12 @@
                 <!-- Tab 2: IDB Slots -->
                 <div id="projectTabIdb" class="project-tab-content" style="display: none;">
                     <div style="display: flex; gap: 6px; margin-bottom: 12px;">
-                        <input type="text" id="idbSlotNameInput" class="form-control" placeholder="Назва слоту (необов'язково)...">
-                        <button onclick="saveCurrentProjectToIDB()" class="btn btn-primary" style="white-space: nowrap;">⚡ Швидке збереження</button>
+                        <input type="text" id="idbSlotNameInput" class="form-control" placeholder="Назва слоту (необов'язково)..." data-i18n-placeholder="pm_slot_placeholder">
+                        <button onclick="saveCurrentProjectToIDB()" class="btn btn-primary" style="white-space: nowrap;" data-i18n="pm_quick_save">⚡ Швидке збереження</button>
                     </div>
 
                     <div class="section-title" style="display: flex; justify-content: space-between; align-items: center;">
-                        <span>Збережені слоти у браузері</span>
+                        <span data-i18n="pm_saved_slots">Збережені слоти у браузері</span>
                         <span id="idbSlotCountBadge" style="font-size: 10px; color: var(--text-muted); font-weight: normal;"></span>
                     </div>
 
@@ -212,19 +223,19 @@
                 <!-- Tab 3: Text Code -->
                 <div id="projectTabText" class="project-tab-content" style="display: none;">
                     <div style="margin-bottom: 12px;">
-                        <label class="property-label">Код поточного проєкту (JSON)</label>
+                        <label class="property-label" data-i18n="pm_json_code">Код поточного проєкту (JSON)</label>
                         <textarea id="projectJsonText" class="modal-textarea" readonly onclick="this.select()"></textarea>
-                        <button id="copyJsonBtn" class="btn btn-primary" style="margin-top: 6px; width: 100%;" onclick="copyProjectCode()">Скопіювати у буфер</button>
+                        <button id="copyJsonBtn" class="btn btn-primary" style="margin-top: 6px; width: 100%;" onclick="copyProjectCode()" data-i18n="pm_copy_clipboard">Скопіювати у буфер</button>
                     </div>
 
                     <hr style="margin: 12px 0;">
 
                     <div>
-                        <label class="property-label">Вставити код проєкту з буфера</label>
-                        <textarea id="importJsonText" class="modal-textarea" placeholder="Вставте JSON код сюди..."></textarea>
+                        <label class="property-label" data-i18n="pm_paste_label">Вставити код проєкту з буфера</label>
+                        <textarea id="importJsonText" class="modal-textarea" placeholder="Вставте JSON код сюди..." data-i18n-placeholder="pm_paste_placeholder"></textarea>
                         <div style="display: flex; gap: 8px; margin-top: 6px;">
-                            <button class="btn btn-secondary" style="flex: 1;" onclick="pasteFromClipboardAndLoad()">📋 Читати з буфера</button>
-                            <button class="btn btn-primary" style="flex: 1;" onclick="loadProjectFromText()">Завантажити</button>
+                            <button class="btn btn-secondary" style="flex: 1;" onclick="pasteFromClipboardAndLoad()" data-i18n="pm_read_clipboard">📋 Читати з буфера</button>
+                            <button class="btn btn-primary" style="flex: 1;" onclick="loadProjectFromText()" data-i18n="pm_load">Завантажити</button>
                         </div>
                     </div>
                 </div>
@@ -237,7 +248,7 @@
             <div class="modal-header">
                 <div style="display: flex; align-items: center; gap: 8px;">
                     <span style="font-size: 18px;">⚡</span>
-                    <h3 class="modal-title">Профілювальник & Тест Навантаження</h3>
+                    <h3 class="modal-title" data-i18n="bench_title">Профілювальник & Тест Навантаження</h3>
                 </div>
                 <button class="modal-close" onclick="closeBenchmarkModal()">✕</button>
             </div>
@@ -245,29 +256,29 @@
                 <!-- Realtime Stats Panel -->
                 <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;">
                     <div style="background: rgba(0,0,0,0.3); border: 1px solid var(--border-color); padding: 10px; border-radius: 6px; text-align: center;">
-                        <div style="font-size: 10px; color: var(--text-muted); font-weight: 600;">ЧАС КАДРУ (FPS)</div>
+                        <div style="font-size: 10px; color: var(--text-muted); font-weight: 600;" data-i18n="bench_fps_label">ЧАС КАДРУ (FPS)</div>
                         <div id="benchLiveFps" style="font-size: 20px; font-weight: 800; color: #10b981; margin-top: 2px;">60 FPS</div>
                         <div id="benchLiveMs" style="font-size: 10px; color: var(--text-muted);">16.7 ms / кадр</div>
                     </div>
                     <div style="background: rgba(0,0,0,0.3); border: 1px solid var(--border-color); padding: 10px; border-radius: 6px; text-align: center;">
-                        <div style="font-size: 10px; color: var(--text-muted); font-weight: 600;">ПАМ'ЯТЬ HEAP</div>
+                        <div style="font-size: 10px; color: var(--text-muted); font-weight: 600;" data-i18n="bench_mem_label">ПАМ'ЯТЬ HEAP</div>
                         <div id="benchLiveMem" style="font-size: 20px; font-weight: 800; color: #3b82f6; margin-top: 2px;">-- MB</div>
                         <div id="benchLivePool" style="font-size: 10px; color: var(--text-muted);">0 буферів у пулі</div>
                     </div>
                     <div style="background: rgba(0,0,0,0.3); border: 1px solid var(--border-color); padding: 10px; border-radius: 6px; text-align: center;">
-                        <div style="font-size: 10px; color: var(--text-muted); font-weight: 600;">ОПТИМІЗАЦІЇ</div>
-                        <div style="font-size: 18px; font-weight: 800; color: #f59e0b; margin-top: 2px;">6/6 Активні</div>
+                        <div style="font-size: 10px; color: var(--text-muted); font-weight: 600;" data-i18n="bench_opt_label">ОПТИМІЗАЦІЇ</div>
+                        <div style="font-size: 18px; font-weight: 800; color: #f59e0b; margin-top: 2px;" data-i18n="bench_opt_active">6/6 Активні</div>
                         <div style="font-size: 10px; color: #10b981;">100% CPU FastPath</div>
                     </div>
                 </div>
 
                 <!-- Run Benchmark Controls -->
                 <div style="background: #09090b; border: 1px solid var(--border-color); border-radius: 8px; padding: 14px; text-align: center;">
-                    <div style="font-size: 13px; font-weight: 700; color: #fff; margin-bottom: 6px;">Автоматичне стрес-тестування продуктивності</div>
-                    <p style="font-size: 11px; color: var(--text-muted); margin-bottom: 12px; line-height: 1.4;">
+                    <div style="font-size: 13px; font-weight: 700; color: #fff; margin-bottom: 6px;" data-i18n="bench_run_title">Автоматичне стрес-тестування продуктивності</div>
+                    <p style="font-size: 11px; color: var(--text-muted); margin-bottom: 12px; line-height: 1.4;" data-i18n="bench_run_desc">
                         Запускає комплексний аналіз: тест швидкості на 256/512/1024, навантаження 5/10/20 шарів, та 30 швидких деформацій для оцінки використання пам'яті.
                     </p>
-                    <button id="runBenchBtn" onclick="startAutomatedBenchmark()" class="btn btn-primary" style="padding: 8px 20px; font-size: 13px; background-color: #10b981; border-color: #059669;">
+                    <button id="runBenchBtn" onclick="startAutomatedBenchmark()" class="btn btn-primary" style="padding: 8px 20px; font-size: 13px; background-color: #10b981; border-color: #059669;" data-i18n="bench_run_btn">
                         🚀 Запустити Повний Стрес-Тест
                     </button>
                     <div id="benchProgressBox" style="display: none; margin-top: 12px;">
@@ -281,27 +292,27 @@
                 <!-- Benchmark Report Output -->
                 <div id="benchReportBox" style="display: none; background: rgba(0,0,0,0.4); border: 1px solid var(--border-color); border-radius: 8px; padding: 14px;">
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-                        <div style="font-size: 12px; font-weight: 700; color: var(--text-muted); text-transform: uppercase;">ЗВІТ ПРОДУКТИВНОСТІ</div>
-                        <div id="benchGradeBadge" style="background: #10b981; color: #000; font-weight: 800; font-size: 11px; padding: 2px 8px; border-radius: 4px;">ОЦІНКА: A+</div>
+                        <div style="font-size: 12px; font-weight: 700; color: var(--text-muted); text-transform: uppercase;" data-i18n="bench_report_title">ЗВІТ ПРОДУКТИВНОСТІ</div>
+                        <div id="benchGradeBadge" style="background: #10b981; color: #000; font-weight: 800; font-size: 11px; padding: 2px 8px; border-radius: 4px;" data-i18n="bench_grade">ОЦІНКА: A+</div>
                     </div>
 
                     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; font-size: 11px; margin-bottom: 10px;">
                         <div style="background: rgba(255,255,255,0.03); padding: 8px; border-radius: 4px;">
-                            <div style="color: var(--text-muted); margin-bottom: 4px; font-weight: 600;">ЧАС РЕНДЕРУ ПО РОЗДІЛЬНОСТІ</div>
+                            <div style="color: var(--text-muted); margin-bottom: 4px; font-weight: 600;" data-i18n="bench_res_label">ЧАС РЕНДЕРУ ПО РОЗДІЛЬНОСТІ</div>
                             <div id="benchResReport" style="color: #fff; line-height: 1.5;">-</div>
                         </div>
                         <div style="background: rgba(255,255,255,0.03); padding: 8px; border-radius: 4px;">
-                            <div style="color: var(--text-muted); margin-bottom: 4px; font-weight: 600;">БАГАТОШАРОВЕ НАВАНТАЖЕННЯ</div>
+                            <div style="color: var(--text-muted); margin-bottom: 4px; font-weight: 600;" data-i18n="bench_multi_label">БАГАТОШАРОВЕ НАВАНТАЖЕННЯ</div>
                             <div id="benchMultiReport" style="color: #fff; line-height: 1.5;">-</div>
                         </div>
                     </div>
 
                     <div style="background: rgba(255,255,255,0.03); padding: 8px; border-radius: 4px; font-size: 11px; margin-bottom: 10px;">
-                        <div style="color: var(--text-muted); margin-bottom: 4px; font-weight: 600;">СТРЕС-ТЕСТ ДИНАМІЧНОЇ ЗМІНИ 30 ПАРАМЕТРІВ</div>
+                        <div style="color: var(--text-muted); margin-bottom: 4px; font-weight: 600;" data-i18n="bench_stress_label">СТРЕС-ТЕСТ ДИНАМІЧНОЇ ЗМІНИ 30 ПАРАМЕТРІВ</div>
                         <div id="benchStressReport" style="color: #fff; line-height: 1.5;">-</div>
                     </div>
 
-                    <div style="font-size: 11px; color: #10b981; font-weight: 600; margin-top: 8px;">
+                    <div style="font-size: 11px; color: #10b981; font-weight: 600; margin-top: 8px;" data-i18n="bench_success_footer">
                         ✓ Усі критичні алгоритми (Voronoi bitwise hash, sliding box blur, kernel pooling, TypedArray fast-path) підтверджено та оптимізовано!
                     </div>
                 </div>
