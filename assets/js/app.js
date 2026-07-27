@@ -14,12 +14,23 @@
 
         $('canvasWrapper').addEventListener('wheel', e => { e.preventDefault(); viewport.zoom(e.deltaY > 0 ? -0.1 : 0.1); });
         $('canvasWrapper').addEventListener('mousedown', e => {
+            if (e.button === 0 && handleDeformerPointerDown(e)) {
+                e.preventDefault();
+                e.stopPropagation();
+                return;
+            }
             if(e.button === 1 || e.button === 2 || (e.button === 0 && e.shiftKey)) {
                 viewport.isDragging = true; viewport.startX = e.clientX - viewport.x; viewport.startY = e.clientY - viewport.y;
             }
         });
-        window.addEventListener('mousemove', e => { if(viewport.isDragging) { viewport.x = e.clientX - viewport.startX; viewport.y = e.clientY - viewport.startY; viewport.update(); } });
-        window.addEventListener('mouseup', () => viewport.isDragging = false);
+        window.addEventListener('mousemove', e => {
+            if (handleDeformerPointerMove(e)) return;
+            if(viewport.isDragging) { viewport.x = e.clientX - viewport.startX; viewport.y = e.clientY - viewport.startY; viewport.update(); }
+        });
+        window.addEventListener('mouseup', () => {
+            handleDeformerPointerUp();
+            viewport.isDragging = false;
+        });
         $('canvasWrapper').addEventListener('contextmenu', e => e.preventDefault());
 
         // --- iPad-жести на канвасі: pinch=zoom, 2 пальці=пан, поворот=обертання ---
@@ -421,6 +432,657 @@
                     pendingMaskAlphaBuffer=new Float32Array(size);
                 }
             }
+        }
+
+        class CanvasDeformerManager {
+            constructor(canvas = null, initialImageData = null) {
+                this.canvas = canvas;
+                this.sourceImageData = initialImageData;
+                this.points = [];
+                this.activePointIndex = -1;
+                this.showOverlay = true;
+            }
+
+            addPoint(point = {}) {
+                const defaultPoint = {
+                    id: 'pt_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
+                    x: 256,
+                    y: 256,
+                    type: 'inflate',   // 'inflate' | 'deflate' | 'twist' | 'push' | 'wave'
+                    falloff: 'smooth', // 'smooth' | 'linear' | 'sharp' | 'ring'
+                    radius: 100,
+                    strength: 0.5,
+                    angle: 0
+                };
+                const pt = { ...defaultPoint, ...point };
+                this.points.push(pt);
+                this.activePointIndex = this.points.length - 1;
+                return pt;
+            }
+
+            removePoint(index) {
+                if (index >= 0 && index < this.points.length) {
+                    this.points.splice(index, 1);
+                    if (this.activePointIndex >= this.points.length) {
+                        this.activePointIndex = this.points.length - 1;
+                    }
+                }
+            }
+
+            updatePoint(index, key, val) {
+                if (this.points[index]) {
+                    this.points[index][key] = (key === 'type' || key === 'falloff' || key === 'id') ? val : parseFloat(val);
+                }
+            }
+
+            static evaluatePoint(x, y, pt, canvasW = 512, canvasH = 512) {
+                let scaleFactor = canvasW / 512;
+                let ptX = (pt.x !== undefined ? pt.x : 256) * scaleFactor;
+                let ptY = (pt.y !== undefined ? pt.y : 256) * scaleFactor;
+                let r = (pt.radius || 100) * scaleFactor;
+
+                let dx = x - ptX;
+                let dy = y - ptY;
+                let d = Math.hypot(dx, dy);
+
+                if (d > r || r <= 0) return { x, y };
+
+                let normDist = d / r;
+                let factor = 0;
+                const falloff = pt.falloff || 'smooth';
+
+                if (falloff === 'linear') {
+                    factor = 1 - normDist;
+                } else if (falloff === 'sharp') {
+                    let t = 1 - normDist;
+                    factor = t * t * t;
+                } else if (falloff === 'ring') {
+                    factor = Math.sin(normDist * Math.PI);
+                } else { // 'smooth' (smoothstep)
+                    let t = 1 - normDist;
+                    factor = t * t * (3 - 2 * t);
+                }
+
+                let strength = pt.strength !== undefined ? pt.strength : 0.5;
+                let srcX = x;
+                let srcY = y;
+                let type = pt.type || 'inflate';
+
+                if (type === 'inflate') {
+                    let scale = 1 - (strength * factor);
+                    srcX = ptX + dx * scale;
+                    srcY = ptY + dy * scale;
+                } else if (type === 'deflate') {
+                    let scale = 1 + (strength * factor);
+                    srcX = ptX + dx * scale;
+                    srcY = ptY + dy * scale;
+                } else if (type === 'twist') {
+                    let theta = factor * strength * Math.PI;
+                    let cosT = Math.cos(theta);
+                    let sinT = Math.sin(theta);
+                    srcX = ptX + (dx * cosT - dy * sinT);
+                    srcY = ptY + (dx * sinT + dy * cosT);
+                } else if (type === 'push') {
+                    let rad = (pt.angle || 0) * Math.PI / 180;
+                    let shift = strength * factor * (r * 0.5);
+                    srcX = x - Math.cos(rad) * shift;
+                    srcY = y - Math.sin(rad) * shift;
+                } else if (type === 'wave') {
+                    let wave = Math.sin(normDist * Math.PI * 8) * strength * 10 * scaleFactor * factor;
+                    if (d > 0) {
+                        srcX = x + (dx / d) * wave;
+                        srcY = y + (dy / d) * wave;
+                    }
+                }
+
+                return { x: srcX, y: srcY };
+            }
+
+            static transformPointArray(x, y, points, canvasW = 512, canvasH = 512) {
+                let curX = x;
+                let curY = y;
+                if (!points || !points.length) return { x, y };
+
+                for (let i = 0; i < points.length; i++) {
+                    let pt = points[i];
+                    if (pt.disabled) continue;
+                    let res = CanvasDeformerManager.evaluatePoint(curX, curY, pt, canvasW, canvasH);
+                    curX = res.x;
+                    curY = res.y;
+                }
+                return { x: curX, y: curY };
+            }
+
+            applyDeformationsToImageData(sourceImageData, targetImageData) {
+                const w = sourceImageData.width;
+                const h = sourceImageData.height;
+                const srcData = sourceImageData.data;
+                const tgtData = targetImageData.data;
+
+                for (let y = 0; y < h; y++) {
+                    for (let x = 0; x < w; x++) {
+                        const targetIdx = (y * w + x) * 4;
+                        const pos = CanvasDeformerManager.transformPointArray(x, y, this.points, w, h);
+                        const srcX = pos.x;
+                        const srcY = pos.y;
+
+                        const x0 = Math.floor(srcX);
+                        const x1 = Math.min(x0 + 1, w - 1);
+                        const y0 = Math.floor(srcY);
+                        const y1 = Math.min(y0 + 1, h - 1);
+
+                        const dx = srcX - x0;
+                        const dy = srcY - y0;
+
+                        const clampedX0 = Math.max(0, Math.min(w - 1, x0));
+                        const clampedX1 = Math.max(0, Math.min(w - 1, x1));
+                        const clampedY0 = Math.max(0, Math.min(h - 1, y0));
+                        const clampedY1 = Math.max(0, Math.min(h - 1, y1));
+
+                        const idx00 = (clampedY0 * w + clampedX0) * 4;
+                        const idx10 = (clampedY0 * w + clampedX1) * 4;
+                        const idx01 = (clampedY1 * w + clampedX0) * 4;
+                        const idx11 = (clampedY1 * w + clampedX1) * 4;
+
+                        const w00 = (1 - dx) * (1 - dy);
+                        const w10 = dx * (1 - dy);
+                        const w01 = (1 - dx) * dy;
+                        const w11 = dx * dy;
+
+                        for (let c = 0; c < 4; c++) {
+                            tgtData[targetIdx + c] = Math.round(
+                                srcData[idx00 + c] * w00 +
+                                srcData[idx10 + c] * w10 +
+                                srcData[idx01 + c] * w01 +
+                                srcData[idx11 + c] * w11
+                            );
+                        }
+                    }
+                }
+                return targetImageData;
+            }
+        }
+        window.CanvasDeformerManager = CanvasDeformerManager;
+
+        // --- Drag state and helpers for Point Deformer handles ---
+        let deformerDragState = {
+            isDragging: false,
+            isGlobal: false,
+            warpIndex: -1,
+            pointIndex: -1
+        };
+
+        function handleDeformerPointerDown(e) {
+            let cv = (typeof canvas !== 'undefined' && canvas) || $('canvas');
+            if (!cv) return false;
+
+            let rect = cv.getBoundingClientRect();
+            if (!rect || rect.width === 0) return false;
+
+            let clientX = e.clientX || (e.touches && e.touches[0] ? e.touches[0].clientX : 0);
+            let clientY = e.clientY || (e.touches && e.touches[0] ? e.touches[0].clientY : 0);
+
+            let normX = (clientX - rect.left) / rect.width;
+            let normY = (clientY - rect.top) / rect.height;
+
+            if (normX < 0 || normX > 1 || normY < 0 || normY > 1) return false;
+
+            let canX = normX * 512;
+            let canY = normY * 512;
+
+            let hitFound = false;
+
+            const checkWarpHits = (warps, isGlobal) => {
+                if (hitFound || !warps) return;
+                for (let wIdx = 0; wIdx < warps.length; wIdx++) {
+                    let w = warps[wIdx];
+                    if (w.type !== 'point_deformer' || w.visible === false || w.showHandles === false || !w.points) continue;
+
+                    for (let pIdx = 0; pIdx < w.points.length; pIdx++) {
+                        let pt = w.points[pIdx];
+                        let dist = Math.hypot(canX - pt.x, canY - pt.y);
+                        if (dist <= 18) {
+                            hitFound = true;
+                            deformerDragState.isDragging = true;
+                            deformerDragState.isGlobal = isGlobal;
+                            deformerDragState.warpIndex = wIdx;
+                            deformerDragState.pointIndex = pIdx;
+                            w.activePointIndex = pIdx;
+
+                            if (isGlobal) renderGlobal();
+                            else renderProps();
+                            requestRender();
+                            return;
+                        }
+                    }
+                }
+            };
+
+            let lay = state.layers.find(l => l.id === state.selectedLayerId);
+            if (lay && lay.visible && lay.params && lay.params.warps) {
+                checkWarpHits(lay.params.warps, false);
+            }
+            if (!hitFound && state.global && state.global.warps) {
+                checkWarpHits(state.global.warps, true);
+            }
+
+            return hitFound;
+        }
+
+        function handleDeformerPointerMove(e) {
+            if (!deformerDragState.isDragging) return false;
+
+            let cv = (typeof canvas !== 'undefined' && canvas) || $('canvas');
+            if (!cv) return false;
+
+            let rect = cv.getBoundingClientRect();
+            if (!rect || rect.width === 0) return false;
+
+            let clientX = e.clientX || (e.touches && e.touches[0] ? e.touches[0].clientX : 0);
+            let clientY = e.clientY || (e.touches && e.touches[0] ? e.touches[0].clientY : 0);
+
+            let normX = (clientX - rect.left) / rect.width;
+            let normY = (clientY - rect.top) / rect.height;
+
+            let canX = Math.round(Math.max(0, Math.min(512, normX * 512)));
+            let canY = Math.round(Math.max(0, Math.min(512, normY * 512)));
+
+            let isGlobal = deformerDragState.isGlobal;
+            let wIdx = deformerDragState.warpIndex;
+            let pIdx = deformerDragState.pointIndex;
+
+            let w = isGlobal ? (state.global.warps && state.global.warps[wIdx]) : (state.selectedLayerId && state.layers.find(l => l.id === state.selectedLayerId)?.params?.warps?.[wIdx]);
+            if (w && w.points && w.points[pIdx]) {
+                w.points[pIdx].x = canX;
+                w.points[pIdx].y = canY;
+
+                if (isGlobal) {
+                    invalidateCaches();
+                } else {
+                    let lay = state.layers.find(l => l.id === state.selectedLayerId);
+                    if (lay) lay.isDirty = true;
+                }
+
+                let idPrefix = isGlobal ? 'glob' : 'lay';
+                let xNum = $(`num_${idPrefix}_pt_x_${wIdx}_${pIdx}`);
+                let xRng = $(`rng_${idPrefix}_pt_x_${wIdx}_${pIdx}`);
+                if (xNum) xNum.value = canX;
+                if (xRng) xRng.value = canX;
+
+                let yNum = $(`num_${idPrefix}_pt_y_${wIdx}_${pIdx}`);
+                let yRng = $(`rng_${idPrefix}_pt_y_${wIdx}_${pIdx}`);
+                if (yNum) yNum.value = canY;
+                if (yRng) yRng.value = canY;
+
+                requestRender();
+            }
+            return true;
+        }
+
+        function handleDeformerPointerUp() {
+            if (deformerDragState.isDragging) {
+                deformerDragState.isDragging = false;
+                commitHistorySnapshot();
+                return true;
+            }
+            return false;
+        }
+
+        window.addPointToDeformer = function(isGlobal, warpIdx) {
+            let w = isGlobal ? (state.global.warps && state.global.warps[warpIdx]) : (state.selectedLayerId && state.layers.find(l=>l.id===state.selectedLayerId)?.params?.warps?.[warpIdx]);
+            if (!w) return;
+            if (!w.points) w.points = [];
+            
+            let pCount = w.points.length;
+            let offsetX = (pCount % 3 - 1) * 40;
+            let offsetY = (Math.floor(pCount / 3) % 3 - 1) * 40;
+
+            w.points.push({
+                id: 'pt_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
+                x: Math.min(480, Math.max(32, 256 + offsetX)),
+                y: Math.min(480, Math.max(32, 256 + offsetY)),
+                type: 'inflate',
+                falloff: 'smooth',
+                radius: 120,
+                strength: 0.5,
+                angle: 0
+            });
+            w.activePointIndex = w.points.length - 1;
+
+            if (isGlobal) {
+                invalidateCaches();
+                renderGlobal();
+            } else {
+                let lay = state.layers.find(l=>l.id===state.selectedLayerId);
+                if (lay) lay.isDirty = true;
+                renderProps();
+            }
+            requestRender();
+            commitHistorySnapshot();
+        };
+
+        window.removePointFromDeformer = function(isGlobal, warpIdx, pointIdx) {
+            let w = isGlobal ? (state.global.warps && state.global.warps[warpIdx]) : (state.selectedLayerId && state.layers.find(l=>l.id===state.selectedLayerId)?.params?.warps?.[warpIdx]);
+            if (!w || !w.points) return;
+            w.points.splice(pointIdx, 1);
+            if (w.activePointIndex >= w.points.length) {
+                w.activePointIndex = w.points.length - 1;
+            }
+
+            if (isGlobal) {
+                invalidateCaches();
+                renderGlobal();
+            } else {
+                let lay = state.layers.find(l=>l.id===state.selectedLayerId);
+                if (lay) lay.isDirty = true;
+                renderProps();
+            }
+            requestRender();
+            commitHistorySnapshot();
+        };
+
+        window.updateDeformerPoint = function(isGlobal, warpIdx, pointIdx, key, val) {
+            let w = isGlobal ? (state.global.warps && state.global.warps[warpIdx]) : (state.selectedLayerId && state.layers.find(l=>l.id===state.selectedLayerId)?.params?.warps?.[warpIdx]);
+            if (!w || !w.points || !w.points[pointIdx]) return;
+            triggerInteraction();
+
+            let parsedVal = (key === 'type' || key === 'falloff' || key === 'id') ? val : parseFloat(val);
+            w.points[pointIdx][key] = parsedVal;
+            w.activePointIndex = pointIdx;
+
+            if (isGlobal) {
+                invalidateCaches();
+                if (key === 'type' || key === 'falloff') renderGlobal();
+            } else {
+                let lay = state.layers.find(l=>l.id===state.selectedLayerId);
+                if (lay) lay.isDirty = true;
+                if (key === 'type' || key === 'falloff') renderProps();
+            }
+            if (!suppressRender) requestRender();
+
+            if (key === 'type' || key === 'falloff') {
+                commitHistorySnapshot();
+            } else {
+                scheduleHistorySnapshot();
+            }
+        };
+
+        window.toggleDeformerHandles = function(isGlobal, warpIdx, show) {
+            let w = isGlobal ? (state.global.warps && state.global.warps[warpIdx]) : (state.selectedLayerId && state.layers.find(l=>l.id===state.selectedLayerId)?.params?.warps?.[warpIdx]);
+            if (!w) return;
+            w.showHandles = !!show;
+            requestRender();
+        };
+
+        window.toggleDeformerPointExpanded = function(isGlobal, warpIdx, pointIdx) {
+            let w = isGlobal ? (state.global.warps && state.global.warps[warpIdx]) : (state.selectedLayerId && state.layers.find(l=>l.id===state.selectedLayerId)?.params?.warps?.[warpIdx]);
+            if (!w || !w.points || !w.points[pointIdx]) return;
+
+            let pt = w.points[pointIdx];
+            pt.expanded = pt.expanded === undefined ? false : !pt.expanded;
+            w.activePointIndex = pointIdx;
+
+            if (isGlobal) renderGlobal();
+            else renderProps();
+            requestRender();
+        };
+
+        window.setActiveDeformerPoint = function(isGlobal, warpIdx, pointIdx) {
+            let w = isGlobal ? (state.global.warps && state.global.warps[warpIdx]) : (state.selectedLayerId && state.layers.find(l=>l.id===state.selectedLayerId)?.params?.warps?.[warpIdx]);
+            if (!w || !w.points || !w.points[pointIdx]) return;
+            w.activePointIndex = pointIdx;
+            w.points[pointIdx].expanded = true;
+            if (isGlobal) renderGlobal();
+            else renderProps();
+            requestRender();
+        };
+
+        function drawPointDeformerOverlays(cx, w, h) {
+            let scaleFactor = w / 512;
+
+            const drawWarpHandles = (warp, isGlobal) => {
+                if (!warp || warp.type !== 'point_deformer' || warp.visible === false || warp.showHandles === false || !warp.points) return;
+
+                warp.points.forEach((pt, pIdx) => {
+                    let px = (pt.x !== undefined ? pt.x : 256) * scaleFactor;
+                    let py = (pt.y !== undefined ? pt.y : 256) * scaleFactor;
+                    let radius = (pt.radius || 100) * scaleFactor;
+                    let isActive = (warp.activePointIndex === pIdx);
+
+                    cx.save();
+
+                    // 1. Outer influence circle
+                    cx.beginPath();
+                    cx.arc(px, py, radius, 0, Math.PI * 2);
+                    cx.strokeStyle = isActive ? 'rgba(245, 158, 11, 0.85)' : (isGlobal ? 'rgba(16, 185, 129, 0.6)' : 'rgba(59, 130, 246, 0.6)');
+                    cx.lineWidth = isActive ? 2.0 : 1.2;
+                    cx.setLineDash([5, 4]);
+                    cx.stroke();
+                    cx.setLineDash([]);
+
+                    if (isActive) {
+                        cx.fillStyle = 'rgba(245, 158, 11, 0.06)';
+                        cx.fill();
+                    }
+
+                    // 2. Vector arrow for push or spin arc for twist
+                    if (pt.type === 'push') {
+                        let rad = (pt.angle || 0) * Math.PI / 180;
+                        let arrowLength = Math.min(radius * 0.75, 45 * scaleFactor);
+                        let ax = px + Math.cos(rad) * arrowLength;
+                        let ay = py + Math.sin(rad) * arrowLength;
+
+                        cx.beginPath();
+                        cx.moveTo(px, py);
+                        cx.lineTo(ax, ay);
+                        cx.strokeStyle = isActive ? '#f59e0b' : '#3b82f6';
+                        cx.lineWidth = 2.0;
+                        cx.stroke();
+
+                        let headLen = 8 * scaleFactor;
+                        cx.beginPath();
+                        cx.moveTo(ax, ay);
+                        cx.lineTo(ax - headLen * Math.cos(rad - Math.PI / 6), ay - headLen * Math.sin(rad - Math.PI / 6));
+                        cx.lineTo(ax - headLen * Math.cos(rad + Math.PI / 6), ay - headLen * Math.sin(rad + Math.PI / 6));
+                        cx.closePath();
+                        cx.fillStyle = isActive ? '#f59e0b' : '#3b82f6';
+                        cx.fill();
+                    } else if (pt.type === 'twist') {
+                        cx.beginPath();
+                        let spinAngle = (pt.strength || 0.5) * Math.PI;
+                        cx.arc(px, py, 14 * scaleFactor, 0, spinAngle, spinAngle < 0);
+                        cx.strokeStyle = isActive ? '#f59e0b' : '#3b82f6';
+                        cx.lineWidth = 1.5;
+                        cx.stroke();
+                    }
+
+                    // 3. Center point handle
+                    cx.beginPath();
+                    cx.arc(px, py, isActive ? 8 : 6, 0, Math.PI * 2);
+                    cx.fillStyle = isActive ? '#f59e0b' : (isGlobal ? '#10b981' : '#3b82f6');
+                    cx.shadowColor = 'rgba(0,0,0,0.5)';
+                    cx.shadowBlur = 4;
+                    cx.fill();
+                    cx.shadowBlur = 0;
+
+                    cx.beginPath();
+                    cx.arc(px, py, isActive ? 3 : 2.5, 0, Math.PI * 2);
+                    cx.fillStyle = '#ffffff';
+                    cx.fill();
+
+                    // Label badge
+                    cx.font = 'bold 10px sans-serif';
+                    let label = `${isGlobal ? 'G' : 'L'}#${pIdx + 1} (${pt.type || 'inflate'})`;
+                    let textWidth = cx.measureText(label).width;
+                    
+                    cx.fillStyle = 'rgba(15, 15, 17, 0.85)';
+                    cx.fillRect(px - textWidth / 2 - 4, py - radius - 18, textWidth + 8, 14);
+                    cx.strokeStyle = isActive ? 'rgba(245, 158, 11, 0.6)' : 'rgba(255,255,255,0.2)';
+                    cx.lineWidth = 1;
+                    cx.strokeRect(px - textWidth / 2 - 4, py - radius - 18, textWidth + 8, 14);
+
+                    cx.fillStyle = isActive ? '#f59e0b' : '#f4f4f5';
+                    cx.textAlign = 'center';
+                    cx.textBaseline = 'middle';
+                    cx.fillText(label, px, py - radius - 11);
+
+                    cx.restore();
+                });
+            };
+
+            if (state.global && state.global.warps) {
+                state.global.warps.forEach(w => drawWarpHandles(w, true));
+            }
+
+            let lay = state.layers.find(l => l.id === state.selectedLayerId);
+            if (lay && lay.visible && lay.params && lay.params.warps) {
+                lay.params.warps.forEach(w => drawWarpHandles(w, false));
+            }
+        }
+
+        function pointSliderRow(label, min, max, step, val, def, onInputExpr, isGlobal, warpIdx, pointIdx, propKey) {
+            let prefix = isGlobal ? 'glob' : 'lay';
+            let idKey = `${prefix}_pt_${propKey}_${warpIdx}_${pointIdx}`;
+            return `<div style="margin-bottom:4px;">
+                <label class="property-label" style="font-size:10px; margin-bottom:2px;">${label}</label>
+                <div style="display:flex; gap:6px; align-items:center;">
+                    <input type="range" id="rng_${idKey}" min="${min}" max="${max}" step="${step}" value="${val}" oninput="$('num_${idKey}').value=this.value; ${onInputExpr}" onchange="commitHistorySnapshot();" ondblclick="resetSliderEl(this,${def})">
+                    <input type="number" class="num-input" id="num_${idKey}" step="${step}" value="${val}" oninput="$('rng_${idKey}').value=this.value; ${onInputExpr}" onchange="commitHistorySnapshot();" ondblclick="resetSliderEl(this,${def})">
+                    <button type="button" class="reset-btn" title="Скинути за замовчуванням (${def})" onclick="resetSliderEl(this.parentElement.querySelector('input[type=range]'),${def})">↺</button>
+                </div>
+            </div>`;
+        }
+
+        function renderWarpCardHTML(w, idx, isGlobal) {
+            let updateFn = isGlobal ? 'updateGlobalWarp' : 'updateWarp';
+            let toggleFn = isGlobal ? 'toggleGlobalWarp' : 'toggleWarp';
+            let removeFn = isGlobal ? 'removeGlobalWarp' : 'removeWarp';
+            let warpLabel = isGlobal ? `Глобальний деформатор №${idx+1}` : `Деформатор №${idx+1}`;
+
+            if (w.type === 'point_deformer') {
+                if (!w.points || !Array.isArray(w.points) || w.points.length === 0) {
+                    w.points = [{ id: 'pt_1', x: 256, y: 256, type: 'inflate', falloff: 'smooth', radius: 100, strength: 0.5, angle: 0, expanded: true }];
+                    w.activePointIndex = 0;
+                }
+                if (w.showHandles === undefined) w.showHandles = true;
+
+                let typeLabels = {
+                    inflate: 'Роздування',
+                    deflate: 'Стискання',
+                    twist: 'Скручування',
+                    push: 'Зсув',
+                    wave: 'Хвилі'
+                };
+
+                let pointsHTML = w.points.map((pt, pIdx) => {
+                    let isActive = (w.activePointIndex === pIdx);
+                    let isExpanded = pt.expanded !== false;
+                    let typeName = typeLabels[pt.type] || pt.type || 'Inflate';
+
+                    return `
+                        <div class="deformer-point-card ${isActive ? 'active-point' : ''}" style="margin-bottom:8px; border:1px solid ${isActive ? 'rgba(245,158,11,0.5)' : 'rgba(255,255,255,0.1)'}; border-radius:6px; background:${isActive ? 'rgba(245,158,11,0.06)' : 'rgba(255,255,255,0.02)'}; padding:6px 8px;">
+                            <div class="deformer-point-header" onclick="toggleDeformerPointExpanded(${isGlobal}, ${idx}, ${pIdx})" style="display:flex; justify-content:space-between; align-items:center; cursor:pointer; user-select:none; padding:2px 0;">
+                                <div style="display:flex; align-items:center; gap:6px;">
+                                    <span style="font-size:10px; color:var(--text-muted);">${isExpanded ? '▾' : '▸'}</span>
+                                    <span style="font-weight:700; font-size:11px; color:${isActive ? '#f59e0b' : '#3b82f6'};">📍 Точка #${pIdx+1}</span>
+                                    <span style="font-size:10px; color:var(--text-muted); background:rgba(255,255,255,0.08); padding:1px 6px; border-radius:4px;">${typeName}</span>
+                                </div>
+                                <div style="display:flex; align-items:center; gap:4px;">
+                                    <button type="button" class="warp-del" onclick="event.stopPropagation(); removePointFromDeformer(${isGlobal}, ${idx}, ${pIdx})" title="Видалити точку" style="padding:1px 4px; font-size:11px;">✕</button>
+                                </div>
+                            </div>
+
+                            <div class="deformer-point-body" style="display:${isExpanded ? 'block' : 'none'}; padding-top:8px; margin-top:6px; border-top:1px solid rgba(255,255,255,0.08);" onclick="event.stopPropagation()">
+                                <div class="property-group" style="margin-bottom:6px;">
+                                    <label class="property-label">Алгоритм деформації</label>
+                                    <select onchange="updateDeformerPoint(${isGlobal}, ${idx}, ${pIdx}, 'type', this.value)" class="form-control" style="font-size:11px; height:28px;">
+                                        <option value="inflate" ${pt.type==='inflate'?'selected':''}>Роздування (Inflate / Bulge)</option>
+                                        <option value="deflate" ${pt.type==='deflate'?'selected':''}>Стискання (Deflate / Pinch)</option>
+                                        <option value="twist" ${pt.type==='twist'?'selected':''}>Скручування (Twist / Spiral)</option>
+                                        <option value="push" ${pt.type==='push'?'selected':''}>Зсув-витягування (Push Vector)</option>
+                                        <option value="wave" ${pt.type==='wave'?'selected':''}>Хвилі / Рябь (Ripple Waves)</option>
+                                    </select>
+                                </div>
+                                <div class="property-group" style="margin-bottom:6px;">
+                                    <label class="property-label">Профіль загасання (Falloff)</label>
+                                    <select onchange="updateDeformerPoint(${isGlobal}, ${idx}, ${pIdx}, 'falloff', this.value)" class="form-control" style="font-size:11px; height:28px;">
+                                        <option value="smooth" ${pt.falloff==='smooth'?'selected':''}>Сферичний (Smoothstep)</option>
+                                        <option value="linear" ${pt.falloff==='linear'?'selected':''}>Радіальний (Linear)</option>
+                                        <option value="sharp" ${pt.falloff==='sharp'?'selected':''}>Різкий (Cubic Sharp)</option>
+                                        <option value="ring" ${pt.falloff==='ring'?'selected':''}>Кільцевий (Sinusoidal Ring)</option>
+                                    </select>
+                                </div>
+                                ${pointSliderRow("Координата X (px)", 0, 512, 1, pt.x !== undefined ? pt.x : 256, 256, `updateDeformerPoint(${isGlobal}, ${idx}, ${pIdx}, 'x', this.value)`, isGlobal, idx, pIdx, 'x')}
+                                ${pointSliderRow("Координата Y (px)", 0, 512, 1, pt.y !== undefined ? pt.y : 256, 256, `updateDeformerPoint(${isGlobal}, ${idx}, ${pIdx}, 'y', this.value)`, isGlobal, idx, pIdx, 'y')}
+                                ${pointSliderRow("Радіус зони (px)", 10, 400, 1, pt.radius || 100, 100, `updateDeformerPoint(${isGlobal}, ${idx}, ${pIdx}, 'radius', this.value)`, isGlobal, idx, pIdx, 'radius')}
+                                ${pointSliderRow("Інтенсивність (Strength)", -2.0, 2.0, 0.05, pt.strength !== undefined ? pt.strength : 0.5, 0.5, `updateDeformerPoint(${isGlobal}, ${idx}, ${pIdx}, 'strength', this.value)`, isGlobal, idx, pIdx, 'strength')}
+                                ${(pt.type === 'push' || pt.type === 'twist') ? pointSliderRow("Кут напрямку (°)", 0, 360, 1, pt.angle || 0, 0, `updateDeformerPoint(${isGlobal}, ${idx}, ${pIdx}, 'angle', this.value)`, isGlobal, idx, pIdx, 'angle') : ''}
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+
+                return `
+                    <div class="warp-card" data-warp-index="${idx}" style="${w.visible===false?'opacity:0.5;':''}">
+                        <div class="warp-controls">
+                            <button type="button" class="warp-toggle" onclick="${toggleFn}(${idx})" title="${w.visible!==false?'Приховати':'Показати'}">${w.visible!==false?'👁':'🕶'}</button>
+                            <button type="button" class="warp-del" onclick="${removeFn}(${idx})" title="Видалити">✕</button>
+                        </div>
+                        <label class="property-label" style="margin-top:2px;">${warpLabel}</label>
+                        <select onchange="${updateFn}(${idx}, 'type', this.value)" class="form-control" style="margin-bottom:8px; margin-top:4px;">
+                            <option value="none" ${w.type==='none'?'selected':''}>Немає</option>
+                            <option value="point_deformer" selected>🎯 Точковий деформатор (Deformer Studio)</option>
+                            <option value="displacement" ${w.type==='displacement'?'selected':''}>Displacement</option>
+                            <option value="vortex" ${w.type==='vortex'?'selected':''}>Vortex</option>
+                            <option value="twirl" ${w.type==='twirl'?'selected':''}>Twirl (Spiral Falloff)</option>
+                            <option value="sine" ${w.type==='sine'?'selected':''}>Sine</option>
+                            <option value="bulge" ${w.type==='bulge'?'selected':''}>Pinch/Bulge</option>
+                            <option value="noise" ${w.type==='noise'?'selected':''}>Perlin Noise</option>
+                            <option value="domain_warp" ${w.type==='domain_warp'?'selected':''}>Domain Warp</option>
+                            <option value="distortion" ${w.type==='distortion'?'selected':''}>Дісторсія</option>
+                            <option value="polar" ${w.type==='polar'?'selected':''}>Полярні координати</option>
+                        </select>
+                        
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; background:rgba(0,0,0,0.25); padding:4px 6px; border-radius:4px;">
+                            <label class="checkbox-label" style="margin:0; font-size:11px;">
+                                <input type="checkbox" ${w.showHandles!==false?'checked':''} onchange="toggleDeformerHandles(${isGlobal}, ${idx}, this.checked)">
+                                🎯 Маркери на канвасі
+                            </label>
+                            <button type="button" class="btn btn-primary" style="padding:2px 6px; font-size:10px;" onclick="addPointToDeformer(${isGlobal}, ${idx})">+ Точка</button>
+                        </div>
+
+                        <div style="max-height:320px; overflow-y:auto; padding-right:2px;">
+                            ${pointsHTML}
+                        </div>
+                    </div>
+                `;
+            }
+
+            return `
+                <div class="warp-card" data-warp-index="${idx}" style="${w.visible===false?'opacity:0.5;':''}">
+                    <div class="warp-controls">
+                        <button type="button" class="warp-toggle" onclick="${toggleFn}(${idx})" title="${w.visible!==false?'Приховати':'Показати'}">${w.visible!==false?'👁':'🕶'}</button>
+                        <button type="button" class="warp-del" onclick="${removeFn}(${idx})" title="Видалити">✕</button>
+                    </div>
+                    <label class="property-label" style="margin-top:2px;">${warpLabel}</label>
+                    <select onchange="${updateFn}(${idx}, 'type', this.value)" class="form-control" style="margin-bottom:8px; margin-top:4px;">
+                        <option value="none" ${w.type==='none'?'selected':''}>Немає</option>
+                        <option value="point_deformer" ${w.type==='point_deformer'?'selected':''}>🎯 Точковий деформатор (Deformer Studio)</option>
+                        <option value="displacement" ${w.type==='displacement'?'selected':''}>Displacement</option>
+                        <option value="vortex" ${w.type==='vortex'?'selected':''}>Vortex</option>
+                        <option value="twirl" ${w.type==='twirl'?'selected':''}>Twirl (Spiral Falloff)</option>
+                        <option value="sine" ${w.type==='sine'?'selected':''}>Sine</option>
+                        <option value="bulge" ${w.type==='bulge'?'selected':''}>Pinch/Bulge</option>
+                        <option value="noise" ${w.type==='noise'?'selected':''}>Perlin Noise</option>
+                        <option value="domain_warp" ${w.type==='domain_warp'?'selected':''}>Domain Warp</option>
+                        <option value="distortion" ${w.type==='distortion'?'selected':''}>Дісторсія</option>
+                        <option value="polar" ${w.type==='polar'?'selected':''}>Полярні координати</option>
+                    </select>
+                    ${w.type !== 'none' ? `
+                    <div style="margin-bottom:4px;">${sliderRow(-100, 100, 1, w.strength, 10, `${updateFn}(${idx}, 'strength', this.value)`)}</div>
+                    ${sliderRow(0.1, 20, 0.1, w.freq, 4, `${updateFn}(${idx}, 'freq', this.value)`)}` : ''}
+                </div>
+            `;
         }
 
         let state = {
@@ -1859,6 +2521,13 @@
                                         nx = 0.5 + r * Math.cos(theta * Math.PI * 2) * st;
                                         ny = 0.5 + r * Math.sin(theta * Math.PI * 2) * st;
                                     }
+                                    else if (wModifier.type === 'point_deformer') {
+                                        if (wModifier.points && wModifier.points.length > 0) {
+                                            let pRes = CanvasDeformerManager.transformPointArray(nx * w, ny * h, wModifier.points, w, h);
+                                            nx = pRes.x / w;
+                                            ny = pRes.y / h;
+                                        }
+                                    }
                                 }
                             }
                             // --- кінець глобального блоку; далі — незмінна логіка шару ---
@@ -1933,6 +2602,13 @@
                                         let theta = Math.atan2(cdy, cdx) / (Math.PI * 2);
                                         nx = 0.5 + r * Math.cos(theta * Math.PI * 2) * st;
                                         ny = 0.5 + r * Math.sin(theta * Math.PI * 2) * st;
+                                    }
+                                    else if(wModifier.type==='point_deformer'){
+                                        if (wModifier.points && wModifier.points.length > 0) {
+                                            let pRes = CanvasDeformerManager.transformPointArray(nx * w, ny * h, wModifier.points, w, h);
+                                            nx = pRes.x / w;
+                                            ny = pRes.y / h;
+                                        }
                                     }
                                 }
                             }
@@ -2125,6 +2801,7 @@
             }
 
             cx.putImageData(imgData,0,0);
+            if(!isExport) drawPointDeformerOverlays(cx, w, h);
             let totalRenderTimeMs = performance.now() - start;
             if(!isExport && $('renderTime')) $('renderTime').textContent = `${totalRenderTimeMs.toFixed(1)} ms`;
             if (window.globalProfiler) {
@@ -2670,6 +3347,13 @@
             if (!lay || !lay.params || !lay.params.warps || !lay.params.warps[idx]) return;
             triggerInteraction();
             lay.params.warps[idx][key] = (key==='type') ? val : parseFloat(val);
+            if (key === 'type' && val === 'point_deformer') {
+                if (!lay.params.warps[idx].points || lay.params.warps[idx].points.length === 0) {
+                    lay.params.warps[idx].points = [{ id: 'pt_1', x: 256, y: 256, type: 'inflate', falloff: 'smooth', radius: 100, strength: 0.5, angle: 0 }];
+                    lay.params.warps[idx].activePointIndex = 0;
+                }
+                if (lay.params.warps[idx].showHandles === undefined) lay.params.warps[idx].showHandles = true;
+            }
             lay.isDirty = true;
             if(key==='type') renderProps();
             if(!suppressRender) requestRender();
@@ -2728,6 +3412,13 @@
             if (!state.global || !state.global.warps || !state.global.warps[idx]) return;
             triggerInteraction();
             state.global.warps[idx][key] = (key === 'type') ? val : parseFloat(val);
+            if (key === 'type' && val === 'point_deformer') {
+                if (!state.global.warps[idx].points || state.global.warps[idx].points.length === 0) {
+                    state.global.warps[idx].points = [{ id: 'pt_1', x: 256, y: 256, type: 'inflate', falloff: 'smooth', radius: 100, strength: 0.5, angle: 0 }];
+                    state.global.warps[idx].activePointIndex = 0;
+                }
+                if (state.global.warps[idx].showHandles === undefined) state.global.warps[idx].showHandles = true;
+            }
             invalidateCaches();
             if (key === 'type') renderGlobal();
             if (!suppressRender) requestRender();
@@ -3317,30 +4008,7 @@
             `;
 
             // Block: warps
-            let warpsHTML = lp.warps.map((w, idx) => `
-                <div class="warp-card" data-warp-index="${idx}" style="${w.visible===false?'opacity:0.5;':''}">
-                    <div class="warp-controls">
-                        <button type="button" class="warp-toggle" onclick="toggleWarp(${idx})" title="${w.visible!==false?'Приховати':'Показати'}">${w.visible!==false?'👁':'🕶'}</button>
-                        <button type="button" class="warp-del" onclick="removeWarp(${idx})" title="Видалити">✕</button>
-                    </div>
-                    <label class="property-label" style="margin-top:2px;">Деформатор №${idx+1}</label>
-                    <select onchange="updateWarp(${idx}, 'type', this.value)" class="form-control" style="margin-bottom:8px; margin-top:4px;">
-                        <option value="none" ${w.type==='none'?'selected':''}>Немає</option>
-                        <option value="displacement" ${w.type==='displacement'?'selected':''}>Displacement</option>
-                        <option value="vortex" ${w.type==='vortex'?'selected':''}>Vortex</option>
-                        <option value="twirl" ${w.type==='twirl'?'selected':''}>Twirl (Spiral Falloff)</option>
-                        <option value="sine" ${w.type==='sine'?'selected':''}>Sine</option>
-                        <option value="bulge" ${w.type==='bulge'?'selected':''}>Pinch/Bulge</option>
-                        <option value="noise" ${w.type==='noise'?'selected':''}>Perlin Noise</option>
-                        <option value="domain_warp" ${w.type==='domain_warp'?'selected':''}>Domain Warp</option>
-                        <option value="distortion" ${w.type==='distortion'?'selected':''}>Дісторсія</option>
-                        <option value="polar" ${w.type==='polar'?'selected':''}>Полярні координати</option>
-                    </select>
-                    ${w.type !== 'none' ? `
-                    <div style="margin-bottom:4px;">${sliderRow(-100, 100, 1, w.strength, 10, `updateWarp(${idx}, 'strength', this.value)`)}</div>
-                    ${sliderRow(0.1, 20, 0.1, w.freq, 4, `updateWarp(${idx}, 'freq', this.value)`)}` : ''}
-                </div>
-            `).join('');
+            let warpsHTML = lp.warps.map((w, idx) => renderWarpCardHTML(w, idx, false)).join('');
 
             layerBlockContents.warps = `
                 <div class="property-group" style="margin-bottom:0;">
@@ -3379,30 +4047,7 @@
             let globalBlockContents = {};
 
             // Block: warps
-            let globalWarpsHTML = (g.warps || []).map((w, idx) => `
-                <div class="warp-card" data-warp-index="${idx}" style="${w.visible===false?'opacity:0.5;':''}">
-                    <div class="warp-controls">
-                        <button type="button" class="warp-toggle" onclick="toggleGlobalWarp(${idx})" title="${w.visible!==false?'Приховати':'Показати'}">${w.visible!==false?'👁':'🕶'}</button>
-                        <button type="button" class="warp-del" onclick="removeGlobalWarp(${idx})" title="Видалити">✕</button>
-                    </div>
-                    <label class="property-label" style="margin-top:2px;">Глобальний деформатор №${idx+1}</label>
-                    <select onchange="updateGlobalWarp(${idx}, 'type', this.value)" class="form-control" style="margin-bottom:8px; margin-top:4px;">
-                        <option value="none" ${w.type==='none'?'selected':''}>Немає</option>
-                        <option value="displacement" ${w.type==='displacement'?'selected':''}>Displacement</option>
-                        <option value="vortex" ${w.type==='vortex'?'selected':''}>Vortex</option>
-                        <option value="twirl" ${w.type==='twirl'?'selected':''}>Twirl (Spiral Falloff)</option>
-                        <option value="sine" ${w.type==='sine'?'selected':''}>Sine</option>
-                        <option value="bulge" ${w.type==='bulge'?'selected':''}>Pinch/Bulge</option>
-                        <option value="noise" ${w.type==='noise'?'selected':''}>Perlin Noise</option>
-                        <option value="domain_warp" ${w.type==='domain_warp'?'selected':''}>Domain Warp</option>
-                        <option value="distortion" ${w.type==='distortion'?'selected':''}>Дісторсія</option>
-                        <option value="polar" ${w.type==='polar'?'selected':''}>Полярні координати</option>
-                    </select>
-                    ${w.type !== 'none' ? `
-                    <div style="margin-bottom:4px;">${sliderRow(-100, 100, 1, w.strength, 10, `updateGlobalWarp(${idx}, 'strength', this.value)`)}</div>
-                    ${sliderRow(0.1, 20, 0.1, w.freq, 4, `updateGlobalWarp(${idx}, 'freq', this.value)`)}` : ''}
-                </div>
-            `).join('');
+            let globalWarpsHTML = (g.warps || []).map((w, idx) => renderWarpCardHTML(w, idx, true)).join('');
 
             globalBlockContents.warps = `
                 <div class="property-group" style="margin-bottom:0;">

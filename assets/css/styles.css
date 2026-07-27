@@ -64,6 +64,9 @@
         .gen-btn{background-color:#09090b;border:1px solid var(--border-color);color:var(--text-muted);font-size:10px;padding:6px 2px;border-radius:4px;cursor:pointer;font-weight:600}
         .gen-btn.active{background-color:var(--primary-color);color:#fff;border-color:var(--primary-color)}
         .warp-card{background:#0f0f11; border:1px solid var(--border-color); padding:10px; margin-bottom:8px; border-radius:4px; position:relative; touch-action:none; user-select:none; -webkit-user-select:none;}
+        .deformer-point-card{background:#141418; border:1px solid var(--border-color); padding:8px; margin-bottom:6px; border-radius:4px; position:relative; transition:border-color 0.15s; cursor:pointer;}
+        .deformer-point-card:hover{border-color:#3f3f46;}
+        .deformer-point-card.active-point{border-color:#f59e0b; box-shadow:0 0 6px rgba(245,158,11,0.25);}
         .warp-controls{position:absolute; right:6px; top:6px; display:flex; gap:3px; align-items:center;}
         .warp-btn{background:var(--border-color); color:#fff; border:none; border-radius:3px; font-size:10px; padding:2px 5px; cursor:pointer; line-height:1;}
         .warp-btn:hover:not(:disabled){background:var(--primary-color);}
