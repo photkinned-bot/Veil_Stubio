@@ -1709,9 +1709,224 @@
             }
         }
 
+        function getGlobalFloatBuffer(name, size) {
+            if (!window._globalFloatBuffers) window._globalFloatBuffers = {};
+            if (!window._globalFloatBuffers[name] || window._globalFloatBuffers[name].length !== size) {
+                window._globalFloatBuffers[name] = new Float32Array(size);
+            }
+            return window._globalFloatBuffers[name];
+        }
+
+        const PALETTE_PRESETS = {
+            custom: null,
+            wood_oak: [
+                { pos: 0.0, color: '#2a1608' },
+                { pos: 0.35, color: '#593213' },
+                { pos: 0.7, color: '#a06535' },
+                { pos: 1.0, color: '#d1a16e' }
+            ],
+            wood_mahogany: [
+                { pos: 0.0, color: '#1a0505' },
+                { pos: 0.4, color: '#4d1212' },
+                { pos: 0.75, color: '#802626' },
+                { pos: 1.0, color: '#b34d3b' }
+            ],
+            marble_carrara: [
+                { pos: 0.0, color: '#2b2d30' },
+                { pos: 0.25, color: '#5b6168' },
+                { pos: 0.5, color: '#a8b0b8' },
+                { pos: 0.8, color: '#e6ebf0' },
+                { pos: 1.0, color: '#fcfdff' }
+            ],
+            stone_slate: [
+                { pos: 0.0, color: '#111317' },
+                { pos: 0.35, color: '#272b33' },
+                { pos: 0.7, color: '#4a505e' },
+                { pos: 1.0, color: '#7a8396' }
+            ],
+            moss_forest: [
+                { pos: 0.0, color: '#0b1c09' },
+                { pos: 0.3, color: '#234a15' },
+                { pos: 0.65, color: '#4e8524' },
+                { pos: 1.0, color: '#8cc63f' }
+            ],
+            lava_fire: [
+                { pos: 0.0, color: '#0a0000' },
+                { pos: 0.25, color: '#520300' },
+                { pos: 0.55, color: '#cc2200' },
+                { pos: 0.8, color: '#ff8800' },
+                { pos: 1.0, color: '#ffffaa' }
+            ],
+            gold_polished: [
+                { pos: 0.0, color: '#261800' },
+                { pos: 0.3, color: '#6e4c00' },
+                { pos: 0.6, color: '#cca014' },
+                { pos: 0.85, color: '#ffd700' },
+                { pos: 1.0, color: '#fff5b8' }
+            ],
+            cyberpunk: [
+                { pos: 0.0, color: '#08001a' },
+                { pos: 0.3, color: '#500078' },
+                { pos: 0.65, color: '#f000ff' },
+                { pos: 0.85, color: '#00f0ff' },
+                { pos: 1.0, color: '#ffffff' }
+            ],
+            ocean_deep: [
+                { pos: 0.0, color: '#020b14' },
+                { pos: 0.35, color: '#093154' },
+                { pos: 0.7, color: '#16699a' },
+                { pos: 1.0, color: '#4fc3f7' }
+            ],
+            leather_brown: [
+                { pos: 0.0, color: '#170c06' },
+                { pos: 0.35, color: '#3b1f10' },
+                { pos: 0.7, color: '#703e23' },
+                { pos: 1.0, color: '#a86d48' }
+            ],
+            rust_iron: [
+                { pos: 0.0, color: '#121214' },
+                { pos: 0.3, color: '#3a2016' },
+                { pos: 0.65, color: '#873c1d' },
+                { pos: 0.85, color: '#cc5825' },
+                { pos: 1.0, color: '#f09050' }
+            ],
+            sand_dune: [
+                { pos: 0.0, color: '#292218' },
+                { pos: 0.35, color: '#69563e' },
+                { pos: 0.7, color: '#b59a72' },
+                { pos: 1.0, color: '#ebd2b0' }
+            ],
+            ice_glacier: [
+                { pos: 0.0, color: '#0a1520' },
+                { pos: 0.35, color: '#214d6e' },
+                { pos: 0.7, color: '#5da0c7' },
+                { pos: 1.0, color: '#d9f2ff' }
+            ]
+        };
+
         function hexToRgb(hex) {
             const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
             return result ? { r: parseInt(result[1], 16), g: parseInt(result[2], 16), b: parseInt(result[3], 16) } : { r: 255, g: 255, b: 255 };
+        }
+
+        function hexToRgbNormalized(hex) {
+            if (!hex) return [1, 1, 1];
+            const res = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+            return res ? [parseInt(res[1], 16) / 255, parseInt(res[2], 16) / 255, parseInt(res[3], 16) / 255] : [1, 1, 1];
+        }
+
+        function sampleColorRampNormalized(v, stops) {
+            if (!stops || stops.length === 0) return [v, v, v];
+            if (v <= stops[0].pos) return hexToRgbNormalized(stops[0].color);
+            if (v >= stops[stops.length - 1].pos) return hexToRgbNormalized(stops[stops.length - 1].color);
+            for (let i = 0; i < stops.length - 1; i++) {
+                let s0 = stops[i], s1 = stops[i + 1];
+                if (v >= s0.pos && v <= s1.pos) {
+                    let span = s1.pos - s0.pos;
+                    let t = span > 0 ? (v - s0.pos) / span : 0;
+                    let c0 = hexToRgbNormalized(s0.color);
+                    let c1 = hexToRgbNormalized(s1.color);
+                    return [
+                        c0[0] + (c1[0] - c0[0]) * t,
+                        c0[1] + (c1[1] - c0[1]) * t,
+                        c0[2] + (c1[2] - c0[2]) * t
+                    ];
+                }
+            }
+            return [v, v, v];
+        }
+
+        function applyRgbColorAdjustments(rgb, hueShift, sat, vib) {
+            let r = rgb[0], g = rgb[1], b = rgb[2];
+
+            if (hueShift !== 0) {
+                let angle = hueShift * Math.PI / 180;
+                let cosA = Math.cos(angle);
+                let sinA = Math.sin(angle);
+
+                let nr = r * (0.213 + cosA * 0.787 - sinA * 0.213) + g * (0.715 - cosA * 0.715 - sinA * 0.715) + b * (0.072 - cosA * 0.072 + sinA * 0.928);
+                let ng = r * (0.213 - cosA * 0.213 + sinA * 0.143) + g * (0.715 + cosA * 0.285 + sinA * 0.140) + b * (0.072 - cosA * 0.072 - sinA * 0.283);
+                let nb = r * (0.213 - cosA * 0.213 - sinA * 0.787) + g * (0.715 - cosA * 0.715 + sinA * 0.715) + b * (0.072 + cosA * 0.928 + sinA * 0.072);
+                r = nr; g = ng; b = nb;
+            }
+
+            if (sat !== 100) {
+                let lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+                let factor = sat / 100;
+                r = lum + (r - lum) * factor;
+                g = lum + (g - lum) * factor;
+                b = lum + (b - lum) * factor;
+            }
+
+            if (vib > 0) {
+                let maxC = Math.max(r, Math.max(g, b));
+                let minC = Math.min(r, Math.min(g, b));
+                let satCurrent = maxC - minC;
+                let factor = (1 - satCurrent) * (vib / 100) * 0.5;
+                let lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+                r = r + (r - lum) * factor;
+                g = g + (g - lum) * factor;
+                b = b + (b - lum) * factor;
+            }
+
+            return [
+                Math.max(0, Math.min(1, r)),
+                Math.max(0, Math.min(1, g)),
+                Math.max(0, Math.min(1, b))
+            ];
+        }
+
+        function buildLayerColorLUT(p) {
+            const lutR = new Float32Array(256);
+            const lutG = new Float32Array(256);
+            const lutB = new Float32Array(256);
+
+            const mode = p.colorMode || 'grayscale';
+            const hueShift = p.hueShift || 0;
+            const sat = p.saturation !== undefined ? p.saturation : 100;
+            const vib = p.vibrance || 0;
+            const colInvert = !!p.colorInvert;
+
+            let sortedStops = null;
+            if (mode === 'color_ramp') {
+                if (p.palettePreset && p.palettePreset !== 'custom' && PALETTE_PRESETS[p.palettePreset]) {
+                    sortedStops = PALETTE_PRESETS[p.palettePreset];
+                } else if (p.colorStops && p.colorStops.length > 0) {
+                    sortedStops = p.colorStops.slice().sort((a, b) => a.pos - b.pos);
+                } else if (p.stops && p.stops.length > 0) {
+                    sortedStops = p.stops.slice().sort((a, b) => a.pos - b.pos);
+                }
+            }
+
+            const cA = hexToRgbNormalized(p.colorA || '#ffffff');
+            const cB = hexToRgbNormalized(p.colorB || '#000000');
+
+            for (let i = 0; i < 256; i++) {
+                let v = i / 255;
+                if (colInvert) v = 1 - v;
+
+                let r = v, g = v, b = v;
+
+                if (mode === 'tint') {
+                    r = cB[0] + (cA[0] - cB[0]) * v;
+                    g = cB[1] + (cA[1] - cB[1]) * v;
+                    b = cB[2] + (cA[2] - cB[2]) * v;
+                } else if (mode === 'color_ramp' && sortedStops && sortedStops.length > 0) {
+                    const rgb = sampleColorRampNormalized(v, sortedStops);
+                    r = rgb[0]; g = rgb[1]; b = rgb[2];
+                }
+
+                if (hueShift !== 0 || sat !== 100 || vib !== 0) {
+                    const adj = applyRgbColorAdjustments([r, g, b], hueShift, sat, vib);
+                    r = adj[0]; g = adj[1]; b = adj[2];
+                }
+
+                lutR[i] = Math.max(0, Math.min(1, r));
+                lutG[i] = Math.max(0, Math.min(1, g));
+                lutB[i] = Math.max(0, Math.min(1, b));
+            }
+
+            return { lutR, lutG, lutB };
         }
 
         function ensureLayerPaintCanvas(lay, forceReloadFromDataUrl = false) {
@@ -1773,7 +1988,7 @@
                     invalidateCaches();
                     requestRender();
                 }
-            } else if (!lay.paintBuffer) {
+            } else if (!lay.paintBufferR) {
                 updatePaintBuffer(lay);
             }
         }
@@ -1785,16 +2000,19 @@
             let ctx = lay.paintCanvas.getContext('2d');
             let imgData = ctx.getImageData(0, 0, w, h);
             let data = imgData.data;
-            if (!lay.paintBuffer || lay.paintBuffer.length !== w * h) {
-                lay.paintBuffer = new Float32Array(w * h);
+            if (!lay.paintBufferR || lay.paintBufferR.length !== w * h) {
+                lay.paintBufferR = new Float32Array(w * h);
+                lay.paintBufferG = new Float32Array(w * h);
+                lay.paintBufferB = new Float32Array(w * h);
             }
             for (let i = 0; i < w * h; i++) {
-                let r = data[i * 4];
-                let g = data[i * 4 + 1];
-                let b = data[i * 4 + 2];
+                let r = data[i * 4] / 255;
+                let g = data[i * 4 + 1] / 255;
+                let b = data[i * 4 + 2] / 255;
                 let a = data[i * 4 + 3] / 255;
-                let lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
-                lay.paintBuffer[i] = lum * a;
+                lay.paintBufferR[i] = r * a;
+                lay.paintBufferG[i] = g * a;
+                lay.paintBufferB[i] = b * a;
             }
         }
 
@@ -2760,7 +2978,26 @@
             ensureBuffers(w,h);
             
             let imgData = cx.createImageData(w,h), data = imgData.data;
-            blendBuffer.fill(0); dispBuffer.fill(0.5);
+
+            const blendBufferR = getGlobalFloatBuffer('blendBufferR', w * h);
+            const blendBufferG = getGlobalFloatBuffer('blendBufferG', w * h);
+            const blendBufferB = getGlobalFloatBuffer('blendBufferB', w * h);
+
+            const layerBufferR = getGlobalFloatBuffer('layerBufferR', w * h);
+            const layerBufferG = getGlobalFloatBuffer('layerBufferG', w * h);
+            const layerBufferB = getGlobalFloatBuffer('layerBufferB', w * h);
+
+            const blurTempR = getGlobalFloatBuffer('blurTempR', w * h);
+            const blurTempG = getGlobalFloatBuffer('blurTempG', w * h);
+            const blurTempB = getGlobalFloatBuffer('blurTempB', w * h);
+
+            const pendingMaskTargetR = getGlobalFloatBuffer('pendingMaskTargetR', w * h);
+            const pendingMaskTargetG = getGlobalFloatBuffer('pendingMaskTargetG', w * h);
+            const pendingMaskTargetB = getGlobalFloatBuffer('pendingMaskTargetB', w * h);
+            const pendingMaskAlphaBuffer = getGlobalFloatBuffer('pendingMaskAlphaBuffer', w * h);
+
+            blendBufferR.fill(0); blendBufferG.fill(0); blendBufferB.fill(0);
+            dispBuffer.fill(0.5);
 
             // --- Dynamic Resolution Metadata ---
             if ($('resolutionInfo')) {
@@ -2768,9 +3005,6 @@
             }
 
             // --- Глобальна трансформація (Zoom/Rotate/Offset) + глобальний тайлінг ---
-            // Читаємо один раз на рендер; застосовується до КОЖНОГО шару однаково,
-            // як "камера" над усією композицією, ще ДО власних (локальних)
-            // масштабу/повороту/зсуву/warp'ів кожного шару окремо.
             let gZoom = state.global.globalZoom || 1;
             let gRot = state.global.globalRotation || 0;
             let gOffX = state.global.globalOffsetX || 0;
@@ -2780,27 +3014,14 @@
             let gRepY = Math.max(1, state.global.tileRepeatY || 1);
             let gMirX = state.global.tileMirrorX !== false;
             let gMirY = state.global.tileMirrorY !== false;
-            // Зсув шва: дозволяє "посунути" повторювані/дзеркальні копії одна відносно
-            // одної, щоб підібрати позицію, де природні деталі візерунка збігаються
-            // і шов візуально менш помітний.
             let gSeamOffX = state.global.tileSeamOffsetX || 0;
             let gSeamOffY = state.global.tileSeamOffsetY || 0;
-            // "Примусова м'яка безшовність" (і режим 'blend') — перевикористовують вже
-            // наявний per-layer 4-семпловий seamless-блендинг (нижче, п.`p.seamless`),
-            // просто вмикаючи його для КОЖНОГО шару одразу, з єдиною глобальною
-            // м'якістю шва. Крива згладжування — додаткове тонке налаштування
-            // характеру переходу (плавний spline чи прямий лінійний).
             let gForceSeamless = !!state.global.forceSeamless || gTileMode === 'blend';
             let gForceSoftness = state.global.forceSeamlessSoftness ?? 1;
             let gBlendCurve = state.global.blendCurve || 'smooth';
 
-            // --- Шар-маска (Clipping Mask): мапінг маска -> ціль ---
-            // state.layers[0] — верхній шар списку/стеку; більший index — нижче.
-            // Порахований тут раз на кожен renderProject(), тому переміщення шарів
-            // у списку одразу дає ефект на наступному кадрі.
+            // --- Шар-маска (Clipping Mask) ---
             let { maskTargetIndex, clippedByMasks } = computeMaskRelationships();
-            // Стан "відкладеного" (pending) цільового шару, що чекає накладання
-            // однієї чи кількох масок над ним, перш ніж потрапити у blendBuffer.
             let pendingRemaining = 0, pendingOp = 1, pendingBlendFn = Blend.normal;
 
             // Check if displacement warp is used by any visible layer or globally
@@ -2829,7 +3050,7 @@
             }
 
             let dispBufferPopulated = false;
-            let firstBlend = true;     // тепер окремо: пряме присвоєння vs блендинг у blendBuffer (маски самі в blendBuffer не пишуть)
+            let firstBlend = true;
 
             for(let lIdx=state.layers.length-1; lIdx>=0; lIdx--){
                 let lay = state.layers[lIdx]; if(!lay.visible) continue;
@@ -2848,14 +3069,12 @@
                     dispBufferPopulated = true;
                 }
 
-                // Per-layer Caching Mechanism
-                if (!lay.cachedBuffer || lay.isDirty || lay.cachedW !== w || lay.cachedH !== h) {
-                    if (!lay.cachedBuffer || lay.cachedBuffer.length !== w * h) {
-                        if (window.globalBufferPool) {
-                            lay.cachedBuffer = window.globalBufferPool.acquireFloat32(w * h);
-                        } else {
-                            lay.cachedBuffer = new Float32Array(w * h);
-                        }
+                // Per-layer Caching Mechanism (RGB)
+                if (!lay.cachedBufferR || lay.isDirty || lay.cachedW !== w || lay.cachedH !== h) {
+                    if (!lay.cachedBufferR || lay.cachedBufferR.length !== w * h) {
+                        lay.cachedBufferR = new Float32Array(w * h);
+                        lay.cachedBufferG = new Float32Array(w * h);
+                        lay.cachedBufferB = new Float32Array(w * h);
                     }
                     lay.cachedW = w;
                     lay.cachedH = h;
@@ -2866,12 +3085,14 @@
                         activeCymaticsSources = Cymatics.getSources(p.sourceMode||'Corners', p.sourcesCount||4);
                     }
 
+                    const { lutR, lutG, lutB } = buildLayerColorLUT(p);
+
                     for(let y=0; y<h; y++){
                         const baseY = y/h;
                         for(let x=0; x<w; x++){
                             let nx = x/w, ny = baseY, idx = y*w+x;
 
-                            // --- Глобальна трансформація + тайлінг (однаково для всіх шарів) ---
+                            // --- Глобальна трансформація + тайлінг ---
                             if (gZoom !== 1 || gRot || gOffX || gOffY || gTileMode !== 'off') {
                                 nx -= 0.5; ny -= 0.5;
                                 if (gZoom !== 1) { nx /= gZoom; ny /= gZoom; }
@@ -2962,13 +3183,11 @@
                                     }
                                 }
                             }
-                            // --- кінець глобального блоку; далі — незмінна логіка шару ---
                             
                             nx -= 0.5; ny -= 0.5;
                             nx /= lScale; ny /= lScale;
 
                             if(p.angle) { 
-                                // Sampling uses the inverse transform so a positive angle rotates content clockwise.
                                 let r = -p.angle * Math.PI / 180;
                                 let rnx = nx * Math.cos(r) - ny * Math.sin(r); 
                                 let rny = nx * Math.sin(r) + ny * Math.cos(r); 
@@ -3047,104 +3266,159 @@
 
                             let tx = nx + (p.offsetX||0) + (p.seed||0)*0.013, ty = ny + (p.offsetY||0) + (p.seed||0)*0.021;
                             let sx=p.scaleX||10, sy=p.scaleY||10;
-                            let v = 0;
 
-                            if (p.seamless || gForceSeamless) {
-                                let tx0 = tx % 1.0; if (tx0 < 0) tx0 += 1.0;
-                                let ty0 = ty % 1.0; if (ty0 < 0) ty0 += 1.0;
-                                let v00 = evalGenerator(lay.generatorType, tx0, ty0, sx, sy, p, activeCymaticsSources, lay);
-                                let v10 = evalGenerator(lay.generatorType, tx0 - 1, ty0, sx, sy, p, activeCymaticsSources, lay);
-                                let v01 = evalGenerator(lay.generatorType, tx0, ty0 - 1, sx, sy, p, activeCymaticsSources, lay);
-                                let v11 = evalGenerator(lay.generatorType, tx0 - 1, ty0 - 1, sx, sy, p, activeCymaticsSources, lay);
-                                let softness = gForceSeamless ? Math.max(0, Math.min(1, gForceSoftness)) : Math.max(0, Math.min(1, p.seamlessSoftness ?? 1));
-                                let curveX = gBlendCurve === 'linear' ? tx0 : Perlin.fade(tx0);
-                                let curveY = gBlendCurve === 'linear' ? ty0 : Perlin.fade(ty0);
-                                let u = Perlin.lerp(softness, tx0, curveX);
-                                let v_blend = Perlin.lerp(softness, ty0, curveY);
-                                v = Perlin.lerp(v_blend, Perlin.lerp(u, v00, v10), Perlin.lerp(u, v01, v11));
+                            if (lay.generatorType === 'paint') {
+                                let pr = 0, pg = 0, pb = 0;
+                                if (lay.paintBufferR) {
+                                    let scaleFactorX = (sx || 10) / 10;
+                                    let scaleFactorY = (sy || 10) / 10;
+                                    let stx = (tx - 0.5) * scaleFactorX + 0.5;
+                                    let sty = (ty - 0.5) * scaleFactorY + 0.5;
+                                    let px = (stx % 1 + 1) % 1;
+                                    let py = (sty % 1 + 1) % 1;
+                                    let pw = 1024, ph = 1024;
+                                    let x = px * (pw - 1), y = py * (ph - 1);
+                                    let x0 = Math.floor(x), y0 = Math.floor(y);
+                                    let x1 = Math.min(pw - 1, x0 + 1), y1 = Math.min(ph - 1, y0 + 1);
+                                    let fx = x - x0, fy = y - y0;
+                                    
+                                    let r00 = lay.paintBufferR[y0 * pw + x0], r10 = lay.paintBufferR[y0 * pw + x1];
+                                    let r01 = lay.paintBufferR[y1 * pw + x0], r11 = lay.paintBufferR[y1 * pw + x1];
+                                    pr = (1 - fy) * ((1 - fx) * r00 + fx * r10) + fy * ((1 - fx) * r01 + fx * r11);
+
+                                    let g00 = lay.paintBufferG[y0 * pw + x0], g10 = lay.paintBufferG[y0 * pw + x1];
+                                    let g01 = lay.paintBufferG[y1 * pw + x0], g11 = lay.paintBufferG[y1 * pw + x1];
+                                    pg = (1 - fy) * ((1 - fx) * g00 + fx * g10) + fy * ((1 - fx) * g01 + fx * g11);
+
+                                    let b00 = lay.paintBufferB[y0 * pw + x0], b10 = lay.paintBufferB[y0 * pw + x1];
+                                    let b01 = lay.paintBufferB[y1 * pw + x0], b11 = lay.paintBufferB[y1 * pw + x1];
+                                    pb = (1 - fy) * ((1 - fx) * b00 + fx * b10) + fy * ((1 - fx) * b01 + fx * b11);
+                                }
+                                if(p.brightness!==undefined) { pr*=p.brightness; pg*=p.brightness; pb*=p.brightness; }
+                                if(p.contrast!==undefined) { pr=(pr-0.5)*p.contrast+0.5; pg=(pg-0.5)*p.contrast+0.5; pb=(pb-0.5)*p.contrast+0.5; }
+                                if(p.invert) { pr=1-pr; pg=1-pg; pb=1-pb; }
+                                lay.cachedBufferR[idx] = Math.max(0, Math.min(1, pr));
+                                lay.cachedBufferG[idx] = Math.max(0, Math.min(1, pg));
+                                lay.cachedBufferB[idx] = Math.max(0, Math.min(1, pb));
                             } else {
-                                v = evalGenerator(lay.generatorType, tx, ty, sx, sy, p, activeCymaticsSources, lay);
-                            }
+                                let v = 0;
+                                if (p.seamless || gForceSeamless) {
+                                    let tx0 = tx % 1.0; if (tx0 < 0) tx0 += 1.0;
+                                    let ty0 = ty % 1.0; if (ty0 < 0) ty0 += 1.0;
+                                    let v00 = evalGenerator(lay.generatorType, tx0, ty0, sx, sy, p, activeCymaticsSources, lay);
+                                    let v10 = evalGenerator(lay.generatorType, tx0 - 1, ty0, sx, sy, p, activeCymaticsSources, lay);
+                                    let v01 = evalGenerator(lay.generatorType, tx0, ty0 - 1, sx, sy, p, activeCymaticsSources, lay);
+                                    let v11 = evalGenerator(lay.generatorType, tx0 - 1, ty0 - 1, sx, sy, p, activeCymaticsSources, lay);
+                                    let softness = gForceSeamless ? Math.max(0, Math.min(1, gForceSoftness)) : Math.max(0, Math.min(1, p.seamlessSoftness ?? 1));
+                                    let curveX = gBlendCurve === 'linear' ? tx0 : Perlin.fade(tx0);
+                                    let curveY = gBlendCurve === 'linear' ? ty0 : Perlin.fade(ty0);
+                                    let u = Perlin.lerp(softness, tx0, curveX);
+                                    let v_blend = Perlin.lerp(softness, ty0, curveY);
+                                    v = Perlin.lerp(v_blend, Perlin.lerp(u, v00, v10), Perlin.lerp(u, v01, v11));
+                                } else {
+                                    v = evalGenerator(lay.generatorType, tx, ty, sx, sy, p, activeCymaticsSources, lay);
+                                }
 
-                            if(p.brightness!==undefined) v=v*p.brightness;
-                            if(p.contrast!==undefined) v=(v-0.5)*p.contrast+0.5;
-                            if(p.invert) v=1-v;
+                                if(p.brightness!==undefined) v=v*p.brightness;
+                                if(p.contrast!==undefined) v=(v-0.5)*p.contrast+0.5;
+                                if(p.invert) v=1-v;
 
-                            if (p.useLevels) {
-                                let min = (p.levelMin||0)/100, max = (p.levelMax||100)/100;
-                                if (max > min) v = (v - min) / (max - min);
-                            }
-                            if (p.useThreshold) v = v >= (p.thresholdVal||50)/100 ? 1 : 0;
-                            
-                            if (p.usePosterize) {
-                                let levels = Math.max(2, p.posterizeLevels || 4);
-                                v = Math.floor(v * levels) / (levels - 1);
-                            }
+                                if (p.useLevels) {
+                                    let min = (p.levelMin||0)/100, max = (p.levelMax||100)/100;
+                                    if (max > min) v = (v - min) / (max - min);
+                                }
+                                if (p.useThreshold) v = v >= (p.thresholdVal||50)/100 ? 1 : 0;
+                                
+                                if (p.usePosterize) {
+                                    let levels = Math.max(2, p.posterizeLevels || 4);
+                                    v = Math.floor(v * levels) / (levels - 1);
+                                }
 
-                            lay.cachedBuffer[idx] = Math.max(0, Math.min(1, v));
+                                v = Math.max(0, Math.min(1, v));
+                                let lutIdx = (v * 255.99) | 0;
+                                if (lutIdx < 0) lutIdx = 0; else if (lutIdx > 255) lutIdx = 255;
+
+                                lay.cachedBufferR[idx] = lutR[lutIdx];
+                                lay.cachedBufferG[idx] = lutG[lutIdx];
+                                lay.cachedBufferB[idx] = lutB[lutIdx];
+                            }
                         }
                     }
                 }
 
-                layerBuffer.set(lay.cachedBuffer);
+                layerBufferR.set(lay.cachedBufferR);
+                layerBufferG.set(lay.cachedBufferG);
+                layerBufferB.set(lay.cachedBufferB);
 
-                if (p.useFindEdges) applyEdgeDetection(layerBuffer, blurTemp, w, h);
+                if (p.useFindEdges) {
+                    applyEdgeDetection(layerBufferR, blurTempR, w, h);
+                    applyEdgeDetection(layerBufferG, blurTempG, w, h);
+                    applyEdgeDetection(layerBufferB, blurTempB, w, h);
+                }
                 if (p.blur > 0) {
                     let isTiled = (state.global.tileMode && state.global.tileMode !== 'off') || !!p.seamless;
                     let blurMode = isTiled ? 'wrap' : (p.blurClampEdge ? 'clamp' : 'wrap');
                     let bType = p.blurType || 'gaussian';
                     if (bType === 'box') {
-                        applyBoxBlur(layerBuffer, blurTemp, w, h, parseInt(p.blur), blurMode);
+                        applyBoxBlur(layerBufferR, blurTempR, w, h, parseInt(p.blur), blurMode);
+                        applyBoxBlur(layerBufferG, blurTempG, w, h, parseInt(p.blur), blurMode);
+                        applyBoxBlur(layerBufferB, blurTempB, w, h, parseInt(p.blur), blurMode);
                     } else {
-                        applyGaussianBlur(layerBuffer, blurTemp, w, h, parseInt(p.blur), blurMode);
+                        applyGaussianBlur(layerBufferR, blurTempR, w, h, parseInt(p.blur), blurMode);
+                        applyGaussianBlur(layerBufferG, blurTempG, w, h, parseInt(p.blur), blurMode);
+                        applyGaussianBlur(layerBufferB, blurTempB, w, h, parseInt(p.blur), blurMode);
                     }
                 }
 
                 if (lay.isMask) {
-                    // Шар-маска сам НІКОЛИ не потрапляє у blendBuffer напряму — його
-                    // яскравість (0..1) стає ПОПІКСЕЛЬНОЮ АЛЬФОЮ цільового шару під ним:
-                    // біле в масці = ціль повністю видима, чорне = ціль прозора і крізь
-                    // неї видно те, що НИЖЧЕ по стек (а не суцільний чорний колір).
-                    // Якщо цілі немає (низ стеку) — pendingRemaining==0, маска ігнорується.
                     if (pendingRemaining > 0) {
-                        for (let i=0;i<w*h;i++) pendingMaskAlphaBuffer[i] *= layerBuffer[i];
+                        for (let i=0;i<w*h;i++) {
+                            let maskLum = 0.299 * layerBufferR[i] + 0.587 * layerBufferG[i] + 0.114 * layerBufferB[i];
+                            pendingMaskAlphaBuffer[i] *= maskLum;
+                        }
                         pendingRemaining--;
                         if (pendingRemaining === 0) {
                             if (firstBlend) {
-                                // Немає нічого нижче (чорний канвас) — контент лише применшується
-                                // альфою маски; власна opacity шару тут теж ігнорується, так само
-                                // як і для звичайного немаскованого нижнього шару вище.
-                                for(let i=0;i<w*h;i++) blendBuffer[i] = pendingMaskTargetBuffer[i]*pendingMaskAlphaBuffer[i];
+                                for(let i=0;i<w*h;i++) {
+                                    let a = pendingMaskAlphaBuffer[i];
+                                    blendBufferR[i] = pendingMaskTargetR[i]*a;
+                                    blendBufferG[i] = pendingMaskTargetG[i]*a;
+                                    blendBufferB[i] = pendingMaskTargetB[i]*a;
+                                }
                             } else {
                                 for(let i=0;i<w*h;i++) {
                                     let a = pendingMaskAlphaBuffer[i]*pendingOp;
-                                    blendBuffer[i] = blendBuffer[i]*(1-a) + pendingBlendFn(blendBuffer[i],pendingMaskTargetBuffer[i])*a;
+                                    blendBufferR[i] = blendBufferR[i]*(1-a) + pendingBlendFn(blendBufferR[i],pendingMaskTargetR[i])*a;
+                                    blendBufferG[i] = blendBufferG[i]*(1-a) + pendingBlendFn(blendBufferG[i],pendingMaskTargetG[i])*a;
+                                    blendBufferB[i] = blendBufferB[i]*(1-a) + pendingBlendFn(blendBufferB[i],pendingMaskTargetB[i])*a;
                                 }
                             }
                             firstBlend = false;
                         }
                     }
                 } else if (clippedByMasks[lIdx]) {
-                    // Цей шар кліпається однією чи кількома масками, що йдуть далі в цьому
-                    // ж циклі (вони завжди йдуть одразу за ним — тільки маски можуть бути
-                    // між ним і його масками). Відкладаємо блендинг до їх повного накладання:
-                    // контент і альфа зберігаються ОКРЕМО, щоб чорне в масці не "фарбувало"
-                    // піксель, а робило його прозорим для шару(ів) під ним.
-                    pendingMaskTargetBuffer.set(layerBuffer);
+                    pendingMaskTargetR.set(layerBufferR);
+                    pendingMaskTargetG.set(layerBufferG);
+                    pendingMaskTargetB.set(layerBufferB);
                     pendingMaskAlphaBuffer.fill(1);
                     pendingOp = op; pendingBlendFn = bFn;
                     pendingRemaining = clippedByMasks[lIdx].length;
                 } else {
-                    // Звичайний шар без маскування — швидкі гілки для першого або normal 100% шару
                     if (firstBlend) {
-                        blendBuffer.set(layerBuffer);
+                        blendBufferR.set(layerBufferR);
+                        blendBufferG.set(layerBufferG);
+                        blendBufferB.set(layerBufferB);
                         firstBlend = false;
                     } else if (op === 1.0 && bFn === Blend.normal) {
-                        blendBuffer.set(layerBuffer);
+                        blendBufferR.set(layerBufferR);
+                        blendBufferG.set(layerBufferG);
+                        blendBufferB.set(layerBufferB);
                     } else {
                         let oneMinusOp = 1 - op;
                         for(let i=0; i<w*h; i++) {
-                            blendBuffer[i] = blendBuffer[i] * oneMinusOp + bFn(blendBuffer[i], layerBuffer[i]) * op;
+                            blendBufferR[i] = blendBufferR[i] * oneMinusOp + bFn(blendBufferR[i], layerBufferR[i]) * op;
+                            blendBufferG[i] = blendBufferG[i] * oneMinusOp + bFn(blendBufferG[i], layerBufferG[i]) * op;
+                            blendBufferB[i] = blendBufferB[i] * oneMinusOp + bFn(blendBufferB[i], layerBufferB[i]) * op;
                         }
                     }
                 }
@@ -3155,16 +3429,27 @@
                 let globalBlurMode = isGlobalTiled ? 'wrap' : (state.global.blurClampEdge ? 'clamp' : 'wrap');
                 let gBType = state.global.blurType || 'gaussian';
                 if (gBType === 'box') {
-                    applyBoxBlur(blendBuffer, blurTemp, w, h, parseInt(state.global.blur), globalBlurMode);
+                    applyBoxBlur(blendBufferR, blurTempR, w, h, parseInt(state.global.blur), globalBlurMode);
+                    applyBoxBlur(blendBufferG, blurTempG, w, h, parseInt(state.global.blur), globalBlurMode);
+                    applyBoxBlur(blendBufferB, blurTempB, w, h, parseInt(state.global.blur), globalBlurMode);
                 } else {
-                    applyGaussianBlur(blendBuffer, blurTemp, w, h, parseInt(state.global.blur), globalBlurMode);
+                    applyGaussianBlur(blendBufferR, blurTempR, w, h, parseInt(state.global.blur), globalBlurMode);
+                    applyGaussianBlur(blendBufferG, blurTempG, w, h, parseInt(state.global.blur), globalBlurMode);
+                    applyGaussianBlur(blendBufferB, blurTempB, w, h, parseInt(state.global.blur), globalBlurMode);
                 }
             }
 
             let gg=state.global.gamma||1, gc=state.global.contrast||1, gr=state.global.grain||0, gi=state.global.invert===true;
             let g = state.global;
 
-            // Lightroom Vignette Parameters
+            let gHue = g.globalHueShift || 0;
+            let gSat = g.globalSaturation !== undefined ? g.globalSaturation : 100;
+            let gVib = g.globalVibrance || 0;
+            let gTemp = g.globalColorTemp || 0;
+            let gTint = g.globalColorTint || 0;
+            let gOverlayColor = hexToRgbNormalized(g.globalColorOverlay || '#000000');
+            let gOverlayOp = (g.globalColorOverlayOpacity || 0) / 100;
+
             let vAmt = g.vignetteAmount !== undefined ? g.vignetteAmount : (g.vignette ? -Math.round(g.vignette * 100) : 0);
             let vMid = (g.vignetteMidpoint !== undefined ? g.vignetteMidpoint : 50) / 100;
             let vFeath = Math.max(0.01, (g.vignetteFeather !== undefined ? g.vignetteFeather : 50) / 100);
@@ -3184,11 +3469,43 @@
             for(let y=0; y<h; y++){
                 let ny = y / h - vCY;
                 for(let x=0; x<w; x++){
-                    let px_idx = y*w+x, v = blendBuffer[px_idx];
+                    let px_idx = y*w+x;
+                    let vr = blendBufferR[px_idx];
+                    let vg = blendBufferG[px_idx];
+                    let vb = blendBufferB[px_idx];
 
-                    if(gi) v=1-v;
-                    if(gc!==1) v=(v-0.5)*gc+0.5;
-                    if(gg!==1 && v>0) v=Math.pow(v,1/gg);
+                    if(gi) { vr = 1 - vr; vg = 1 - vg; vb = 1 - vb; }
+                    if(gc!==1) {
+                        vr = (vr - 0.5) * gc + 0.5;
+                        vg = (vg - 0.5) * gc + 0.5;
+                        vb = (vb - 0.5) * gc + 0.5;
+                    }
+                    if(gg!==1) {
+                        if (vr > 0) vr = Math.pow(vr, 1 / gg);
+                        if (vg > 0) vg = Math.pow(vg, 1 / gg);
+                        if (vb > 0) vb = Math.pow(vb, 1 / gg);
+                    }
+
+                    if (gTemp !== 0) {
+                        let tFactor = gTemp / 100;
+                        vr += tFactor * 0.1;
+                        vb -= tFactor * 0.1;
+                    }
+                    if (gTint !== 0) {
+                        let tFactor = gTint / 100;
+                        vg += tFactor * 0.1;
+                    }
+
+                    if (gHue !== 0 || gSat !== 100 || gVib !== 0) {
+                        let adj = applyRgbColorAdjustments([vr, vg, vb], gHue, gSat, gVib);
+                        vr = adj[0]; vg = adj[1]; vb = adj[2];
+                    }
+
+                    if (gOverlayOp > 0) {
+                        vr = vr * (1 - gOverlayOp) + gOverlayColor[0] * gOverlayOp;
+                        vg = vg * (1 - gOverlayOp) + gOverlayColor[1] * gOverlayOp;
+                        vb = vb * (1 - gOverlayOp) + gOverlayColor[2] * gOverlayOp;
+                    }
 
                     if (hasVignette) {
                         let nx = x / w - vCX;
@@ -3214,21 +3531,28 @@
                         if (amtNorm < 0) {
                             let darken = -amtNorm * falloff;
                             if (vHigh > 0) {
-                                let lum = v > 1 ? 1 : (v < 0 ? 0 : v);
-                                darken *= (1.0 - vHigh * lum * lum);
+                                let lum = 0.299 * vr + 0.587 * vg + 0.114 * vb;
+                                darken *= (1.0 - vHigh * Math.min(1, Math.max(0, lum)) ** 2);
                             }
                             factor = 1.0 - darken;
                         } else {
                             let brighten = amtNorm * falloff;
                             factor = 1.0 + brighten;
                         }
-                        v *= Math.max(0, factor);
+                        let vf = Math.max(0, factor);
+                        vr *= vf; vg *= vf; vb *= vf;
                     }
 
-                    if(gr>0) v+=(Math.random()-0.5)*(gr/255);
-                    
-                    let cv=Math.max(0,Math.min(255,Math.floor(v*255))), px=px_idx*4;
-                    data[px]=cv; data[px+1]=cv; data[px+2]=cv; data[px+3]=255;
+                    if(gr>0) {
+                        let gVal = (Math.random() - 0.5) * (gr / 255);
+                        vr += gVal; vg += gVal; vb += gVal;
+                    }
+
+                    let px = px_idx * 4;
+                    data[px] = Math.max(0, Math.min(255, Math.floor(vr * 255)));
+                    data[px + 1] = Math.max(0, Math.min(255, Math.floor(vg * 255)));
+                    data[px + 2] = Math.max(0, Math.min(255, Math.floor(vb * 255)));
+                    data[px + 3] = 255;
                 }
             }
 
@@ -3472,7 +3796,10 @@
             return { seamless:false, scale:10, scaleX:10, scaleY:10, lockScale:true, layerScale:1, contrast:1, brightness:1, angle:0, blur:0, blurType:'gaussian', blurClampEdge:false,
                 offsetX:0, offsetY:0, invert:false, warps:[],
                 useThreshold:false, thresholdVal:50, useLevels:false, levelMin:0, levelMax:100,
-                usePosterize:false, posterizeLevels:4, useFindEdges:false };
+                usePosterize:false, posterizeLevels:4, useFindEdges:false,
+                colorMode: 'grayscale', colorA: '#ffffff', colorB: '#000000', palettePreset: 'custom',
+                colorStops: [{ pos: 0, color: '#000000' }, { pos: 1, color: '#ffffff' }],
+                hueShift: 0, saturation: 100, vibrance: 0, colorInvert: false };
         }
 
         function freshGlobalSettings() {
@@ -3489,6 +3816,9 @@
                 tileMode:'off', tileRepeatX:2, tileRepeatY:2, tileMirrorX:true, tileMirrorY:true,
                 tileSeamOffsetX:0, tileSeamOffsetY:0, blendCurve:'smooth',
                 forceSeamless:false, forceSeamlessSoftness:1,
+                globalHueShift: 0, globalSaturation: 100, globalVibrance: 0,
+                globalColorTemp: 0, globalColorTint: 0,
+                globalColorOverlay: '#000000', globalColorOverlayOpacity: 0,
                 warps: [] };
         }
 
@@ -4089,15 +4419,83 @@
             commitHistorySnapshot();
         };
 
+        window.applyPalettePresetToLayer = function(presetKey) {
+            let lay = state.layers.find(l => l.id === state.selectedLayerId);
+            if (!lay || !lay.params) return;
+            lay.params.palettePreset = presetKey;
+            if (presetKey !== 'custom' && PALETTE_PRESETS[presetKey]) {
+                lay.params.colorStops = JSON.parse(JSON.stringify(PALETTE_PRESETS[presetKey]));
+            }
+            lay.params.colorMode = 'color_ramp';
+            lay.isDirty = true;
+            renderProps();
+            requestRender();
+            scheduleHistorySnapshot();
+        };
+
+        window.addColorRampStop = function() {
+            let lay = state.layers.find(l => l.id === state.selectedLayerId);
+            if (!lay || !lay.params) return;
+            if (!lay.params.colorStops) lay.params.colorStops = [{ pos: 0, color: '#000000' }, { pos: 1, color: '#ffffff' }];
+            let stops = lay.params.colorStops;
+            let newPos = 0.5;
+            if (stops.length >= 2) {
+                let sorted = stops.slice().sort((a, b) => a.pos - b.pos);
+                newPos = (sorted[0].pos + sorted[sorted.length - 1].pos) / 2;
+            }
+            stops.push({ pos: newPos, color: '#888888' });
+            stops.sort((a, b) => a.pos - b.pos);
+            lay.params.palettePreset = 'custom';
+            lay.params.colorMode = 'color_ramp';
+            lay.isDirty = true;
+            renderProps();
+            requestRender();
+            scheduleHistorySnapshot();
+        };
+
+        window.removeColorRampStop = function(idx) {
+            let lay = state.layers.find(l => l.id === state.selectedLayerId);
+            if (!lay || !lay.params || !lay.params.colorStops || lay.params.colorStops.length <= 2) return;
+            lay.params.colorStops.splice(idx, 1);
+            lay.params.palettePreset = 'custom';
+            lay.isDirty = true;
+            renderProps();
+            requestRender();
+            scheduleHistorySnapshot();
+        };
+
+        window.updateColorRampStop = function(idx, key, val) {
+            let lay = state.layers.find(l => l.id === state.selectedLayerId);
+            if (!lay || !lay.params) return;
+            if (!lay.params.colorStops) {
+                if (lay.params.stops) lay.params.colorStops = JSON.parse(JSON.stringify(lay.params.stops));
+                else lay.params.colorStops = [{ pos: 0, color: '#000000' }, { pos: 1, color: '#ffffff' }];
+            }
+            if (!lay.params.colorStops[idx]) return;
+            triggerInteraction();
+            let stop = lay.params.colorStops[idx];
+            if (key === 'color') stop.color = val;
+            else stop.pos = parseFloat(val);
+            lay.params.palettePreset = 'custom';
+            lay.isDirty = true;
+
+            let sortedStops = lay.params.colorStops.slice().sort((a, b) => a.pos - b.pos);
+            let cssStopsStr = sortedStops.map(s => `${s.color || '#888888'} ${Math.round(s.pos * 100)}%`).join(', ');
+            let rampEl = $('layerColorRampPreview');
+            if (rampEl) rampEl.style.background = `linear-gradient(to right, ${cssStopsStr})`;
+
+            if (!suppressRender) requestRender();
+        };
+
         // --- Accordion Blocks & Drag-and-Drop Reordering State ---
         let accordionConfig = {
             layer: {
-                order: ['algo', 'transform', 'fx', 'warps'],
-                states: { algo: false, transform: false, fx: false, warps: false }
+                order: ['algo', 'color', 'transform', 'fx', 'warps'],
+                states: { algo: false, color: true, transform: false, fx: false, warps: false }
             },
             global: {
-                order: ['transform', 'warps', 'tiling', 'fx'],
-                states: { transform: false, warps: false, tiling: false, fx: false }
+                order: ['transform', 'color', 'warps', 'tiling', 'fx'],
+                states: { transform: false, color: true, warps: false, tiling: false, fx: false }
             }
         };
 
@@ -4107,14 +4505,20 @@
                 let parsed = JSON.parse(savedAcc);
                 if (parsed.layer && Array.isArray(parsed.layer.order)) {
                     accordionConfig.layer.order = parsed.layer.order.filter(k => k !== 'blend');
-                    if (parsed.layer.states) accordionConfig.layer.states = parsed.layer.states;
+                    if (!accordionConfig.layer.order.includes('color')) {
+                        accordionConfig.layer.order.splice(1, 0, 'color');
+                    }
+                    if (parsed.layer.states) accordionConfig.layer.states = Object.assign({ color: true }, parsed.layer.states);
                 }
                 if (parsed.global && Array.isArray(parsed.global.order)) {
                     accordionConfig.global.order = parsed.global.order;
+                    if (!accordionConfig.global.order.includes('color')) {
+                        accordionConfig.global.order.splice(1, 0, 'color');
+                    }
                     if (!accordionConfig.global.order.includes('warps')) {
                         accordionConfig.global.order.push('warps');
                     }
-                    if (parsed.global.states) accordionConfig.global.states = parsed.global.states;
+                    if (parsed.global.states) accordionConfig.global.states = Object.assign({ color: true }, parsed.global.states);
                 }
             }
         } catch(e) {}
@@ -4488,6 +4892,97 @@
             // Block: warps
             let warpsHTML = lp.warps.map((w, idx) => renderWarpCardHTML(w, idx, false)).join('');
 
+            // Block: color
+            let colorMode = lp.colorMode || (lay.generatorType === 'gradient' && lp.stops ? 'color_ramp' : 'grayscale');
+            let colorRampPreview = '';
+            let sortedLayerStops = (lp.colorStops && lp.colorStops.length > 0) ? lp.colorStops.slice().sort((a,b) => a.pos - b.pos) : (lp.stops || []).slice().sort((a,b) => a.pos - b.pos);
+            if (sortedLayerStops.length > 0) {
+                let cssStopsStr = sortedLayerStops.map(s => `${s.color || '#888888'} ${Math.round(s.pos * 100)}%`).join(', ');
+                colorRampPreview = `background: linear-gradient(to right, ${cssStopsStr}); height: 24px; border-radius: 6px; border: 1px solid var(--border-color, #27272a); margin-bottom: 8px; position: relative; box-shadow: inset 0 1px 3px rgba(0,0,0,0.5);`;
+            } else {
+                colorRampPreview = `background: linear-gradient(to right, #000000 0%, #ffffff 100%); height: 24px; border-radius: 6px; border: 1px solid var(--border-color, #27272a); margin-bottom: 8px;`;
+            }
+
+            let colorStopsHTML = '';
+            if (colorMode === 'color_ramp') {
+                colorStopsHTML = sortedLayerStops.map((s, sIdx) => {
+                    return `
+                    <div style="background: rgba(255,255,255,0.03); border: 1px solid var(--border-color, #27272a); border-radius: 6px; padding: 4px 6px; margin-bottom: 4px; display: grid; grid-template-columns: 24px 1fr 20px; gap: 6px; align-items: center;">
+                        <input type="color" value="${s.color || '#ffffff'}" oninput="updateColorRampStop(${sIdx}, 'color', this.value)" style="width:22px; height:22px; padding:0; border:none; background:none; cursor:pointer;" title="Колір точки">
+                        <div>
+                            <div style="font-size:9px; color:var(--text-muted, #a1a1aa);">Позиція: ${Math.round(s.pos * 100)}%</div>
+                            <input type="range" min="0" max="1" step="0.01" value="${s.pos}" oninput="updateColorRampStop(${sIdx}, 'pos', this.value)" style="width:100%;">
+                        </div>
+                        <button type="button" class="reset-btn" style="color:#ef4444; font-size:12px;" title="Видалити точку" onclick="removeColorRampStop(${sIdx})" ${sortedLayerStops.length <= 2 ? 'disabled style="opacity:0.3; cursor:not-allowed;"' : ''}>✕</button>
+                    </div>`;
+                }).join('');
+            }
+
+            layerBlockContents.color = `
+                <div class="property-group">
+                    <label class="property-label">Режим кольору шару (Color Mode)</label>
+                    <div class="gen-grid" style="grid-template-columns:repeat(3,1fr);">
+                        <button onclick="upd('colorMode','grayscale'); renderProps();" class="gen-btn ${colorMode==='grayscale'?'active':''}">Монохром</button>
+                        <button onclick="upd('colorMode','tint'); renderProps();" class="gen-btn ${colorMode==='tint'?'active':''}">Дуотон (Tint)</button>
+                        <button onclick="upd('colorMode','color_ramp'); renderProps();" class="gen-btn ${colorMode==='color_ramp'?'active':''}">Рампа (Ramp)</button>
+                    </div>
+                </div>
+
+                ${colorMode === 'tint' ? `
+                    <div class="property-group grid-2" style="margin-top:6px;">
+                        <div>
+                            <label class="property-label">Колір A (Світлий)</label>
+                            <input type="color" value="${lp.colorA || '#ffffff'}" oninput="upd('colorA', this.value)" style="width:100%; height:32px; background:none; border:1px solid var(--border-color); border-radius:4px; cursor:pointer;">
+                        </div>
+                        <div>
+                            <label class="property-label">Колір B (Темний)</label>
+                            <input type="color" value="${lp.colorB || '#000000'}" oninput="upd('colorB', this.value)" style="width:100%; height:32px; background:none; border:1px solid var(--border-color); border-radius:4px; cursor:pointer;">
+                        </div>
+                    </div>
+                ` : ''}
+
+                ${colorMode === 'color_ramp' ? `
+                    <div style="margin-top:8px;">
+                        <label class="property-label">Пресети палітри</label>
+                        <select class="form-control" onchange="applyPalettePresetToLayer(this.value)" style="margin-bottom:8px; width:100%; height:30px; font-size:11px;">
+                            <option value="custom" ${(!lp.palettePreset || lp.palettePreset==='custom')?'selected':''}>— Користувацька палітра —</option>
+                            <option value="wood_oak" ${lp.palettePreset==='wood_oak'?'selected':''}>Дерево: Дуб (Oak)</option>
+                            <option value="wood_mahogany" ${lp.palettePreset==='wood_mahogany'?'selected':''}>Дерево: Махагоні</option>
+                            <option value="marble_carrara" ${lp.palettePreset==='marble_carrara'?'selected':''}>Мармур: Каррара</option>
+                            <option value="stone_slate" ${lp.palettePreset==='stone_slate'?'selected':''}>Камінь: Сланець</option>
+                            <option value="moss_forest" ${lp.palettePreset==='moss_forest'?'selected':''}>Мох та Ліс</option>
+                            <option value="lava_fire" ${lp.palettePreset==='lava_fire'?'selected':''}>Лава / Вогонь</option>
+                            <option value="gold_polished" ${lp.palettePreset==='gold_polished'?'selected':''}>Золото</option>
+                            <option value="cyberpunk" ${lp.palettePreset==='cyberpunk'?'selected':''}>Кіберпанк / Неон</option>
+                            <option value="ocean_deep" ${lp.palettePreset==='ocean_deep'?'selected':''}>Океанська глибина</option>
+                            <option value="leather_brown" ${lp.palettePreset==='leather_brown'?'selected':''}>Шкіра (Leather)</option>
+                            <option value="rust_iron" ${lp.palettePreset==='rust_iron'?'selected':''}>Іржа / Залізо</option>
+                            <option value="sand_dune" ${lp.palettePreset==='sand_dune'?'selected':''}>Пісок та Дюни</option>
+                            <option value="ice_glacier" ${lp.palettePreset==='ice_glacier'?'selected':''}>Лід та Льодовик</option>
+                        </select>
+                        <div id="layerColorRampPreview" style="${colorRampPreview}"></div>
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                            <label class="property-label" style="margin:0;">Точки палітри (${sortedLayerStops.length})</label>
+                            <button type="button" onclick="addColorRampStop()" class="btn btn-primary" style="padding:2px 6px; font-size:10px;">+ Точка</button>
+                        </div>
+                        ${colorStopsHTML}
+                    </div>
+                ` : ''}
+
+                <div style="background: rgba(255,255,255,0.03); border: 1px solid var(--border-color, #27272a); border-radius: 8px; padding: 8px; margin-top: 10px;">
+                    <div style="font-weight:600; color:var(--primary-color, #3b82f6); font-size:11px; margin-bottom:8px;">🎨 Корекція кольору шару (HSL)</div>
+                    ${createSlider("Зсув відтінку (Hue)", "hueShift", -180, 180, 1, lp.hueShift || 0, false, 0)}
+                    ${createSlider("Насиченість (Saturation %)", "saturation", 0, 200, 1, lp.saturation !== undefined ? lp.saturation : 100, false, 100)}
+                    ${createSlider("Соковитість (Vibrance)", "vibrance", -100, 100, 1, lp.vibrance || 0, false, 0)}
+                    <div class="property-group" style="margin-top:6px;">
+                        <label class="checkbox-label" style="font-size:11px; display:flex; align-items:center; gap:6px;">
+                            <input type="checkbox" ${lp.colorInvert ? 'checked' : ''} onchange="upd('colorInvert', this.checked)">
+                            <span>Інверсія кольорів шару</span>
+                        </label>
+                    </div>
+                </div>
+            `;
+
             layerBlockContents.warps = `
                 <div class="property-group" style="margin-bottom:0;">
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
@@ -4500,6 +4995,7 @@
 
             let blockMeta = {
                 algo: { title: t("acc_algo"), icon: "🎨" },
+                color: { title: "Колір та Палітра (Color & Palette)", icon: "🌈" },
                 transform: { title: t("acc_transform"), icon: "📐" },
                 fx: { title: t("acc_fx"), icon: "✨" },
                 warps: { title: t("acc_warps"), icon: "🌀" }
@@ -4648,8 +5144,43 @@
                 ${createSlider("Зерно", "grain", 0, 50, 1, g.grain, true, 10)}
             `;
 
+            // Block: color
+            globalBlockContents.color = `
+                <div style="background: rgba(255,255,255,0.03); border: 1px solid var(--border-color, #27272a); border-radius: 8px; padding: 10px; margin-bottom: 10px;">
+                    <div style="font-weight:700; color:var(--primary-color, #3b82f6); font-size:11px; margin-bottom:8px;">🎨 Глобальна корекція кольору та тону</div>
+                    ${createSlider("Зсув відтінку (Hue Shift)", "globalHueShift", -180, 180, 1, g.globalHueShift || 0, true, 0)}
+                    ${createSlider("Насиченість (Saturation %)", "globalSaturation", 0, 200, 1, g.globalSaturation !== undefined ? g.globalSaturation : 100, true, 100)}
+                    ${createSlider("Соковитість (Vibrance)", "globalVibrance", -100, 100, 1, g.globalVibrance || 0, true, 0)}
+                    ${createSlider("Колірна температура (Warmth)", "globalColorTemp", -100, 100, 1, g.globalColorTemp || 0, true, 0)}
+                    ${createSlider("Тінтування (Tint - Зелений/Маджента)", "globalColorTint", -100, 100, 1, g.globalColorTint || 0, true, 0)}
+                </div>
+
+                <div style="background: rgba(255,255,255,0.03); border: 1px solid var(--border-color, #27272a); border-radius: 8px; padding: 10px; margin-bottom: 10px;">
+                    <div style="font-weight:700; color:var(--primary-color, #3b82f6); font-size:11px; margin-bottom:8px;">🖼️ Накладання кольору (Color Overlay)</div>
+                    <div class="property-group grid-2">
+                        <div>
+                            <label class="property-label">Колір накладання</label>
+                            <input type="color" value="${g.globalColorOverlay || '#000000'}" oninput="state.global.globalColorOverlay=this.value; invalidateCaches(); requestRender();" onchange="commitHistorySnapshot();" style="width:100%; height:32px; background:none; border:1px solid var(--border-color); border-radius:4px; cursor:pointer;">
+                        </div>
+                        <div>
+                            <label class="property-label">Непрозорість (%)</label>
+                            <input type="number" class="num-input" min="0" max="100" value="${g.globalColorOverlayOpacity || 0}" oninput="state.global.globalColorOverlayOpacity=parseFloat(this.value); invalidateCaches(); requestRender();" onchange="commitHistorySnapshot();" style="width:100%; height:32px;">
+                        </div>
+                    </div>
+                    ${createSlider("Прозорість оверлею", "globalColorOverlayOpacity", 0, 100, 1, g.globalColorOverlayOpacity || 0, true, 0)}
+                </div>
+
+                <div class="property-group" style="margin-top:8px;">
+                    <label class="checkbox-label" style="font-size:11px; display:flex; align-items:center; gap:6px;">
+                        <input type="checkbox" ${g.invert ? 'checked' : ''} onchange="state.global.invert=this.checked; invalidateCaches(); requestRender(); commitHistorySnapshot();">
+                        <span>Інверсія всіх кольорів (Invert All)</span>
+                    </label>
+                </div>
+            `;
+
             let blockMeta = {
                 transform: { title: t("acc_gtform"), icon: "🌐" },
+                color: { title: "Глобальний колір та тон (Color & Tone)", icon: "🎨" },
                 warps: { title: t("acc_gwarps"), icon: "🌀" },
                 tiling: { title: t("acc_gtiling"), icon: "🔁" },
                 fx: { title: t("acc_gfx"), icon: "🎚️" }
@@ -6780,7 +7311,7 @@
                     state.global.vignetteAmount = -parsedVal * 100;
                 }
 
-                const COORD_PARAMS = ['globalZoom', 'globalRotation', 'globalOffsetX', 'globalOffsetY', 'tileRepeatX', 'tileRepeatY', 'tileSeamOffsetX', 'tileSeamOffsetY', 'forceSeamlessSoftness', 'blur', 'blurClampEdge', 'blurType'];
+                const COORD_PARAMS = ['globalZoom', 'globalRotation', 'globalOffsetX', 'globalOffsetY', 'tileRepeatX', 'tileRepeatY', 'tileSeamOffsetX', 'tileSeamOffsetY', 'forceSeamlessSoftness', 'blur', 'blurClampEdge', 'blurType', 'globalHueShift', 'globalSaturation', 'globalVibrance', 'globalColorTemp', 'globalColorTint', 'globalColorOverlayOpacity', 'globalColorOverlay', 'contrast', 'gamma', 'grain', 'invert'];
                 if (COORD_PARAMS.includes(k)) {
                     invalidateCaches();
                 }
@@ -6814,7 +7345,7 @@
                 } else {
                     lay.params[k] = val;
                     lay.isDirty = true;
-                    if (['seamless', 'useThreshold', 'useLevels', 'useFindEdges', 'usePosterize', 'brushTool', 'gradType', 'spreadMethod', 'sourceMode', 'metric', 'mode', 'lockScale', 'blurClampEdge', 'enableRays', 'enableRings', 'blurType'].includes(k)) {
+                    if (['seamless', 'useThreshold', 'useLevels', 'useFindEdges', 'usePosterize', 'brushTool', 'gradType', 'spreadMethod', 'sourceMode', 'metric', 'mode', 'lockScale', 'blurClampEdge', 'enableRays', 'enableRings', 'blurType', 'colorMode', 'palettePreset'].includes(k)) {
                         renderProps();
                     }
                     if (String(k).startsWith('brush')) updateBrushPreview();
