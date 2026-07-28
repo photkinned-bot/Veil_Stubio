@@ -3233,6 +3233,9 @@
             }
 
             cx.putImageData(imgData,0,0);
+            if(!isExport && window.mapGeneratorTab && typeof window.mapGeneratorTab.onCanvasUpdated === 'function') {
+                window.mapGeneratorTab.onCanvasUpdated();
+            }
             if(!isExport) drawPointDeformerOverlays(cx, w, h);
             let totalRenderTimeMs = performance.now() - start;
             if(!isExport && $('renderTime')) $('renderTime').textContent = `${totalRenderTimeMs.toFixed(1)} ms`;
@@ -3318,8 +3321,23 @@
             if ($('btnTabLayer')) $('btnTabLayer').className = tab==='layer'?'btn btn-primary':'btn btn-secondary';
             if ($('btnTabGlobal')) $('btnTabGlobal').className = tab==='global'?'btn btn-primary':'btn btn-secondary';
             if ($('btnTabTiling')) $('btnTabTiling').className = tab==='tiling'?'btn btn-primary':'btn btn-secondary';
+            if ($('btnTabMaps')) $('btnTabMaps').className = tab==='maps'?'btn btn-primary':'btn btn-secondary';
 
             renderStickyHeader();
+
+            const mapContainer = $('mapGenViewportContainer');
+            if (tab === 'maps') {
+                window.isPbrModeActive = true;
+                if (mapContainer) mapContainer.style.display = 'flex';
+                if (window.mapGeneratorTab) {
+                    window.mapGeneratorTab.renderRightPanelControls();
+                    window.mapGeneratorTab.renderUnifiedViewportContainer();
+                    window.mapGeneratorTab.syncManager.pullCanvasData();
+                }
+                return;
+            } else {
+                if (!window.isPbrModeActive && mapContainer) mapContainer.style.display = 'none';
+            }
 
             if (tab === 'tiling') {
                 $('rightPanelTitle').innerText = t('title_tiling_props');
@@ -3338,6 +3356,22 @@
                 requestRender();
             }
         }
+
+        window.selectLayerCard = function(layerId) {
+            state.selectedLayerId = layerId;
+            renderLayers();
+            if (currentTab === 'layer') {
+                renderProps();
+            } else if (currentTab === 'global') {
+                renderGlobal();
+            } else if (currentTab === 'maps') {
+                if (window.mapGeneratorTab && window.mapGeneratorTab.syncManager.sourceType === 'active_layer') {
+                    window.mapGeneratorTab.syncManager.pullCanvasData();
+                }
+            } else if (currentTab === 'tiling') {
+                renderTilingPanel();
+            }
+        };
 
         let pointerLayerDragState = null;
 
@@ -3398,7 +3432,7 @@
                 <div class="layer-card ${l.id===state.selectedLayerId?'active':''} ${l.isMask?'is-mask':''} ${maskHasNoTarget?'is-mask-empty':''} ${isMasked?'is-masked-target':''} ${!l.visible?'is-hidden':''}" 
                      data-layer-id="${l.id}" 
                      data-layer-index="${i}" 
-                     onclick="state.selectedLayerId='${l.id}';switchRightTab('layer');renderLayers();renderProps();">
+                     onclick="selectLayerCard('${l.id}')">
                     <div class="layer-row-top">
                         <div class="layer-info">
                             <span class="drag-handle" title="${t('drag_layer_tooltip')}" onpointerdown="handleLayerPointerDown(event, ${i})" onclick="event.stopPropagation()">⣿</span>
@@ -3463,7 +3497,9 @@
             state.layers.unshift({id, name: t('new_layer_name'), visible:true, opacity:100, blendMode:'normal', generatorType:'simplex', isMask:false, params: freshLayerParams()});
             state.selectedLayerId=id; 
             commitHistorySnapshot();
-            renderLayers(); switchRightTab('layer'); requestRender();
+            renderLayers();
+            if (currentTab !== 'maps') switchRightTab('layer'); else renderProps();
+            requestRender();
         }
         function duplicateLayer(i){
             prepareStateForSerialization();
@@ -3474,7 +3510,9 @@
             state.layers.splice(i, 0, newL);
             state.selectedLayerId = newL.id; 
             commitHistorySnapshot();
-            renderLayers(); switchRightTab('layer'); requestRender();
+            renderLayers();
+            if (currentTab !== 'maps') switchRightTab('layer'); else renderProps();
+            requestRender();
         }
         function deleteLayer(i){
             if (i >= 0 && i < state.layers.length) {
@@ -6788,17 +6826,41 @@
 
         function showModal(id){ $(id).style.display='flex'; }
         let currentExportRes = 1024;
-        function openPNGExportModal(){ showModal('pngModal'); renderExportPreview(currentExportRes); }
+        function openPNGExportModal(){ 
+            showModal('pngModal'); 
+            const pbrContainer = $('mapGenViewportContainer');
+            const isPbrActive = pbrContainer && pbrContainer.style.display !== 'none' && (typeof currentTab !== 'undefined' && currentTab === 'maps');
+            const titleEl = document.querySelector('#pngModal .modal-title');
+            if (titleEl) {
+                if (isPbrActive && window.mapGeneratorTab) {
+                    const mapName = (window.mapGeneratorTab.selectedMapType || 'normal').toUpperCase();
+                    titleEl.textContent = `Експорт PNG — PBR Карта (${mapName})`;
+                } else {
+                    titleEl.textContent = (typeof t === 'function' && t('png_title')) ? t('png_title') : 'Експорт PNG';
+                }
+            }
+            renderExportPreview(currentExportRes); 
+        }
+
         function renderExportPreview(res) {
             currentExportRes = res;
             ['1024','2048','4096','8192'].forEach(r => { let b = $('exportRes'+r); if (b) b.classList.toggle('active', +r === res); });
-            // Невеликий timeout, щоб браузер встиг перемалювати підсвітку кнопки й
-            // індикатор "Рендеринг..." ДО важкого синхронного рендеру великих розмірів.
             $('exportRenderingIndicator').style.display = 'block';
             $('modalPngPreview').style.opacity = '0.3';
             setTimeout(() => {
-                let tc = document.createElement('canvas'); tc.width = res; tc.height = res;
-                renderProject(tc);
+                let tc = document.createElement('canvas'); 
+                tc.width = res; 
+                tc.height = res;
+
+                const pbrContainer = $('mapGenViewportContainer');
+                const isPbrActive = pbrContainer && pbrContainer.style.display !== 'none' && (typeof currentTab !== 'undefined' && currentTab === 'maps');
+
+                if (isPbrActive && window.mapGeneratorTab) {
+                    window.mapGeneratorTab.renderMapToCanvasAtRes(tc, res);
+                } else {
+                    renderProject(tc);
+                }
+
                 $('modalPngPreview').src = tc.toDataURL('image/png');
                 $('modalPngPreview').style.opacity = '1';
                 $('exportRenderingIndicator').style.display = 'none';
