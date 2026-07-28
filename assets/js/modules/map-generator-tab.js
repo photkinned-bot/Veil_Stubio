@@ -20,17 +20,18 @@ export class MapGeneratorTabComponent {
 
     this.sourceImageData = null;
 
-    // 2D Viewport Zoom & Pan State
+    // 2D Viewport Zoom, Pan & Rotation State
     this.zoomScale = 1.0;
     this.panX = 0;
     this.panY = 0;
+    this.rotationAngle = 0;
     this.isDragging2D = false;
     this.dragStartX = 0;
     this.dragStartY = 0;
 
     // Quality & Fast Preview Settings
-    this.targetResolution = 512; // 256 | 512 | 1024
-    this.fastPreview = false;
+    this.targetResolution = 512; // 256 | 512 | 1024 | 2048
+    this.fastPreview = true;
 
     // Processing parameters
     this.params = {
@@ -217,32 +218,35 @@ export class MapGeneratorTabComponent {
           <!-- 2D Preview Viewport -->
           <div id="view2DStage" style="position:absolute; inset:0; display:flex; flex-direction:column; justify-content:center; align-items:center; user-select:none;">
             
-            <!-- 2D Canvas Stage Area with Drag and Pan -->
-            <div id="stage2DContainer" style="width:100%; height:100%; position:relative; display:flex; justify-content:center; align-items:center; overflow:hidden; cursor:grab;">
+            <!-- 2D Canvas Stage Area with Drag, Touch, Pan and Zoom -->
+            <div id="stage2DContainer" style="width:100%; height:100%; position:relative; display:flex; justify-content:center; align-items:center; overflow:hidden; cursor:grab; touch-action:none;">
               <div id="canvas2DWrapper" style="position:relative; border:1px solid rgba(255,255,255,0.2); border-radius:8px; overflow:hidden; box-shadow:0 12px 36px rgba(0,0,0,0.7); transform-origin:center center; transition:transform 0.05s ease-out; background:repeating-conic-gradient(#1a1a1e 0% 25%, #24242a 0% 50%) 50% / 16px 16px;">
                 <canvas id="mapPreviewCanvas2D" width="512" height="512" style="display:block; max-width:80vh; max-height:80vh; object-fit:contain;"></canvas>
               </div>
             </div>
 
-            <!-- 2D Viewport Controls Bar -->
-            <div class="2d-toolbar" style="position:absolute; bottom:12px; left:50%; transform:translateX(-50%); background:rgba(18,18,20,0.85); backdrop-filter:blur(8px); border:1px solid rgba(255,255,255,0.12); border-radius:8px; padding:6px 12px; display:flex; gap:10px; align-items:center; font-size:11px; z-index:10; box-shadow:0 8px 24px rgba(0,0,0,0.5);">
-              <button id="btnZoomIn2D" class="btn btn-secondary" style="padding:2px 8px;" title="Збільшити">➕</button>
+            <!-- 2D Viewport Controls Bar (Same as Layer / Tiling bar) -->
+            <div class="2d-toolbar" style="position:absolute; bottom:12px; left:50%; transform:translateX(-50%); background:rgba(18,18,20,0.88); backdrop-filter:blur(8px); border:1px solid rgba(255,255,255,0.12); border-radius:8px; padding:6px 12px; display:flex; gap:10px; align-items:center; font-size:11px; z-index:10; box-shadow:0 8px 24px rgba(0,0,0,0.5); flex-wrap:wrap; justify-content:center;">
               <button id="btnZoomOut2D" class="btn btn-secondary" style="padding:2px 8px;" title="Зменшити">➖</button>
-              <button id="btnReset2D" class="btn btn-secondary" style="padding:2px 8px;" title="Скинути масштаб">Fit</button>
-              <span id="txtZoomInfo" style="font-weight:600; color:#3b82f6; min-width:40px; text-align:center;">100%</span>
+              <button id="btnZoomIn2D" class="btn btn-secondary" style="padding:2px 8px;" title="Збільшити">➕</button>
+              <button id="btnReset2D" class="btn btn-secondary" style="padding:2px 8px;" title="Скинути масштаб і поворот">Fit</button>
+              <button id="btnRotate2D" class="btn btn-secondary" style="padding:2px 8px;" title="Повернути на 90°">🔄</button>
+              <span id="txtZoomInfo" style="font-weight:600; color:#3b82f6; min-width:64px; text-align:center;">100%</span>
 
               <div style="width:1px; height:16px; background:rgba(255,255,255,0.15);"></div>
 
               <div style="display:flex; align-items:center; gap:4px;">
-                <span style="color:var(--text-muted, #a1a1aa);">Якість карт:</span>
+                <span style="color:var(--text-muted, #a1a1aa);">Роздільна здатність:</span>
+                <button class="res-btn-map" data-res="256" style="padding:2px 6px; font-size:10px;">256</button>
                 <button class="res-btn-map active" data-res="512" style="padding:2px 8px; font-size:10px;">512</button>
                 <button class="res-btn-map" data-res="1024" style="padding:2px 6px; font-size:10px;">1024</button>
+                <button class="res-btn-map" data-res="2048" style="padding:2px 6px; font-size:10px;">2048</button>
               </div>
 
               <div style="width:1px; height:16px; background:rgba(255,255,255,0.15);"></div>
 
-              <label style="display:flex; align-items:center; gap:4px; cursor:pointer;" title="Тимчасово знижувати роздільну здатність при перетягуванні повзунків">
-                <input type="checkbox" id="chkFastPreviewMap" checked> ⚡ Швидкий прев'ю (256px)
+              <label style="display:flex; align-items:center; gap:4px; cursor:pointer;" title="Тимчасово знижувати якість до 256x256 при перетягуванні повзунків">
+                <input type="checkbox" id="chkFastPreviewMap" ${this.fastPreview ? 'checked' : ''}> ⚡ Швидкий прев'ю
               </label>
             </div>
 
@@ -295,7 +299,7 @@ export class MapGeneratorTabComponent {
   }
 
   /**
-   * Bind event listeners for Viewport controls (Zoom, Pan, Resolution, Map Tabs, 3D)
+   * Bind event listeners for Viewport controls (Zoom, Touch Pan, Pinch-Zoom, Rotation, Resolution, Fast Preview)
    */
   bindViewportEvents() {
     const btn2D = document.getElementById('btnView2D');
@@ -350,7 +354,7 @@ export class MapGeneratorTabComponent {
       };
     }
 
-    // 2D Zoom & Pan interactions
+    // 2D Zoom, Pan & Touch Gestures (iPad & Mobile support)
     const stageContainer = document.getElementById('stage2DContainer');
     if (stageContainer) {
       stageContainer.onwheel = (e) => {
@@ -360,6 +364,7 @@ export class MapGeneratorTabComponent {
         this.update2DTransform();
       };
 
+      // Mouse drag
       stageContainer.onmousedown = (e) => {
         if (e.button === 0 || e.button === 1) {
           this.isDragging2D = true;
@@ -383,6 +388,77 @@ export class MapGeneratorTabComponent {
           if (stageContainer) stageContainer.style.cursor = 'grab';
         }
       });
+
+      // Touch Gestures for iPad / Touch devices (Pinch-Zoom, Rotation, Pan)
+      let touchActive = false;
+      let startDist = 0;
+      let startAngle = 0;
+      let initialScale = 1.0;
+      let initialRot = 0;
+
+      const getDistance = (p1, p2) => Math.hypot(p2.clientX - p1.clientX, p2.clientY - p1.clientY);
+      const getAngle = (p1, p2) => Math.atan2(p2.clientY - p1.clientY, p2.clientX - p1.clientX) * (180 / Math.PI);
+      const getCenter = (p1, p2) => ({ x: (p1.clientX + p2.clientX) / 2, y: (p1.clientY + p2.clientY) / 2 });
+
+      stageContainer.addEventListener('touchstart', (e) => {
+        if (e.touches.length === 1) {
+          this.isDragging2D = true;
+          this.dragStartX = e.touches[0].clientX - this.panX;
+          this.dragStartY = e.touches[0].clientY - this.panY;
+        } else if (e.touches.length === 2) {
+          this.isDragging2D = false;
+          touchActive = true;
+          startDist = getDistance(e.touches[0], e.touches[1]);
+          startAngle = getAngle(e.touches[0], e.touches[1]);
+          initialScale = this.zoomScale;
+          initialRot = this.rotationAngle || 0;
+          const center = getCenter(e.touches[0], e.touches[1]);
+          this.dragStartX = center.x - this.panX;
+          this.dragStartY = center.y - this.panY;
+        }
+      }, { passive: false });
+
+      stageContainer.addEventListener('touchmove', (e) => {
+        if (e.touches.length === 1 && this.isDragging2D) {
+          e.preventDefault();
+          this.panX = e.touches[0].clientX - this.dragStartX;
+          this.panY = e.touches[0].clientY - this.dragStartY;
+          this.update2DTransform();
+        } else if (e.touches.length === 2 && touchActive) {
+          e.preventDefault();
+          const currentDist = getDistance(e.touches[0], e.touches[1]);
+          const currentAngle = getAngle(e.touches[0], e.touches[1]);
+          const center = getCenter(e.touches[0], e.touches[1]);
+
+          if (startDist > 0) {
+            const scaleFactor = currentDist / startDist;
+            this.zoomScale = Math.min(4.0, Math.max(0.2, initialScale * scaleFactor));
+          }
+
+          const angleDiff = currentAngle - startAngle;
+          this.rotationAngle = (initialRot + angleDiff) % 360;
+
+          this.panX = center.x - this.dragStartX;
+          this.panY = center.y - this.dragStartY;
+
+          this.update2DTransform();
+        }
+      }, { passive: false });
+
+      const handleTouchEnd = (e) => {
+        if (e.touches.length === 0) {
+          this.isDragging2D = false;
+          touchActive = false;
+        } else if (e.touches.length === 1) {
+          touchActive = false;
+          this.isDragging2D = true;
+          this.dragStartX = e.touches[0].clientX - this.panX;
+          this.dragStartY = e.touches[0].clientY - this.panY;
+        }
+      };
+
+      stageContainer.addEventListener('touchend', handleTouchEnd);
+      stageContainer.addEventListener('touchcancel', handleTouchEnd);
     }
 
     // 2D Toolbar buttons
@@ -403,6 +479,13 @@ export class MapGeneratorTabComponent {
       this.zoomScale = 1.0;
       this.panX = 0;
       this.panY = 0;
+      this.rotationAngle = 0;
+      this.update2DTransform();
+    };
+
+    const btnRotate = document.getElementById('btnRotate2D');
+    if (btnRotate) btnRotate.onclick = () => {
+      this.rotationAngle = ((this.rotationAngle || 0) + 90) % 360;
       this.update2DTransform();
     };
 
@@ -458,16 +541,18 @@ export class MapGeneratorTabComponent {
   }
 
   /**
-   * Update 2D Canvas Wrapper Transform for Zoom and Pan
+   * Update 2D Canvas Wrapper Transform for Zoom, Pan & Rotation
    */
   update2DTransform() {
     const wrapper = document.getElementById('canvas2DWrapper');
     const txtInfo = document.getElementById('txtZoomInfo');
+    const rot = Math.round(this.rotationAngle || 0);
+
     if (wrapper) {
-      wrapper.style.transform = `translate(${this.panX}px, ${this.panY}px) scale(${this.zoomScale})`;
+      wrapper.style.transform = `translate(${this.panX}px, ${this.panY}px) scale(${this.zoomScale}) rotate(${rot}deg)`;
     }
     if (txtInfo) {
-      txtInfo.textContent = `${Math.round(this.zoomScale * 100)}%`;
+      txtInfo.textContent = `${Math.round(this.zoomScale * 100)}%${rot !== 0 ? ` | ${rot}°` : ''}`;
     }
   }
 
@@ -781,7 +866,7 @@ export class MapGeneratorTabComponent {
         <!-- Actions / Export Panel -->
         <div class="accordion-block" style="background:rgba(59,130,246,0.04); border:1px solid rgba(59,130,246,0.2); border-radius:8px; padding:10px;">
           <div style="font-weight:700; font-size:11px; margin-bottom:8px; color:#3b82f6;">
-            🚀 Дії та Експорт
+            🚀 Дії та Експорт (iPad & Web Compatible)
           </div>
 
           <button id="btnApplyAsLayer" class="btn btn-primary" style="width:100%; margin-bottom:6px; padding:6px; font-size:11px;">
@@ -792,8 +877,8 @@ export class MapGeneratorTabComponent {
             💾 Завантажити активну карту (${currentMap.toUpperCase()})
           </button>
 
-          <button id="btnDownloadAllMaps" class="btn btn-secondary" style="width:100%; padding:6px; font-size:11px;">
-            📦 Завантажити всі 4 PBR карти
+          <button id="btnDownloadAllMaps" class="btn btn-secondary" style="width:100%; padding:6px; font-size:11px;" title="Завантажити всі 4 PBR карти одним ZIP-файлом для обходу обмежень iPad">
+            📦 Завантажити всі 4 PBR карти (ZIP)
           </button>
         </div>
 
@@ -807,6 +892,37 @@ export class MapGeneratorTabComponent {
    * Bind event handlers for control panel sliders, checkboxes, selects, and buttons
    */
   bindRightPanelEvents() {
+    const rightPanel = document.getElementById('propertiesPanel') || document.getElementById('rightPanelBody') || document.querySelector('.right-panel-content') || document.querySelector('.panel-content');
+
+    if (rightPanel) {
+      // Delegate fast preview behavior on slider interactions for instant 256px resolution feedback
+      const handleSliderStart = (e) => {
+        if (e.target && e.target.type === 'range') {
+          if (this.fastPreview) {
+            this.isInteractingWithSliders = true;
+            this.reprocess();
+          }
+        }
+      };
+
+      const handleSliderRelease = () => {
+        if (this.isInteractingWithSliders) {
+          if (this.sliderTimer) clearTimeout(this.sliderTimer);
+          this.sliderTimer = setTimeout(() => {
+            this.isInteractingWithSliders = false;
+            this.reprocess();
+          }, 60);
+        }
+      };
+
+      rightPanel.addEventListener('pointerdown', handleSliderStart);
+      rightPanel.addEventListener('touchstart', handleSliderStart, { passive: true });
+
+      rightPanel.addEventListener('pointerup', handleSliderRelease);
+      rightPanel.addEventListener('touchend', handleSliderRelease);
+      rightPanel.addEventListener('change', handleSliderRelease);
+    }
+
     // Sub-tab switcher handler
     document.querySelectorAll('.pbr-subtab-btn').forEach(btn => {
       btn.onclick = (e) => {
@@ -1026,8 +1142,8 @@ export class MapGeneratorTabComponent {
    */
   getScaledSourceImageData() {
     if (!this.sourceImageData) return null;
-    let targetDim = this.targetResolution;
-    if (this.fastPreview || this.isInteractingWithSliders) targetDim = 256;
+    let targetDim = this.targetResolution || 512;
+    if (this.fastPreview && this.isInteractingWithSliders) targetDim = 256;
 
     if (this.sourceImageData.width === targetDim && this.sourceImageData.height === targetDim) {
       return this.sourceImageData;
@@ -1051,7 +1167,7 @@ export class MapGeneratorTabComponent {
   /**
    * Render selected PBR map onto a target canvas at exact resolution 'res'
    */
-  renderMapToCanvasAtRes(targetCanvas, res = 1024) {
+  renderMapToCanvasAtRes(targetCanvas, res = 1024, mapTypeOverride = null) {
     if (!targetCanvas) return;
     targetCanvas.width = res;
     targetCanvas.height = res;
@@ -1085,7 +1201,7 @@ export class MapGeneratorTabComponent {
     if (!srcImageData) return;
 
     let resultMapData = null;
-    const mapType = this.selectedMapType || 'normal';
+    const mapType = mapTypeOverride || this.selectedMapType || 'normal';
 
     switch (mapType) {
       case 'normal':
@@ -1240,12 +1356,9 @@ export class MapGeneratorTabComponent {
    * Download single map file
    */
   downloadMap(mapType) {
-    const res = Math.max(1024, this.targetResolution || 1024);
+    const res = Math.max(512, this.targetResolution || 1024);
     const canvas = document.createElement('canvas');
-    const prevType = this.selectedMapType;
-    this.selectedMapType = mapType;
-    this.renderMapToCanvasAtRes(canvas, res);
-    this.selectedMapType = prevType;
+    this.renderMapToCanvasAtRes(canvas, res, mapType);
 
     const dataUrl = canvas.toDataURL('image/png');
     const a = document.createElement('a');
@@ -1257,12 +1370,137 @@ export class MapGeneratorTabComponent {
   }
 
   /**
-   * Download all 4 maps
+   * iPad & Web Compatible Multi-Map Exporter
+   * Generates single ZIP archive to bypass iPad Safari pop-up / multi-download restrictions,
+   * and displays a high-res preview sheet.
    */
-  downloadAllMaps() {
-    ['normal', 'displacement', 'ao', 'specular'].forEach(mapType => {
-      this.downloadMap(mapType);
-    });
+  async downloadAllMaps() {
+    const res = Math.max(512, this.targetResolution || 1024);
+    const btn = document.getElementById('btnDownloadAllMaps');
+    const originalText = btn ? btn.innerHTML : '';
+
+    if (btn) {
+      btn.disabled = true;
+      btn.innerHTML = '⌛ Формування ZIP...';
+    }
+
+    try {
+      const mapTypes = ['normal', 'displacement', 'ao', 'specular', 'diffuse'];
+      const mapBlobs = {};
+      const dataUrls = {};
+
+      for (const type of mapTypes) {
+        const canvas = document.createElement('canvas');
+        this.renderMapToCanvasAtRes(canvas, res, type);
+        const dataUrl = canvas.toDataURL('image/png');
+        dataUrls[type] = dataUrl;
+
+        const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+        if (blob) mapBlobs[type] = blob;
+      }
+
+      // 1. Package single ZIP file (iPad / Safari bypasses multi-file blockage via 1 zip download)
+      if (window.JSZip) {
+        const zip = new window.JSZip();
+        const folder = zip.folder(`pbr_maps_${res}x${res}`);
+
+        if (mapBlobs.normal) folder.file(`veil_normal_${res}x${res}.png`, mapBlobs.normal);
+        if (mapBlobs.displacement) folder.file(`veil_displacement_${res}x${res}.png`, mapBlobs.displacement);
+        if (mapBlobs.ao) folder.file(`veil_ao_${res}x${res}.png`, mapBlobs.ao);
+        if (mapBlobs.specular) folder.file(`veil_specular_${res}x${res}.png`, mapBlobs.specular);
+        if (mapBlobs.diffuse) folder.file(`veil_diffuse_${res}x${res}.png`, mapBlobs.diffuse);
+
+        const zipBlob = await zip.generateAsync({ type: 'blob' });
+        const zipUrl = URL.createObjectURL(zipBlob);
+
+        const a = document.createElement('a');
+        a.href = zipUrl;
+        a.download = `veil_pbr_maps_${res}x${res}.zip`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(zipUrl), 10000);
+      } else {
+        // Fallback: trigger downloads with short delay
+        for (const type of ['normal', 'displacement', 'ao', 'specular']) {
+          this.downloadMap(type);
+          await new Promise(r => setTimeout(r, 300));
+        }
+      }
+
+      // 2. Open iPad Export Sheet for visual confirmation and manual tap-hold saving to iOS Photos
+      this.showPbrExportModal(dataUrls, res);
+
+    } catch (err) {
+      console.error('Error generating PBR zip export:', err);
+      alert('Помилка формування експорту PBR карт: ' + err.message);
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = originalText;
+      }
+    }
+  }
+
+  /**
+   * Show iOS / iPad compatible Export Sheet Modal for saving maps
+   */
+  showPbrExportModal(dataUrls, res) {
+    let modal = document.getElementById('pbrExportModalSheet');
+    if (!modal) {
+      modal = document.createElement('div');
+      modal.id = 'pbrExportModalSheet';
+      modal.style.cssText = 'position:fixed; inset:0; z-index:9999; background:rgba(0,0,0,0.85); backdrop-filter:blur(8px); display:flex; justify-content:center; align-items:center; padding:16px; font-family:sans-serif; animate:fadeIn 0.2s ease;';
+      document.body.appendChild(modal);
+    }
+
+    const maps = [
+      { id: 'normal', name: 'Normal Map', color: '#3b82f6' },
+      { id: 'displacement', name: 'Displacement', color: '#10b981' },
+      { id: 'ao', name: 'Ambient Occlusion', color: '#f59e0b' },
+      { id: 'specular', name: 'Specular', color: '#ec4899' }
+    ];
+
+    modal.innerHTML = `
+      <div style="background:#18181b; border:1px solid rgba(255,255,255,0.15); border-radius:12px; width:100%; max-width:680px; max-height:90vh; overflow-y:auto; padding:20px; box-shadow:0 20px 50px rgba(0,0,0,0.8); color:#f4f4f5;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; border-bottom:1px solid rgba(255,255,255,0.1); padding-bottom:10px;">
+          <div>
+            <h3 style="margin:0; font-size:16px; font-weight:700;">📦 PBR Карти Готові (${res}x${res} px)</h3>
+            <span style="font-size:11px; color:#a1a1aa;">Архів завантажено! Для збереження в iOS "Фотографії" затисніть потрібне фото пальцем.</span>
+          </div>
+          <button id="btnClosePbrModal" class="btn btn-secondary" style="padding:4px 12px; font-size:14px; border-radius:6px;">✕</button>
+        </div>
+
+        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(130px, 1fr)); gap:12px; margin-bottom:16px;">
+          ${maps.map(m => `
+            <div style="background:#27272a; border:1px solid rgba(255,255,255,0.1); border-radius:8px; padding:8px; text-align:center; display:flex; flex-direction:column; align-items:center;">
+              <span style="font-size:11px; font-weight:700; color:${m.color}; margin-bottom:6px;">${m.name}</span>
+              <img src="${dataUrls[m.id]}" style="width:100%; aspect-ratio:1; object-fit:cover; border-radius:4px; border:1px solid rgba(255,255,255,0.1); margin-bottom:8px; background:#000;">
+              <div style="display:flex; flex-direction:column; gap:4px; width:100%;">
+                <a href="${dataUrls[m.id]}" download="veil_${m.id}_${res}x${res}.png" class="btn btn-primary" style="padding:4px 6px; font-size:10px; text-decoration:none; text-align:center;">💾 Завантажити</a>
+                <a href="${dataUrls[m.id]}" target="_blank" class="btn btn-secondary" style="padding:3px 6px; font-size:9px; text-decoration:none; text-align:center; opacity:0.8;">👁️ Відкрити</a>
+              </div>
+            </div>
+          `).join('')}
+        </div>
+
+        <div style="display:flex; justify-content:flex-end;">
+          <button id="btnDonePbrModal" class="btn btn-primary" style="padding:6px 20px; font-size:12px;">Готово</button>
+        </div>
+      </div>
+    `;
+
+    modal.style.display = 'flex';
+
+    const closeHandler = () => {
+      modal.style.display = 'none';
+    };
+
+    const btnClose = document.getElementById('btnClosePbrModal');
+    const btnDone = document.getElementById('btnDonePbrModal');
+
+    if (btnClose) btnClose.onclick = closeHandler;
+    if (btnDone) btnDone.onclick = closeHandler;
   }
 }
 
