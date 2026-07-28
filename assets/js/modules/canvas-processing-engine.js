@@ -113,39 +113,46 @@ export class CanvasProcessingEngine {
   static generateNormalMap(srcImageData, options = {}) {
     const width = srcImageData.width;
     const height = srcImageData.height;
-    const algo = options.algorithm || 'sobel'; // 'sobel' | 'scharr'
+    const algo = options.algorithm || 'sobel'; // 'sobel' | 'scharr' | 'prewitt'
     const strength = options.strength !== undefined ? options.strength : 2.5;
     const level = options.level !== undefined ? options.level : 1.0;
-    const blurSharpen = options.blurSharpen !== undefined ? options.blurSharpen : 0;
+    const blur = options.blur !== undefined ? options.blur : (options.blurSharpen && options.blurSharpen > 0 ? options.blurSharpen : 0);
+    const sharp = options.sharp !== undefined ? options.sharp : (options.blurSharpen && options.blurSharpen < 0 ? Math.abs(options.blurSharpen) : 0);
+    const invert = !!options.invert;
     const invertR = !!options.invertR;
     const invertG = !!options.invertG;
-    const invertH = !!options.invertH;
+    const invertH = !!options.invertH || invert;
 
     let gray = this.getGrayscaleBuffer(srcImageData);
 
-    // Apply pre-processing blur/sharpen if needed
-    if (blurSharpen > 0) {
-      gray = this.boxBlurFloatBuffer(gray, width, height, blurSharpen * 4);
-    } else if (blurSharpen < 0) {
-      gray = this.sharpenFloatBuffer(gray, width, height, Math.abs(blurSharpen));
+    if (blur > 0) {
+      gray = this.boxBlurFloatBuffer(gray, width, height, blur * 2);
+    }
+    if (sharp > 0) {
+      gray = this.sharpenFloatBuffer(gray, width, height, sharp * 0.5);
     }
 
     const outImageData = new ImageData(width, height);
     const out = outImageData.data;
 
     // Convolution weights
-    let kx, ky;
+    let kx, ky, divisor;
     if (algo === 'scharr') {
-      // Scharr 3x3 kernel
       kx = [-3, 0, 3, -10, 0, 10, -3, 0, 3];
       ky = [-3, -10, -3, 0, 0, 0, 3, 10, 3];
+      divisor = 16;
+    } else if (algo === 'prewitt') {
+      kx = [-1, 0, 1, -1, 0, 1, -1, 0, 1];
+      ky = [-1, -1, -1, 0, 0, 0, 1, 1, 1];
+      divisor = 3;
     } else {
-      // Sobel 3x3 kernel
+      // Sobel 3x3 kernel default
       kx = [-1, 0, 1, -2, 0, 2, -1, 0, 1];
       ky = [-1, -2, -1, 0, 0, 0, 1, 2, 1];
+      divisor = 4;
     }
 
-    const scale = (strength * level * 0.5) / (algo === 'scharr' ? 16 : 4);
+    const scale = (strength * level * 0.5) / divisor;
 
     for (let y = 0; y < height; y++) {
       const ym1 = (y - 1 + height) % height;
@@ -155,7 +162,6 @@ export class CanvasProcessingEngine {
         const xm1 = (x - 1 + width) % width;
         const xp1 = (x + 1) % width;
 
-        // Sample 3x3 neighborhood
         const p00 = gray[ym1 * width + xm1];
         const p10 = gray[ym1 * width + x];
         const p20 = gray[ym1 * width + xp1];
@@ -189,13 +195,11 @@ export class CanvasProcessingEngine {
         if (invertR) nx = -nx;
         if (invertG) ny = -ny;
 
-        // Vector normalization
         const len = Math.sqrt(nx * nx + ny * ny + nz * nz) || 1;
         nx /= len;
         ny /= len;
         nz /= len;
 
-        // Map [-1..1] to [0..255]
         const r = Math.round((nx * 0.5 + 0.5) * 255);
         const g = Math.round((ny * 0.5 + 0.5) * 255);
         const b = Math.round((nz * 0.5 + 0.5) * 255);
@@ -260,12 +264,17 @@ export class CanvasProcessingEngine {
     const strength = options.strength !== undefined ? options.strength : 1.5;
     const level = options.level !== undefined ? options.level : 1.0;
     const blur = options.blur !== undefined ? options.blur : 1;
+    const sharp = options.sharp !== undefined ? options.sharp : 0;
     const mean = options.mean !== undefined ? options.mean : 3;
     const range = options.range !== undefined ? options.range : 8;
     const falloff = options.falloff || 'linear'; // 'none' | 'linear' | 'square'
     const invert = !!options.invert;
 
     let gray = this.getGrayscaleBuffer(srcImageData);
+
+    if (sharp > 0) {
+      gray = this.sharpenFloatBuffer(gray, width, height, sharp * 0.5);
+    }
 
     const outImageData = new ImageData(width, height);
     const outBuffer = new Float32Array(width * height);
@@ -341,15 +350,22 @@ export class CanvasProcessingEngine {
   static generateSpecularMap(srcImageData, options = {}) {
     const width = srcImageData.width;
     const height = srcImageData.height;
+    const mean = options.mean !== undefined ? options.mean : 0.5;
+    const range = options.range !== undefined ? options.range : 1.0;
+    const falloff = options.falloff || 'linear'; // 'none' | 'linear' | 'square'
     const strength = options.strength !== undefined ? options.strength : 1.2;
     const level = options.level !== undefined ? options.level : 1.0;
     const blur = options.blur !== undefined ? options.blur : 0;
+    const sharp = options.sharp !== undefined ? options.sharp : 0;
     const invert = !!options.invert;
 
     let gray = this.getGrayscaleBuffer(srcImageData);
 
     if (blur > 0) {
       gray = this.boxBlurFloatBuffer(gray, width, height, blur * 2);
+    }
+    if (sharp > 0) {
+      gray = this.sharpenFloatBuffer(gray, width, height, sharp * 0.5);
     }
 
     const outImageData = new ImageData(width, height);
@@ -369,12 +385,20 @@ export class CanvasProcessingEngine {
         const left = gray[y * width + xm1];
         const right = gray[y * width + xp1];
 
-        // Highlight high frequencies / edges + luminance
         const dx = right - left;
         const dy = bottom - top;
         const edgeMag = Math.hypot(dx, dy);
 
-        let specVal = (center * 0.6 + edgeMag * 0.4) * strength * level;
+        let rawSpec = (center * 0.6 + edgeMag * 0.4) * strength * level;
+        let specVal = (rawSpec - (mean * 0.5)) * range + (mean * 0.2);
+
+        specVal = Math.max(0, Math.min(1, specVal));
+
+        if (falloff === 'square') {
+          specVal = specVal * specVal;
+        } else if (falloff === 'none') {
+          specVal = specVal > (mean * 0.8) ? 1.0 : 0.0;
+        }
 
         if (invert) specVal = 1.0 - specVal;
 

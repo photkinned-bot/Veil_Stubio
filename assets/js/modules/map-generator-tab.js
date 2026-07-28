@@ -35,33 +35,37 @@ export class MapGeneratorTabComponent {
     // Processing parameters
     this.params = {
       normal: {
-        algorithm: 'sobel',
+        algorithm: 'sobel', // 'sobel' | 'scharr' | 'prewitt'
         strength: 2.5,
         level: 1.0,
-        blurSharpen: 0,
+        blur: 0,
+        sharp: 0,
+        invert: false,
         invertR: false,
         invertG: false,
         invertH: false
       },
       displacement: {
         contrast: 1.0,
-        brightness: 0,
-        blur: 0,
         invert: false
       },
       ao: {
         strength: 1.8,
         level: 1.0,
-        blur: 1,
-        mean: 3,
+        blur: 1.0,
+        sharp: 0,
         range: 8,
         falloff: 'linear',
         invert: false
       },
       specular: {
+        mean: 0.5,
+        range: 1.0,
+        falloff: 'linear',
         strength: 1.2,
         level: 1.0,
         blur: 0,
+        sharp: 0,
         invert: false
       }
     };
@@ -468,167 +472,328 @@ export class MapGeneratorTabComponent {
   }
 
   /**
+   * Switch active map type and re-render contextual panel and viewport
+   */
+  switchMapType(mapType) {
+    this.selectedMapType = mapType;
+
+    // Update viewport top bar buttons
+    document.querySelectorAll('.map-type-btn').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.map === mapType);
+    });
+
+    // Re-render contextual control panel in right settings area
+    this.renderRightPanelControls();
+
+    // Re-render active viewport preview
+    if (this.activeView === '2d') {
+      this.render2DPreview();
+    } else if (this.activeView === '3d' && this.viewport3D) {
+      this.update3DTextures();
+    }
+  }
+
+  /**
    * Render Right Control Panel for Map Generator
    */
   renderRightPanelControls() {
-    const rightPanel = document.getElementById('rightPanelBody') || document.querySelector('.right-panel-content') || document.querySelector('.panel-content');
+    const rightPanel = document.getElementById('propertiesPanel') || document.getElementById('rightPanelBody') || document.querySelector('.right-panel-content') || document.querySelector('.panel-content');
     if (!rightPanel) return;
 
+    const currentMap = this.selectedMapType || 'normal';
+
+    let mapContextualHtml = '';
+
+    if (currentMap === 'normal') {
+      mapContextualHtml = `
+        <div class="accordion-block" style="background:rgba(59,130,246,0.03); border:1px solid rgba(59,130,246,0.3); border-radius:8px; padding:12px;">
+          <div style="font-weight:700; font-size:12px; margin-bottom:10px; color:#3b82f6; display:flex; align-items:center; justify-content:space-between;">
+            <span>📐 Normal Map (Карта Нормалей)</span>
+            <span style="font-size:10px; opacity:0.7;">RGB Vectors</span>
+          </div>
+
+          <!-- Filter Selection -->
+          <div style="margin-bottom:8px;">
+            <label class="property-label" style="font-size:10px; margin-bottom:2px; display:block;">Фільтр (Filter Selection)</label>
+            <select id="selNormFilter" class="form-control" style="font-size:11px; height:26px;">
+              <option value="sobel" ${this.params.normal.algorithm === 'sobel' ? 'selected' : ''}>Sobel (Стандартний 3x3)</option>
+              <option value="scharr" ${this.params.normal.algorithm === 'scharr' ? 'selected' : ''}>Scharr (Висока чіткість)</option>
+              <option value="prewitt" ${this.params.normal.algorithm === 'prewitt' ? 'selected' : ''}>Prewitt (Плавний градієнт)</option>
+            </select>
+          </div>
+
+          <!-- Strength -->
+          <div style="margin-bottom:8px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:2px;">
+              <label class="property-label" style="font-size:10px;">Сила (Strength)</label>
+              <span id="valNormStrengthText" style="font-size:10px; color:#3b82f6; font-weight:600;">${this.params.normal.strength}</span>
+            </div>
+            <div style="display:flex; gap:6px; align-items:center;">
+              <input type="range" id="rngNormStrength" min="0.1" max="10.0" step="0.1" value="${this.params.normal.strength}" style="flex:1;">
+              <input type="number" id="numNormStrength" class="num-input" min="0.1" max="10.0" step="0.1" value="${this.params.normal.strength}" style="width:52px;">
+            </div>
+          </div>
+
+          <!-- Levels -->
+          <div style="margin-bottom:8px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:2px;">
+              <label class="property-label" style="font-size:10px;">Рівні (Levels)</label>
+              <span id="valNormLevelText" style="font-size:10px; color:#3b82f6; font-weight:600;">${this.params.normal.level}</span>
+            </div>
+            <div style="display:flex; gap:6px; align-items:center;">
+              <input type="range" id="rngNormLevel" min="0.1" max="5.0" step="0.1" value="${this.params.normal.level}" style="flex:1;">
+              <input type="number" id="numNormLevel" class="num-input" min="0.1" max="5.0" step="0.1" value="${this.params.normal.level}" style="width:52px;">
+            </div>
+          </div>
+
+          <!-- Blur -->
+          <div style="margin-bottom:8px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:2px;">
+              <label class="property-label" style="font-size:10px;">Розмиття (Blur)</label>
+              <span id="valNormBlurText" style="font-size:10px; color:var(--text-muted, #a1a1aa); font-weight:600;">${this.params.normal.blur}</span>
+            </div>
+            <div style="display:flex; gap:6px; align-items:center;">
+              <input type="range" id="rngNormBlur" min="0" max="10" step="0.5" value="${this.params.normal.blur}" style="flex:1;">
+              <input type="number" id="numNormBlur" class="num-input" min="0" max="10" step="0.5" value="${this.params.normal.blur}" style="width:52px;">
+            </div>
+          </div>
+
+          <!-- Sharp -->
+          <div style="margin-bottom:8px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:2px;">
+              <label class="property-label" style="font-size:10px;">Чіткість (Sharp)</label>
+              <span id="valNormSharpText" style="font-size:10px; color:var(--text-muted, #a1a1aa); font-weight:600;">${this.params.normal.sharp}</span>
+            </div>
+            <div style="display:flex; gap:6px; align-items:center;">
+              <input type="range" id="rngNormSharp" min="0" max="10" step="0.5" value="${this.params.normal.sharp}" style="flex:1;">
+              <input type="number" id="numNormSharp" class="num-input" min="0" max="10" step="0.5" value="${this.params.normal.sharp}" style="width:52px;">
+            </div>
+          </div>
+
+          <!-- Invert -->
+          <div style="margin-bottom:8px; padding-top:4px;">
+            <label style="font-size:11px; cursor:pointer; display:flex; align-items:center; gap:6px;">
+              <input type="checkbox" id="chkNormInvert" ${this.params.normal.invert ? 'checked' : ''}>
+              <span>Інвертувати геометрію (Invert)</span>
+            </label>
+          </div>
+
+          <!-- Channels Selector / Toggles -->
+          <div style="border-top:1px solid rgba(255,255,255,0.08); padding-top:8px; margin-top:8px;">
+            <label class="property-label" style="font-size:10px; margin-bottom:4px; display:block;">Перемикачі каналів (Channels)</label>
+            <div style="display:flex; gap:10px; flex-wrap:wrap; font-size:10px;">
+              <label style="cursor:pointer;"><input type="checkbox" id="chkNormInvR" ${this.params.normal.invertR ? 'checked' : ''}> Інверт R (X)</label>
+              <label style="cursor:pointer;"><input type="checkbox" id="chkNormInvG" ${this.params.normal.invertG ? 'checked' : ''}> Інверт G (Y)</label>
+              <label style="cursor:pointer;"><input type="checkbox" id="chkNormInvH" ${this.params.normal.invertH ? 'checked' : ''}> Інверт Height (H)</label>
+            </div>
+          </div>
+        </div>
+      `;
+    } else if (currentMap === 'displacement') {
+      mapContextualHtml = `
+        <div class="accordion-block" style="background:rgba(16,185,129,0.03); border:1px solid rgba(16,185,129,0.3); border-radius:8px; padding:12px;">
+          <div style="font-weight:700; font-size:12px; margin-bottom:10px; color:#10b981; display:flex; align-items:center; justify-content:space-between;">
+            <span>🏔️ Displacement Map (Карта Висот)</span>
+            <span style="font-size:10px; opacity:0.7;">Grayscale Height</span>
+          </div>
+
+          <!-- Contrast -->
+          <div style="margin-bottom:8px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:2px;">
+              <label class="property-label" style="font-size:10px;">Контраст (Contrast)</label>
+              <span id="valDispContrastText" style="font-size:10px; color:#10b981; font-weight:600;">${this.params.displacement.contrast}</span>
+            </div>
+            <div style="display:flex; gap:6px; align-items:center;">
+              <input type="range" id="rngDispContrast" min="0.1" max="3.0" step="0.1" value="${this.params.displacement.contrast}" style="flex:1;">
+              <input type="number" id="numDispContrast" class="num-input" min="0.1" max="3.0" step="0.1" value="${this.params.displacement.contrast}" style="width:52px;">
+            </div>
+          </div>
+
+          <!-- Invert -->
+          <div style="margin-top:8px;">
+            <label style="font-size:11px; cursor:pointer; display:flex; align-items:center; gap:6px;">
+              <input type="checkbox" id="chkDispInvert" ${this.params.displacement.invert ? 'checked' : ''}>
+              <span>Інвертувати карту висот (Invert)</span>
+            </label>
+          </div>
+        </div>
+      `;
+    } else if (currentMap === 'ao') {
+      mapContextualHtml = `
+        <div class="accordion-block" style="background:rgba(245,158,11,0.03); border:1px solid rgba(245,158,11,0.3); border-radius:8px; padding:12px;">
+          <div style="font-weight:700; font-size:12px; margin-bottom:10px; color:#f59e0b; display:flex; align-items:center; justify-content:space-between;">
+            <span>🌘 Ambient Occlusion (AO Map)</span>
+            <span style="font-size:10px; opacity:0.7;">Shadow Occlusion</span>
+          </div>
+
+          <!-- Strength -->
+          <div style="margin-bottom:8px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:2px;">
+              <label class="property-label" style="font-size:10px;">Сила (Strength)</label>
+              <span id="valAOStrengthText" style="font-size:10px; color:#f59e0b; font-weight:600;">${this.params.ao.strength}</span>
+            </div>
+            <div style="display:flex; gap:6px; align-items:center;">
+              <input type="range" id="rngAOStrength" min="0.1" max="5.0" step="0.1" value="${this.params.ao.strength}" style="flex:1;">
+              <input type="number" id="numAOStrength" class="num-input" min="0.1" max="5.0" step="0.1" value="${this.params.ao.strength}" style="width:52px;">
+            </div>
+          </div>
+
+          <!-- Levels -->
+          <div style="margin-bottom:8px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:2px;">
+              <label class="property-label" style="font-size:10px;">Рівні (Levels)</label>
+              <span id="valAOLevelText" style="font-size:10px; color:#f59e0b; font-weight:600;">${this.params.ao.level}</span>
+            </div>
+            <div style="display:flex; gap:6px; align-items:center;">
+              <input type="range" id="rngAOLevel" min="0.1" max="5.0" step="0.1" value="${this.params.ao.level}" style="flex:1;">
+              <input type="number" id="numAOLevel" class="num-input" min="0.1" max="5.0" step="0.1" value="${this.params.ao.level}" style="width:52px;">
+            </div>
+          </div>
+
+          <!-- Blur -->
+          <div style="margin-bottom:8px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:2px;">
+              <label class="property-label" style="font-size:10px;">Розмиття (Blur)</label>
+              <span id="valAOBlurText" style="font-size:10px; color:var(--text-muted, #a1a1aa); font-weight:600;">${this.params.ao.blur}</span>
+            </div>
+            <div style="display:flex; gap:6px; align-items:center;">
+              <input type="range" id="rngAOBlur" min="0" max="10" step="0.5" value="${this.params.ao.blur}" style="flex:1;">
+              <input type="number" id="numAOBlur" class="num-input" min="0" max="10" step="0.5" value="${this.params.ao.blur}" style="width:52px;">
+            </div>
+          </div>
+
+          <!-- Sharp -->
+          <div style="margin-bottom:8px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:2px;">
+              <label class="property-label" style="font-size:10px;">Чіткість (Sharp)</label>
+              <span id="valAOSharpText" style="font-size:10px; color:var(--text-muted, #a1a1aa); font-weight:600;">${this.params.ao.sharp}</span>
+            </div>
+            <div style="display:flex; gap:6px; align-items:center;">
+              <input type="range" id="rngAOSharp" min="0" max="10" step="0.5" value="${this.params.ao.sharp}" style="flex:1;">
+              <input type="number" id="numAOSharp" class="num-input" min="0" max="10" step="0.5" value="${this.params.ao.sharp}" style="width:52px;">
+            </div>
+          </div>
+
+          <!-- Invert -->
+          <div style="margin-top:8px;">
+            <label style="font-size:11px; cursor:pointer; display:flex; align-items:center; gap:6px;">
+              <input type="checkbox" id="chkAOInvert" ${this.params.ao.invert ? 'checked' : ''}>
+              <span>Інвертувати затінення (Invert)</span>
+            </label>
+          </div>
+        </div>
+      `;
+    } else if (currentMap === 'specular') {
+      mapContextualHtml = `
+        <div class="accordion-block" style="background:rgba(236,72,153,0.03); border:1px solid rgba(236,72,153,0.3); border-radius:8px; padding:12px;">
+          <div style="font-weight:700; font-size:12px; margin-bottom:10px; color:#ec4899; display:flex; align-items:center; justify-content:space-between;">
+            <span>✨ Specular Map (Карта Блиску)</span>
+            <span style="font-size:10px; opacity:0.7;">Gloss Intensity</span>
+          </div>
+
+          <!-- Mean -->
+          <div style="margin-bottom:8px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:2px;">
+              <label class="property-label" style="font-size:10px;">Середнє значення (Mean)</label>
+              <span id="valSpecMeanText" style="font-size:10px; color:#ec4899; font-weight:600;">${this.params.specular.mean}</span>
+            </div>
+            <div style="display:flex; gap:6px; align-items:center;">
+              <input type="range" id="rngSpecMean" min="0.0" max="1.0" step="0.05" value="${this.params.specular.mean}" style="flex:1;">
+              <input type="number" id="numSpecMean" class="num-input" min="0.0" max="1.0" step="0.05" value="${this.params.specular.mean}" style="width:52px;">
+            </div>
+          </div>
+
+          <!-- Range -->
+          <div style="margin-bottom:8px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:2px;">
+              <label class="property-label" style="font-size:10px;">Діапазон (Range)</label>
+              <span id="valSpecRangeText" style="font-size:10px; color:#ec4899; font-weight:600;">${this.params.specular.range}</span>
+            </div>
+            <div style="display:flex; gap:6px; align-items:center;">
+              <input type="range" id="rngSpecRange" min="0.1" max="5.0" step="0.1" value="${this.params.specular.range}" style="flex:1;">
+              <input type="number" id="numSpecRange" class="num-input" min="0.1" max="5.0" step="0.1" value="${this.params.specular.range}" style="width:52px;">
+            </div>
+          </div>
+
+          <!-- Falloff Dropdown -->
+          <div style="margin-bottom:8px;">
+            <label class="property-label" style="font-size:10px; margin-bottom:2px; display:block;">Спад градієнта (Falloff)</label>
+            <select id="selSpecFalloff" class="form-control" style="font-size:11px; height:26px;">
+              <option value="none" ${this.params.specular.falloff === 'none' ? 'selected' : ''}>Немає (None)</option>
+              <option value="linear" ${this.params.specular.falloff === 'linear' ? 'selected' : ''}>Лінійне (Linear)</option>
+              <option value="square" ${this.params.specular.falloff === 'square' ? 'selected' : ''}>Квадратичне (Square)</option>
+            </select>
+          </div>
+        </div>
+      `;
+    } else {
+      mapContextualHtml = `
+        <div class="accordion-block" style="background:rgba(255,255,255,0.02); border:1px solid var(--border-color, rgba(255,255,255,0.1)); border-radius:8px; padding:12px;">
+          <div style="font-weight:700; font-size:12px; margin-bottom:6px; color:var(--text-color, #f4f4f5);">
+            🖼️ Diffuse / Початкова Текстура
+          </div>
+          <p style="font-size:11px; color:var(--text-muted, #a1a1aa); margin:0;">
+            Використовується як базова текстура кольору для генерації всіх PBR карт.
+          </p>
+        </div>
+      `;
+    }
+
     rightPanel.innerHTML = `
-      <div class="map-gen-controls" style="display:flex; flex-direction:column; gap:12px; padding:12px 4px; color:var(--text-color, #f4f4f5);">
+      <div class="map-gen-controls" style="display:flex; flex-direction:column; gap:10px; padding:8px 4px; color:var(--text-color, #f4f4f5);">
         
         <!-- Source Sync Block -->
         <div class="accordion-block" style="background:rgba(255,255,255,0.02); border:1px solid var(--border-color, rgba(255,255,255,0.1)); border-radius:8px; padding:10px;">
-          <div style="font-weight:700; font-size:12px; margin-bottom:8px; display:flex; justify-content:space-between; align-items:center;">
+          <div style="font-weight:700; font-size:12px; margin-bottom:6px; display:flex; justify-content:space-between; align-items:center;">
             <span>🔄 Джерело текстури</span>
             <span id="syncStatusBadge" style="font-size:10px; background:rgba(16,185,129,0.15); color:#10b981; padding:2px 6px; border-radius:4px;">Синхронізовано</span>
           </div>
 
-          <div style="margin-bottom:8px;">
-            <select id="selMapSourceType" class="form-control" style="font-size:11px; height:28px;">
-              <option value="composite">🎨 Полотно Veil Studio (Всі шари)</option>
-              <option value="active_layer">🥞 Активний шар</option>
-              <option value="manual">📁 Власне фото / Файл</option>
-            </select>
-          </div>
+          <select id="selMapSourceType" class="form-control" style="font-size:11px; height:28px; margin-bottom:6px;">
+            <option value="composite" ${this.syncManager.sourceType === 'composite' ? 'selected' : ''}>🎨 Полотно Veil Studio (Всі шари)</option>
+            <option value="active_layer" ${this.syncManager.sourceType === 'active_layer' ? 'selected' : ''}>🥞 Активний шар</option>
+            <option value="manual" ${this.syncManager.sourceType === 'manual' ? 'selected' : ''}>📁 Власне фото / Файл</option>
+          </select>
 
-          <div id="dropzoneManual" style="display:none; border:2px dashed rgba(59,130,246,0.4); border-radius:6px; padding:12px; text-align:center; font-size:11px; color:var(--text-muted, #a1a1aa); cursor:pointer; background:rgba(59,130,246,0.04);">
-            Перетягніть фото сюди або <u>натисніть для вибору</u>
+          <div id="dropzoneManual" style="display:${this.syncManager.sourceType === 'manual' ? 'block' : 'none'}; border:2px dashed rgba(59,130,246,0.4); border-radius:6px; padding:10px; text-align:center; font-size:11px; color:var(--text-muted, #a1a1aa); cursor:pointer; background:rgba(59,130,246,0.04); margin-bottom:6px;">
+            Перетягніть фото сюди або <u>виберіть файл</u>
             <input type="file" id="fileManualInput" accept="image/*" style="display:none;">
           </div>
 
-          <button id="btnResyncCanvas" class="btn btn-secondary" style="width:100%; margin-top:6px; font-size:11px; padding:4px;">
+          <button id="btnResyncCanvas" class="btn btn-secondary" style="width:100%; font-size:11px; padding:4px 8px;">
             🔄 Оновити з полотна
           </button>
         </div>
 
-        <!-- Normal Map Panel -->
-        <div class="accordion-block" style="background:rgba(255,255,255,0.02); border:1px solid var(--border-color, rgba(255,255,255,0.1)); border-radius:8px; padding:10px;">
-          <div style="font-weight:700; font-size:12px; margin-bottom:8px; color:#3b82f6;">
-            📐 Normal Map (Карта Нормалей)
-          </div>
-
-          <div style="margin-bottom:6px;">
-            <label class="property-label" style="font-size:10px; margin-bottom:2px;">Алгоритм</label>
-            <select id="selNormAlgo" class="form-control" style="font-size:11px; height:26px;">
-              <option value="sobel" ${this.params.normal.algorithm === 'sobel' ? 'selected' : ''}>Sobel (Збалансований)</option>
-              <option value="scharr" ${this.params.normal.algorithm === 'scharr' ? 'selected' : ''}>Scharr (Висока чіткість)</option>
-            </select>
-          </div>
-
-          <div style="margin-bottom:6px;">
-            <label class="property-label" style="font-size:10px; margin-bottom:2px;">Сила (Strength)</label>
-            <div style="display:flex; gap:6px; align-items:center;">
-              <input type="range" id="rngNormStrength" min="0.1" max="10.0" step="0.1" value="${this.params.normal.strength}" style="flex:1;">
-              <input type="number" id="numNormStrength" class="num-input" min="0.1" max="10.0" step="0.1" value="${this.params.normal.strength}" style="width:48px;">
-            </div>
-          </div>
-
-          <div style="margin-bottom:6px;">
-            <label class="property-label" style="font-size:10px; margin-bottom:2px;">Розмиття / Чіткість</label>
-            <div style="display:flex; gap:6px; align-items:center;">
-              <input type="range" id="rngNormBlur" min="-1.0" max="1.0" step="0.1" value="${this.params.normal.blurSharpen}" style="flex:1;">
-              <input type="number" id="numNormBlur" class="num-input" min="-1.0" max="1.0" step="0.1" value="${this.params.normal.blurSharpen}" style="width:48px;">
-            </div>
-          </div>
-
-          <div style="display:flex; flex-wrap:wrap; gap:8px; margin-top:8px; font-size:10px;">
-            <label><input type="checkbox" id="chkNormInvR" ${this.params.normal.invertR ? 'checked' : ''}> Інверт R</label>
-            <label><input type="checkbox" id="chkNormInvG" ${this.params.normal.invertG ? 'checked' : ''}> Інверт G</label>
-            <label><input type="checkbox" id="chkNormInvH" ${this.params.normal.invertH ? 'checked' : ''}> Інверт H</label>
-          </div>
+        <!-- Sub-Tabs Selector for Contextual Panels -->
+        <div style="display:flex; gap:3px; background:rgba(0,0,0,0.3); padding:3px; border-radius:6px; border:1px solid var(--border-color, rgba(255,255,255,0.1));">
+          <button class="pbr-subtab-btn ${currentMap === 'normal' ? 'active' : ''}" data-submap="normal" style="flex:1; min-width:55px; padding:4px 4px; font-size:10px; border-radius:4px;">Normal</button>
+          <button class="pbr-subtab-btn ${currentMap === 'displacement' ? 'active' : ''}" data-submap="displacement" style="flex:1; min-width:55px; padding:4px 4px; font-size:10px; border-radius:4px;">Disp</button>
+          <button class="pbr-subtab-btn ${currentMap === 'ao' ? 'active' : ''}" data-submap="ao" style="flex:1; min-width:40px; padding:4px 4px; font-size:10px; border-radius:4px;">AO</button>
+          <button class="pbr-subtab-btn ${currentMap === 'specular' ? 'active' : ''}" data-submap="specular" style="flex:1; min-width:55px; padding:4px 4px; font-size:10px; border-radius:4px;">Specular</button>
         </div>
 
-        <!-- Displacement Map Panel -->
-        <div class="accordion-block" style="background:rgba(255,255,255,0.02); border:1px solid var(--border-color, rgba(255,255,255,0.1)); border-radius:8px; padding:10px;">
-          <div style="font-weight:700; font-size:12px; margin-bottom:8px; color:#10b981;">
-            🏔️ Displacement (Карта Висот)
-          </div>
-
-          <div style="margin-bottom:6px;">
-            <label class="property-label" style="font-size:10px; margin-bottom:2px;">Контраст (Contrast)</label>
-            <div style="display:flex; gap:6px; align-items:center;">
-              <input type="range" id="rngDispContrast" min="0.1" max="3.0" step="0.1" value="${this.params.displacement.contrast}" style="flex:1;">
-              <input type="number" id="numDispContrast" class="num-input" min="0.1" max="3.0" step="0.1" value="${this.params.displacement.contrast}" style="width:48px;">
-            </div>
-          </div>
-
-          <div style="margin-bottom:6px;">
-            <label class="property-label" style="font-size:10px; margin-bottom:2px;">Згладжування (Blur)</label>
-            <div style="display:flex; gap:6px; align-items:center;">
-              <input type="range" id="rngDispBlur" min="0" max="10" step="1" value="${this.params.displacement.blur}" style="flex:1;">
-              <input type="number" id="numDispBlur" class="num-input" min="0" max="10" step="1" value="${this.params.displacement.blur}" style="width:48px;">
-            </div>
-          </div>
-
-          <label style="font-size:10px; margin-top:4px; display:block;">
-            <input type="checkbox" id="chkDispInvert" ${this.params.displacement.invert ? 'checked' : ''}> Інвертувати висоту
-          </label>
-        </div>
-
-        <!-- Ambient Occlusion Panel -->
-        <div class="accordion-block" style="background:rgba(255,255,255,0.02); border:1px solid var(--border-color, rgba(255,255,255,0.1)); border-radius:8px; padding:10px;">
-          <div style="font-weight:700; font-size:12px; margin-bottom:8px; color:#f59e0b;">
-            🌘 Ambient Occlusion (AO)
-          </div>
-
-          <div style="margin-bottom:6px;">
-            <label class="property-label" style="font-size:10px; margin-bottom:2px;">Інтенсивність (Strength)</label>
-            <div style="display:flex; gap:6px; align-items:center;">
-              <input type="range" id="rngAOStrength" min="0.1" max="5.0" step="0.1" value="${this.params.ao.strength}" style="flex:1;">
-              <input type="number" id="numAOStrength" class="num-input" min="0.1" max="5.0" step="0.1" value="${this.params.ao.strength}" style="width:48px;">
-            </div>
-          </div>
-
-          <div style="margin-bottom:6px;">
-            <label class="property-label" style="font-size:10px; margin-bottom:2px;">Радіус вибірки (Range)</label>
-            <div style="display:flex; gap:6px; align-items:center;">
-              <input type="range" id="rngAORange" min="1" max="20" step="1" value="${this.params.ao.range}" style="flex:1;">
-              <input type="number" id="numAORange" class="num-input" min="1" max="20" step="1" value="${this.params.ao.range}" style="width:48px;">
-            </div>
-          </div>
-
-          <div style="margin-bottom:6px;">
-            <label class="property-label" style="font-size:10px; margin-bottom:2px;">Загасання (Falloff)</label>
-            <select id="selAOFalloff" class="form-control" style="font-size:11px; height:26px;">
-              <option value="linear" ${this.params.ao.falloff === 'linear' ? 'selected' : ''}>Лінійне (Linear)</option>
-              <option value="square" ${this.params.ao.falloff === 'square' ? 'selected' : ''}>Квадратичне (Square)</option>
-              <option value="none" ${this.params.ao.falloff === 'none' ? 'selected' : ''}>Немає (None)</option>
-            </select>
-          </div>
-        </div>
-
-        <!-- Specular Panel -->
-        <div class="accordion-block" style="background:rgba(255,255,255,0.02); border:1px solid var(--border-color, rgba(255,255,255,0.1)); border-radius:8px; padding:10px;">
-          <div style="font-weight:700; font-size:12px; margin-bottom:8px; color:#ec4899;">
-            ✨ Specular (Карта Блиску)
-          </div>
-
-          <div style="margin-bottom:6px;">
-            <label class="property-label" style="font-size:10px; margin-bottom:2px;">Яскравість блиску</label>
-            <div style="display:flex; gap:6px; align-items:center;">
-              <input type="range" id="rngSpecStrength" min="0.1" max="5.0" step="0.1" value="${this.params.specular.strength}" style="flex:1;">
-              <input type="number" id="numSpecStrength" class="num-input" min="0.1" max="5.0" step="0.1" value="${this.params.specular.strength}" style="width:48px;">
-            </div>
-          </div>
+        <!-- Dynamic Contextual Panel Area -->
+        <div id="pbrContextualPanelArea">
+          ${mapContextualHtml}
         </div>
 
         <!-- Actions / Export Panel -->
-        <div class="accordion-block" style="background:rgba(59,130,246,0.05); border:1px solid rgba(59,130,246,0.2); border-radius:8px; padding:10px;">
-          <div style="font-weight:700; font-size:12px; margin-bottom:8px; color:#3b82f6;">
-            🚀 Експорт та інтеграція
+        <div class="accordion-block" style="background:rgba(59,130,246,0.04); border:1px solid rgba(59,130,246,0.2); border-radius:8px; padding:10px;">
+          <div style="font-weight:700; font-size:11px; margin-bottom:8px; color:#3b82f6;">
+            🚀 Дії та Експорт
           </div>
 
           <button id="btnApplyAsLayer" class="btn btn-primary" style="width:100%; margin-bottom:6px; padding:6px; font-size:11px;">
-            ➕ Застосувати як шар у Veil Studio
+            ➕ Додати карту як шар у Veil Studio
           </button>
 
           <button id="btnDownloadCurrentMap" class="btn btn-secondary" style="width:100%; margin-bottom:6px; padding:6px; font-size:11px;">
-            💾 Завантажити активну карту
+            💾 Завантажити активну карту (${currentMap.toUpperCase()})
           </button>
 
           <button id="btnDownloadAllMaps" class="btn btn-secondary" style="width:100%; padding:6px; font-size:11px;">
-            📦 Завантажити всі 4 карти
+            📦 Завантажити всі 4 PBR карти
           </button>
         </div>
 
@@ -639,9 +804,19 @@ export class MapGeneratorTabComponent {
   }
 
   /**
-   * Bind event handlers for control panel sliders and buttons
+   * Bind event handlers for control panel sliders, checkboxes, selects, and buttons
    */
   bindRightPanelEvents() {
+    // Sub-tab switcher handler
+    document.querySelectorAll('.pbr-subtab-btn').forEach(btn => {
+      btn.onclick = (e) => {
+        const submap = e.target.dataset.submap;
+        if (submap) {
+          this.switchMapType(submap);
+        }
+      };
+    });
+
     // Source switcher
     const selSource = document.getElementById('selMapSourceType');
     const dropzone = document.getElementById('dropzoneManual');
@@ -684,40 +859,64 @@ export class MapGeneratorTabComponent {
       btnResync.onclick = () => this.syncManager.pullCanvasData();
     }
 
-    // Slider linker
-    const linkInput = (rngId, numId, callback) => {
+    // Slider & Numeric Input linking helper
+    const linkInput = (rngId, numId, textValId, callback) => {
       const rng = document.getElementById(rngId);
       const num = document.getElementById(numId);
+      const txt = textValId ? document.getElementById(textValId) : null;
+
       if (rng && num) {
         rng.oninput = (e) => {
-          num.value = e.target.value;
-          callback(parseFloat(e.target.value));
+          const val = parseFloat(e.target.value);
+          num.value = val;
+          if (txt) txt.textContent = val;
+          callback(val);
         };
         num.oninput = (e) => {
-          rng.value = e.target.value;
-          callback(parseFloat(e.target.value));
+          const val = parseFloat(e.target.value);
+          rng.value = val;
+          if (txt) txt.textContent = val;
+          callback(val);
         };
       }
     };
 
-    // Normal Map Events
-    const selNormAlgo = document.getElementById('selNormAlgo');
-    if (selNormAlgo) {
-      selNormAlgo.onchange = (e) => {
+    // Normal Map Controls
+    const selNormFilter = document.getElementById('selNormFilter');
+    if (selNormFilter) {
+      selNormFilter.onchange = (e) => {
         this.params.normal.algorithm = e.target.value;
         this.reprocess();
       };
     }
 
-    linkInput('rngNormStrength', 'numNormStrength', (val) => {
+    linkInput('rngNormStrength', 'numNormStrength', 'valNormStrengthText', (val) => {
       this.params.normal.strength = val;
       this.reprocess();
     });
 
-    linkInput('rngNormBlur', 'numNormBlur', (val) => {
-      this.params.normal.blurSharpen = val;
+    linkInput('rngNormLevel', 'numNormLevel', 'valNormLevelText', (val) => {
+      this.params.normal.level = val;
       this.reprocess();
     });
+
+    linkInput('rngNormBlur', 'numNormBlur', 'valNormBlurText', (val) => {
+      this.params.normal.blur = val;
+      this.reprocess();
+    });
+
+    linkInput('rngNormSharp', 'numNormSharp', 'valNormSharpText', (val) => {
+      this.params.normal.sharp = val;
+      this.reprocess();
+    });
+
+    const chkNormInvert = document.getElementById('chkNormInvert');
+    if (chkNormInvert) {
+      chkNormInvert.onchange = (e) => {
+        this.params.normal.invert = e.target.checked;
+        this.reprocess();
+      };
+    }
 
     ['chkNormInvR', 'chkNormInvG', 'chkNormInvH'].forEach((id, idx) => {
       const el = document.getElementById(id);
@@ -731,14 +930,9 @@ export class MapGeneratorTabComponent {
       }
     });
 
-    // Displacement Events
-    linkInput('rngDispContrast', 'numDispContrast', (val) => {
+    // Displacement Map Controls
+    linkInput('rngDispContrast', 'numDispContrast', 'valDispContrastText', (val) => {
       this.params.displacement.contrast = val;
-      this.reprocess();
-    });
-
-    linkInput('rngDispBlur', 'numDispBlur', (val) => {
-      this.params.displacement.blur = val;
       this.reprocess();
     });
 
@@ -750,30 +944,53 @@ export class MapGeneratorTabComponent {
       };
     }
 
-    // AO Events
-    linkInput('rngAOStrength', 'numAOStrength', (val) => {
+    // AO Map Controls
+    linkInput('rngAOStrength', 'numAOStrength', 'valAOStrengthText', (val) => {
       this.params.ao.strength = val;
       this.reprocess();
     });
 
-    linkInput('rngAORange', 'numAORange', (val) => {
-      this.params.ao.range = val;
+    linkInput('rngAOLevel', 'numAOLevel', 'valAOLevelText', (val) => {
+      this.params.ao.level = val;
       this.reprocess();
     });
 
-    const selAOFalloff = document.getElementById('selAOFalloff');
-    if (selAOFalloff) {
-      selAOFalloff.onchange = (e) => {
-        this.params.ao.falloff = e.target.value;
+    linkInput('rngAOBlur', 'numAOBlur', 'valAOBlurText', (val) => {
+      this.params.ao.blur = val;
+      this.reprocess();
+    });
+
+    linkInput('rngAOSharp', 'numAOSharp', 'valAOSharpText', (val) => {
+      this.params.ao.sharp = val;
+      this.reprocess();
+    });
+
+    const chkAOInvert = document.getElementById('chkAOInvert');
+    if (chkAOInvert) {
+      chkAOInvert.onchange = (e) => {
+        this.params.ao.invert = e.target.checked;
         this.reprocess();
       };
     }
 
-    // Specular Events
-    linkInput('rngSpecStrength', 'numSpecStrength', (val) => {
-      this.params.specular.strength = val;
+    // Specular Map Controls
+    linkInput('rngSpecMean', 'numSpecMean', 'valSpecMeanText', (val) => {
+      this.params.specular.mean = val;
       this.reprocess();
     });
+
+    linkInput('rngSpecRange', 'numSpecRange', 'valSpecRangeText', (val) => {
+      this.params.specular.range = val;
+      this.reprocess();
+    });
+
+    const selSpecFalloff = document.getElementById('selSpecFalloff');
+    if (selSpecFalloff) {
+      selSpecFalloff.onchange = (e) => {
+        this.params.specular.falloff = e.target.value;
+        this.reprocess();
+      };
+    }
 
     // Export & Layer Actions
     const btnApply = document.getElementById('btnApplyAsLayer');
