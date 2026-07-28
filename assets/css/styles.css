@@ -1438,6 +1438,34 @@ input:checked + .slider:before {
 }
 
 /* Map Generator Styles */
+.res-btn-map {
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    color: var(--text-muted, #a1a1aa);
+    font-size: 10px;
+    font-weight: 600;
+    padding: 2px 7px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    user-select: none;
+    line-height: 1.2;
+}
+
+.res-btn-map:hover {
+    background: rgba(255, 255, 255, 0.14);
+    border-color: rgba(255, 255, 255, 0.28);
+    color: #ffffff;
+}
+
+.res-btn-map.active {
+    background: var(--primary-color, #3b82f6) !important;
+    border-color: #60a5fa !important;
+    color: #ffffff !important;
+    font-weight: 700;
+    box-shadow: 0 0 10px rgba(59, 130, 246, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.3);
+}
+
 .map-type-btn {
     background: rgba(255, 255, 255, 0.05);
     border: 1px solid rgba(255, 255, 255, 0.1);

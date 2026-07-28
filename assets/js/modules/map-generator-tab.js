@@ -237,10 +237,11 @@ export class MapGeneratorTabComponent {
 
               <div style="display:flex; align-items:center; gap:4px;">
                 <span style="color:var(--text-muted, #a1a1aa);">Роздільна здатність:</span>
-                <button class="res-btn-map" data-res="256" style="padding:2px 6px; font-size:10px;">256</button>
-                <button class="res-btn-map active" data-res="512" style="padding:2px 8px; font-size:10px;">512</button>
-                <button class="res-btn-map" data-res="1024" style="padding:2px 6px; font-size:10px;">1024</button>
-                <button class="res-btn-map" data-res="2048" style="padding:2px 6px; font-size:10px;">2048</button>
+                <button class="res-btn-map ${this.targetResolution === 256 ? 'active' : ''}" data-res="256">256</button>
+                <button class="res-btn-map ${this.targetResolution === 512 ? 'active' : ''}" data-res="512">512</button>
+                <button class="res-btn-map ${this.targetResolution === 1024 ? 'active' : ''}" data-res="1024">1024</button>
+                <button class="res-btn-map ${this.targetResolution === 2048 ? 'active' : ''}" data-res="2048">2048</button>
+                <button class="res-btn-map ${this.targetResolution === 4096 ? 'active' : ''}" data-res="4096">4096</button>
               </div>
 
               <div style="width:1px; height:16px; background:rgba(255,255,255,0.15);"></div>
@@ -490,14 +491,30 @@ export class MapGeneratorTabComponent {
     };
 
     // Resolution switcher
+    const updateResButtons = () => {
+      document.querySelectorAll('.res-btn-map').forEach(btn => {
+        const resVal = parseInt(btn.dataset.res, 10);
+        if (resVal === this.targetResolution) {
+          btn.classList.add('active');
+        } else {
+          btn.classList.remove('active');
+        }
+      });
+    };
+
     document.querySelectorAll('.res-btn-map').forEach(btn => {
       btn.onclick = (e) => {
-        document.querySelectorAll('.res-btn-map').forEach(b => b.classList.remove('active'));
-        e.target.classList.add('active');
-        this.targetResolution = parseInt(e.target.dataset.res, 10);
-        this.reprocess();
+        const targetBtn = e.currentTarget || e.target;
+        const res = parseInt(targetBtn.dataset.res, 10);
+        if (!isNaN(res)) {
+          this.targetResolution = res;
+          updateResButtons();
+          this.reprocess();
+        }
       };
     });
+
+    updateResButtons();
 
     const chkFast = document.getElementById('chkFastPreviewMap');
     if (chkFast) {
