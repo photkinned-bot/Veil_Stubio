@@ -337,10 +337,11 @@ export class MapGeneratorTabComponent {
     // Map type switcher tabs
     document.querySelectorAll('.map-type-btn').forEach(btn => {
       btn.onclick = (e) => {
-        document.querySelectorAll('.map-type-btn').forEach(b => b.classList.remove('active'));
-        e.target.classList.add('active');
-        this.selectedMapType = e.target.dataset.map;
-        this.render2DPreview();
+        const targetBtn = e.currentTarget || e.target;
+        const mapType = targetBtn.dataset.map;
+        if (mapType) {
+          this.switchMapType(mapType);
+        }
       };
     });
 
@@ -584,8 +585,12 @@ export class MapGeneratorTabComponent {
       btn.classList.toggle('active', btn.dataset.map === mapType);
     });
 
-    // Re-render contextual control panel in right settings area
-    this.renderRightPanelControls();
+    // Ensure right panel mode is switched to 'maps' so PBR map controls appear in right properties panel
+    if (typeof window.switchRightTab === 'function') {
+      window.switchRightTab('maps');
+    } else {
+      this.renderRightPanelControls();
+    }
 
     // Re-render active viewport preview
     if (this.activeView === '2d') {
@@ -869,10 +874,11 @@ export class MapGeneratorTabComponent {
 
         <!-- Sub-Tabs Selector for Contextual Panels -->
         <div style="display:flex; gap:3px; background:rgba(0,0,0,0.3); padding:3px; border-radius:6px; border:1px solid var(--border-color, rgba(255,255,255,0.1));">
-          <button class="pbr-subtab-btn ${currentMap === 'normal' ? 'active' : ''}" data-submap="normal" style="flex:1; min-width:55px; padding:4px 4px; font-size:10px; border-radius:4px;">Normal</button>
-          <button class="pbr-subtab-btn ${currentMap === 'displacement' ? 'active' : ''}" data-submap="displacement" style="flex:1; min-width:55px; padding:4px 4px; font-size:10px; border-radius:4px;">Disp</button>
-          <button class="pbr-subtab-btn ${currentMap === 'ao' ? 'active' : ''}" data-submap="ao" style="flex:1; min-width:40px; padding:4px 4px; font-size:10px; border-radius:4px;">AO</button>
-          <button class="pbr-subtab-btn ${currentMap === 'specular' ? 'active' : ''}" data-submap="specular" style="flex:1; min-width:55px; padding:4px 4px; font-size:10px; border-radius:4px;">Specular</button>
+          <button class="pbr-subtab-btn ${currentMap === 'normal' ? 'active' : ''}" data-submap="normal" style="flex:1; min-width:45px; padding:4px 2px; font-size:10px; border-radius:4px;">Normal</button>
+          <button class="pbr-subtab-btn ${currentMap === 'displacement' ? 'active' : ''}" data-submap="displacement" style="flex:1; min-width:45px; padding:4px 2px; font-size:10px; border-radius:4px;">Disp</button>
+          <button class="pbr-subtab-btn ${currentMap === 'ao' ? 'active' : ''}" data-submap="ao" style="flex:1; min-width:32px; padding:4px 2px; font-size:10px; border-radius:4px;">AO</button>
+          <button class="pbr-subtab-btn ${currentMap === 'specular' ? 'active' : ''}" data-submap="specular" style="flex:1; min-width:48px; padding:4px 2px; font-size:10px; border-radius:4px;">Specular</button>
+          <button class="pbr-subtab-btn ${currentMap === 'diffuse' ? 'active' : ''}" data-submap="diffuse" style="flex:1; min-width:40px; padding:4px 2px; font-size:10px; border-radius:4px;">Diffuse</button>
         </div>
 
         <!-- Dynamic Contextual Panel Area -->

@@ -3828,7 +3828,11 @@
             state.selectedLayerId=id; 
             commitHistorySnapshot();
             renderLayers();
-            if (currentTab !== 'maps') switchRightTab('layer'); else renderProps();
+            if (currentTab === 'maps') {
+                if (window.mapGeneratorTab) window.mapGeneratorTab.renderRightPanelControls();
+            } else {
+                switchRightTab('layer');
+            }
             requestRender();
         }
         function duplicateLayer(i){
@@ -3841,7 +3845,11 @@
             state.selectedLayerId = newL.id; 
             commitHistorySnapshot();
             renderLayers();
-            if (currentTab !== 'maps') switchRightTab('layer'); else renderProps();
+            if (currentTab === 'maps') {
+                if (window.mapGeneratorTab) window.mapGeneratorTab.renderRightPanelControls();
+            } else {
+                switchRightTab('layer');
+            }
             requestRender();
         }
         function deleteLayer(i){
@@ -3852,7 +3860,13 @@
                 }
                 commitHistorySnapshot();
                 renderLayers();
-                renderProps();
+                if (currentTab === 'maps') {
+                    if (window.mapGeneratorTab) window.mapGeneratorTab.renderRightPanelControls();
+                } else if (currentTab === 'global') {
+                    renderGlobal();
+                } else {
+                    renderProps();
+                }
                 requestRender();
             }
         }
