@@ -3557,6 +3557,40 @@
             }
 
             cx.putImageData(imgData,0,0);
+
+            let shouldProcessTiling = tilingState.enabled || (typeof currentTab !== 'undefined' && currentTab === 'tiling');
+            if (shouldProcessTiling) {
+                if (!tilingState.customImageLoaded) {
+                    if (!tilingOriginalCanvas) {
+                        tilingOriginalCanvas = document.createElement('canvas');
+                    }
+                    if (tilingOriginalCanvas.width !== w || tilingOriginalCanvas.height !== h) {
+                        tilingOriginalCanvas.width = w;
+                        tilingOriginalCanvas.height = h;
+                    }
+                    let octx = tilingOriginalCanvas.getContext('2d');
+                    octx.drawImage(cv, 0, 0);
+                    tilingState.hasImage = true;
+                }
+
+                runTilingPipeline(true);
+
+                if (tilingState.enabled) {
+                    if (isExport || cv !== canvas) {
+                        if (tilingProcessedCanvas) {
+                            cx.clearRect(0, 0, w, h);
+                            cx.drawImage(tilingProcessedCanvas, 0, 0, w, h);
+                        }
+                    } else if (currentTab === 'tiling') {
+                        renderTilingView();
+                    } else if (tilingProcessedCanvas) {
+                        cx.clearRect(0, 0, w, h);
+                        cx.drawImage(tilingProcessedCanvas, 0, 0, w, h);
+                    }
+                } else if (currentTab === 'tiling' && !isExport && cv === canvas) {
+                    renderTilingView();
+                }
+            }
             if(!isExport && window.mapGeneratorTab && typeof window.mapGeneratorTab.onCanvasUpdated === 'function') {
                 window.mapGeneratorTab.onCanvasUpdated();
             }
@@ -3665,12 +3699,8 @@
 
             if (tab === 'tiling') {
                 $('rightPanelTitle').innerText = t('title_tiling_props');
-                if (!tilingState.hasImage) {
-                    captureProjectToTiling();
-                } else {
-                    renderTilingPanel();
-                    requestRender();
-                }
+                renderTilingPanel();
+                requestRender();
             } else {
                 $('rightPanelTitle').innerText = tab==='layer'? t('title_layer_props') : t('title_global_props');
                 if (tilingState.stamp_enable) {
@@ -5399,6 +5429,8 @@
         }
 
         let tilingState = {
+            enabled: false,
+            customImageLoaded: false,
             hasImage: false,
             currentViewMode: 'single', // 'single', 'tiled', 'tiled3', 'original'
             showGrid: false,
@@ -5543,6 +5575,15 @@
             };
         }
 
+        function toggleEnableTiling(enabled) {
+            tilingState.enabled = enabled;
+            let chk = $('chkEnableTiling');
+            if (chk) chk.checked = enabled;
+            renderTilingPanel();
+            requestRender();
+        }
+        window.toggleEnableTiling = toggleEnableTiling;
+
         function setViewModeTiling(mode) {
             tilingState.currentViewMode = mode;
             renderTilingPanel();
@@ -5653,6 +5694,8 @@
         }
 
         function resetTilingToDefaults() {
+            tilingState.enabled = false;
+            tilingState.customImageLoaded = false;
             tilingState.preset = 'organic';
             tilingState.stamp_enable = false;
             tilingState.stamp_aligned = true;
@@ -5701,15 +5744,8 @@
         }
 
         function captureProjectToTiling() {
-            if (!tilingOriginalCanvas) {
-                tilingOriginalCanvas = document.createElement('canvas');
-            }
-            tilingOriginalCanvas.width = canvasResolution;
-            tilingOriginalCanvas.height = canvasResolution;
-            renderProject(tilingOriginalCanvas);
-            tilingState.hasImage = true;
-            renderTilingPanel();
-            runTilingPipeline();
+            tilingState.customImageLoaded = false;
+            requestRender();
         }
 
         function applyTilingToLayer() {
@@ -5755,8 +5791,10 @@
                     let octx = tilingOriginalCanvas.getContext('2d');
                     octx.drawImage(img, 0, 0);
                     tilingState.hasImage = true;
+                    tilingState.customImageLoaded = true;
                     renderTilingPanel();
                     runTilingPipeline();
+                    requestRender();
                 };
                 img.src = event.target.result;
             };
@@ -6505,7 +6543,7 @@
             }
         }
 
-        function runTilingPipeline() {
+        function runTilingPipeline(skipDraw = false) {
             if (!tilingState.hasImage || !tilingOriginalCanvas) return;
             let t0 = performance.now();
             let w = tilingOriginalCanvas.width;
@@ -6520,6 +6558,15 @@
 
             let pctx = tilingProcessedCanvas.getContext('2d');
             pctx.drawImage(tilingOriginalCanvas, 0, 0);
+
+            if (!tilingState.enabled) {
+                let badge = $('tilingStatusBadge');
+                if (badge) badge.innerText = `Вимкнено (оригінал)`;
+                if (!skipDraw && currentTab === 'tiling') {
+                    renderTilingView();
+                }
+                return;
+            }
 
             let imgData = pctx.getImageData(0, 0, w, h);
             let pixels = imgData.data;
@@ -6583,7 +6630,7 @@
             let badge = $('tilingStatusBadge');
             if (badge) badge.innerText = `Оброблено за ${(t1 - t0).toFixed(1)} мс`;
 
-            if (currentTab === 'tiling') {
+            if (!skipDraw && currentTab === 'tiling') {
                 renderTilingView();
             }
         }
@@ -6695,8 +6742,24 @@
             if (!panel) return;
 
             panel.innerHTML = `
-                <div class="property-group" style="display:grid; grid-template-columns:1fr 1fr; gap:6px;">
-                    <button onclick="captureProjectToTiling()" class="btn btn-primary" style="font-size:11px; padding:6px 4px;" title="Захопити результат з поточного проєкту">📸 З проєкту</button>
+                <div class="sidebar-section" style="background: rgba(59, 130, 246, 0.12); border: 1px solid rgba(59, 130, 246, 0.3); padding: 10px; border-radius: 8px; margin-bottom: 12px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                        <div>
+                            <div style="font-weight: 700; font-size: 13px; color: #3b82f6;">🔁 Активний безшовний тайлінг</div>
+                            <div style="font-size: 10.5px; color: var(--text-muted, #a1a1aa);">Застосовує тайлінг до всього канвасу live</div>
+                        </div>
+                        <label class="switch">
+                            <input type="checkbox" id="chkEnableTiling" ${t.enabled ? 'checked' : ''} onchange="toggleEnableTiling(this.checked)">
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+                    <div style="font-size:10px; color:${t.customImageLoaded ? '#f59e0b' : '#10b981'}; background:rgba(0,0,0,0.2); padding:4px 8px; border-radius:4px; display:flex; align-items:center; justify-content:space-between;">
+                        <span>${t.customImageLoaded ? '📁 Власне фото' : '⚡ Live Canvas (з проєкту)'}</span>
+                        ${t.customImageLoaded ? `<button onclick="tilingState.customImageLoaded=false; requestRender(); renderTilingPanel();" style="background:none; border:none; color:#3b82f6; text-decoration:underline; font-size:10px; cursor:pointer; padding:0;">Повернути live проєкт</button>` : ''}
+                    </div>
+                </div>
+
+                <div class="property-group" style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:6px;">
                     <button onclick="$('tilingImageInput').click()" class="btn btn-secondary" style="font-size:11px; padding:6px 4px;" title="Завантажити власне фото для тайлінгу">📂 Завантажити</button>
                     <button onclick="applyTilingToLayer()" class="btn btn-secondary" style="font-size:11px; padding:6px 4px;" title="Створити новий Paint шар з цим безшовним талом">🎨 У новий шар</button>
                     <button onclick="openTilingExportModal()" class="btn btn-success" style="font-size:11px; padding:6px 4px;" title="Зберегти PNG зображення">💾 Зберегти PNG</button>
@@ -7281,15 +7344,11 @@
             renderRequested = true;
             requestAnimationFrame(() => {
                 renderRequested = false;
-                if (currentTab === 'tiling') {
-                    renderTilingView();
-                } else {
-                    if (!suppressRender) {
-                        let targetRes = (isInteracting && lowResOnEdit) ? 256 : canvasResolution;
-                        setCanvasRes(targetRes, true);
-                    }
-                    renderProject();
+                if (!suppressRender) {
+                    let targetRes = (isInteracting && lowResOnEdit) ? 256 : canvasResolution;
+                    setCanvasRes(targetRes, true);
                 }
+                renderProject();
             });
         }
 
@@ -7403,7 +7462,7 @@
                 if (isPbrActive && window.mapGeneratorTab) {
                     window.mapGeneratorTab.renderMapToCanvasAtRes(tc, res);
                 } else {
-                    renderProject(tc);
+                    renderProject(tc, true);
                 }
 
                 $('modalPngPreview').src = tc.toDataURL('image/png');

@@ -236,17 +236,14 @@ export class MapGeneratorTabComponent {
               <div style="width:1px; height:16px; background:rgba(255,255,255,0.15);"></div>
 
               <div style="display:flex; align-items:center; gap:4px;">
-                <span style="color:var(--text-muted, #a1a1aa);">Роздільна здатність:</span>
-                <button class="res-btn-map ${this.targetResolution === 256 ? 'active' : ''}" data-res="256">256</button>
+                <span style="color:var(--text-muted, #a1a1aa);">Якість прев'ю:</span>
                 <button class="res-btn-map ${this.targetResolution === 512 ? 'active' : ''}" data-res="512">512</button>
                 <button class="res-btn-map ${this.targetResolution === 1024 ? 'active' : ''}" data-res="1024">1024</button>
-                <button class="res-btn-map ${this.targetResolution === 2048 ? 'active' : ''}" data-res="2048">2048</button>
-                <button class="res-btn-map ${this.targetResolution === 4096 ? 'active' : ''}" data-res="4096">4096</button>
               </div>
 
               <div style="width:1px; height:16px; background:rgba(255,255,255,0.15);"></div>
 
-              <label style="display:flex; align-items:center; gap:4px; cursor:pointer;" title="Тимчасово знижувати якість до 256x256 при перетягуванні повзунків">
+              <label style="display:flex; align-items:center; gap:4px; cursor:pointer;" title="Тимчасово знижувати якість до 256x256 при регулюванні повзунків">
                 <input type="checkbox" id="chkFastPreviewMap" ${this.fastPreview ? 'checked' : ''}> ⚡ Швидкий прев'ю
               </label>
             </div>
@@ -1376,20 +1373,89 @@ export class MapGeneratorTabComponent {
   }
 
   /**
+   * Prompt modal to select export resolution (256, 512, 1024, 2048, 4096) for PBR map exports
+   */
+  promptResolutionAndExport(title, defaultRes, callback) {
+    let modal = document.getElementById('pbrResSelectModal');
+    if (!modal) {
+      modal = document.createElement('div');
+      modal.id = 'pbrResSelectModal';
+      modal.style.cssText = 'position:fixed; inset:0; z-index:9999; background:rgba(0,0,0,0.8); backdrop-filter:blur(6px); display:flex; justify-content:center; align-items:center; padding:16px; font-family:sans-serif;';
+      document.body.appendChild(modal);
+    }
+
+    let selectedRes = defaultRes || 1024;
+
+    modal.innerHTML = `
+      <div style="background:#18181b; border:1px solid rgba(255,255,255,0.15); border-radius:12px; width:100%; max-width:400px; padding:20px; box-shadow:0 20px 50px rgba(0,0,0,0.8); color:#f4f4f5; text-align:center;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; border-bottom:1px solid rgba(255,255,255,0.1); padding-bottom:10px;">
+          <h3 style="margin:0; font-size:15px; font-weight:700;">${title}</h3>
+          <button id="btnClosePbrResModal" class="btn btn-secondary" style="padding:2px 8px; font-size:12px; border-radius:4px;">✕</button>
+        </div>
+
+        <p style="font-size:12px; color:#a1a1aa; margin-bottom:14px;">Оберіть роздільну здатність для експорту PBR карт:</p>
+
+        <div style="display:grid; grid-template-columns:repeat(5, 1fr); gap:6px; margin-bottom:18px;" id="pbrResGrid">
+          <button class="gen-btn pbr-res-opt ${selectedRes===256?'active':''}" data-r="256">256</button>
+          <button class="gen-btn pbr-res-opt ${selectedRes===512?'active':''}" data-r="512">512</button>
+          <button class="gen-btn pbr-res-opt ${selectedRes===1024?'active':''}" data-r="1024">1024</button>
+          <button class="gen-btn pbr-res-opt ${selectedRes===2048?'active':''}" data-r="2048">2048</button>
+          <button class="gen-btn pbr-res-opt ${selectedRes===4096?'active':''}" data-r="4096">4096</button>
+        </div>
+
+        <div style="display:flex; gap:10px; justify-content:flex-end;">
+          <button id="btnCancelPbrRes" class="btn btn-secondary" style="padding:6px 16px; font-size:12px;">Скасувати</button>
+          <button id="btnConfirmPbrRes" class="btn btn-primary" style="padding:6px 20px; font-size:12px;">💾 Експортувати</button>
+        </div>
+      </div>
+    `;
+
+    modal.style.display = 'flex';
+
+    const updateGrid = () => {
+      modal.querySelectorAll('.pbr-res-opt').forEach(b => {
+        b.classList.toggle('active', parseInt(b.dataset.r, 10) === selectedRes);
+      });
+    };
+
+    modal.querySelectorAll('.pbr-res-opt').forEach(b => {
+      b.onclick = () => {
+        selectedRes = parseInt(b.dataset.r, 10);
+        updateGrid();
+      };
+    });
+
+    const close = () => { modal.style.display = 'none'; };
+
+    const btnClose = document.getElementById('btnClosePbrResModal');
+    const btnCancel = document.getElementById('btnCancelPbrRes');
+    const btnConfirm = document.getElementById('btnConfirmPbrRes');
+
+    if (btnClose) btnClose.onclick = close;
+    if (btnCancel) btnCancel.onclick = close;
+    if (btnConfirm) btnConfirm.onclick = () => {
+      close();
+      callback(selectedRes);
+    };
+  }
+
+  /**
    * Download single map file
    */
   downloadMap(mapType) {
-    const res = Math.max(512, this.targetResolution || 1024);
-    const canvas = document.createElement('canvas');
-    this.renderMapToCanvasAtRes(canvas, res, mapType);
+    const mapName = (mapType || this.selectedMapType || 'normal').toUpperCase();
+    this.promptResolutionAndExport(`Експорт ${mapName} Карти`, 1024, (res) => {
+      const canvas = document.createElement('canvas');
+      this.renderMapToCanvasAtRes(canvas, res, mapType);
 
-    const dataUrl = canvas.toDataURL('image/png');
-    const a = document.createElement('a');
-    a.href = dataUrl;
-    a.download = `veil_studio_${mapType}_map_${res}x${res}.png`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+      const dataUrl = canvas.toDataURL('image/png');
+      const a = document.createElement('a');
+      a.href = dataUrl;
+      a.download = `veil_studio_${mapType}_map_${res}x${res}.png`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    });
   }
 
   /**
@@ -1397,72 +1463,81 @@ export class MapGeneratorTabComponent {
    * Generates single ZIP archive to bypass iPad Safari pop-up / multi-download restrictions,
    * and displays a high-res preview sheet.
    */
-  async downloadAllMaps() {
-    const res = Math.max(512, this.targetResolution || 1024);
-    const btn = document.getElementById('btnDownloadAllMaps');
-    const originalText = btn ? btn.innerHTML : '';
+  downloadAllMaps() {
+    this.promptResolutionAndExport('Експорт Всіх 5 PBR Карт (ZIP)', 1024, async (res) => {
+      const btn = document.getElementById('btnDownloadAllMaps');
+      const originalText = btn ? btn.innerHTML : '';
 
-    if (btn) {
-      btn.disabled = true;
-      btn.innerHTML = '⌛ Формування ZIP...';
-    }
-
-    try {
-      const mapTypes = ['normal', 'displacement', 'ao', 'specular', 'diffuse'];
-      const mapBlobs = {};
-      const dataUrls = {};
-
-      for (const type of mapTypes) {
-        const canvas = document.createElement('canvas');
-        this.renderMapToCanvasAtRes(canvas, res, type);
-        const dataUrl = canvas.toDataURL('image/png');
-        dataUrls[type] = dataUrl;
-
-        const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
-        if (blob) mapBlobs[type] = blob;
+      if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '⌛ Формування ZIP...';
       }
 
-      // 1. Package single ZIP file (iPad / Safari bypasses multi-file blockage via 1 zip download)
-      if (window.JSZip) {
-        const zip = new window.JSZip();
-        const folder = zip.folder(`pbr_maps_${res}x${res}`);
+      try {
+        const mapTypes = ['normal', 'displacement', 'ao', 'specular', 'diffuse'];
+        const mapBlobs = {};
+        const dataUrls = {};
 
-        if (mapBlobs.normal) folder.file(`veil_normal_${res}x${res}.png`, mapBlobs.normal);
-        if (mapBlobs.displacement) folder.file(`veil_displacement_${res}x${res}.png`, mapBlobs.displacement);
-        if (mapBlobs.ao) folder.file(`veil_ao_${res}x${res}.png`, mapBlobs.ao);
-        if (mapBlobs.specular) folder.file(`veil_specular_${res}x${res}.png`, mapBlobs.specular);
-        if (mapBlobs.diffuse) folder.file(`veil_diffuse_${res}x${res}.png`, mapBlobs.diffuse);
+        for (const type of mapTypes) {
+          const canvas = document.createElement('canvas');
+          this.renderMapToCanvasAtRes(canvas, res, type);
+          const dataUrl = canvas.toDataURL('image/png');
+          dataUrls[type] = dataUrl;
 
-        const zipBlob = await zip.generateAsync({ type: 'blob' });
-        const zipUrl = URL.createObjectURL(zipBlob);
+          const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+          if (blob) mapBlobs[type] = blob;
+        }
 
-        const a = document.createElement('a');
-        a.href = zipUrl;
-        a.download = `veil_pbr_maps_${res}x${res}.zip`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        setTimeout(() => URL.revokeObjectURL(zipUrl), 10000);
-      } else {
-        // Fallback: trigger downloads with short delay
-        for (const type of ['normal', 'displacement', 'ao', 'specular']) {
-          this.downloadMap(type);
-          await new Promise(r => setTimeout(r, 300));
+        // 1. Package single ZIP file (iPad / Safari bypasses multi-file blockage via 1 zip download)
+        if (window.JSZip) {
+          const zip = new window.JSZip();
+          const folder = zip.folder(`pbr_maps_${res}x${res}`);
+
+          if (mapBlobs.normal) folder.file(`veil_normal_${res}x${res}.png`, mapBlobs.normal);
+          if (mapBlobs.displacement) folder.file(`veil_displacement_${res}x${res}.png`, mapBlobs.displacement);
+          if (mapBlobs.ao) folder.file(`veil_ao_${res}x${res}.png`, mapBlobs.ao);
+          if (mapBlobs.specular) folder.file(`veil_specular_${res}x${res}.png`, mapBlobs.specular);
+          if (mapBlobs.diffuse) folder.file(`veil_diffuse_${res}x${res}.png`, mapBlobs.diffuse);
+
+          const zipBlob = await zip.generateAsync({ type: 'blob' });
+          const zipUrl = URL.createObjectURL(zipBlob);
+
+          const a = document.createElement('a');
+          a.href = zipUrl;
+          a.download = `veil_pbr_maps_${res}x${res}.zip`;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          setTimeout(() => URL.revokeObjectURL(zipUrl), 10000);
+        } else {
+          // Fallback: trigger downloads with short delay
+          for (const type of ['normal', 'displacement', 'ao', 'specular']) {
+            const canvas = document.createElement('canvas');
+            this.renderMapToCanvasAtRes(canvas, res, type);
+            const dataUrl = canvas.toDataURL('image/png');
+            const a = document.createElement('a');
+            a.href = dataUrl;
+            a.download = `veil_studio_${type}_map_${res}x${res}.png`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            await new Promise(r => setTimeout(r, 300));
+          }
+        }
+
+        // 2. Open iPad Export Sheet for visual confirmation and manual tap-hold saving to iOS Photos
+        this.showPbrExportModal(dataUrls, res);
+
+      } catch (err) {
+        console.error('Error generating PBR zip export:', err);
+        alert('Помилка формування експорту PBR карт: ' + err.message);
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          btn.innerHTML = originalText;
         }
       }
-
-      // 2. Open iPad Export Sheet for visual confirmation and manual tap-hold saving to iOS Photos
-      this.showPbrExportModal(dataUrls, res);
-
-    } catch (err) {
-      console.error('Error generating PBR zip export:', err);
-      alert('Помилка формування експорту PBR карт: ' + err.message);
-    } finally {
-      if (btn) {
-        btn.disabled = false;
-        btn.innerHTML = originalText;
-      }
-    }
+    });
   }
 
   /**
