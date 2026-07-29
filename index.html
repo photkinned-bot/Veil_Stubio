@@ -178,7 +178,10 @@
                     </div>
                 </div>
                 <p class="modal-instruction" data-i18n="png_instruction">Затисніть картинку та виберіть "Зберегти в Фото" (на мобільному) або ПКМ -> "Зберегти картинку як" (на ПК).</p>
-                <div id="exportRenderingIndicator" style="display:none; text-align:center; color:var(--text-muted); font-size:12px;" data-i18n="png_rendering">Рендеринг...</div>
+                <div id="exportRenderingIndicator" style="display:none; text-align:center; color:#f59e0b; font-weight:600; font-size:12px; margin: 6px 0;" data-i18n="png_rendering">Рендеринг...</div>
+                <button id="btnDownloadPngModal" onclick="triggerDirectPNGDownload()" class="btn btn-primary" style="margin-top: 6px; margin-bottom: 10px; width: 100%; font-weight: 700; padding: 10px; font-size: 13px; display: flex; align-items: center; justify-content: center; gap: 8px;">
+                    <span>💾</span> <span id="exportDownloadBtnText">Завантажити PNG (1024 × 1024)</span>
+                </button>
                 <img id="modalPngPreview" class="modal-image-preview">
                 <button class="btn btn-secondary" onclick="$('pngModal').style.display='none'" data-i18n="btn_close">Закрити</button>
             </div>

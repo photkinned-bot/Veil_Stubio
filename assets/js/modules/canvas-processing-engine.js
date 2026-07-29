@@ -280,7 +280,10 @@ export class CanvasProcessingEngine {
     const outBuffer = new Float32Array(width * height);
 
     const radius = Math.max(1, Math.min(32, Math.round(range)));
-    const sampleStep = Math.max(1, Math.floor(radius / 4));
+    let sampleStep = Math.max(1, Math.floor(radius / 4));
+    if (width >= 4096) {
+      sampleStep = Math.max(sampleStep, Math.floor(width / 1024));
+    }
 
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {

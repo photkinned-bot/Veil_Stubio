@@ -804,24 +804,30 @@
 
 
 
-        function ensureBuffers(w,h){
-            if(b_width!==w || b_height!==h){
-                let size=w*h; b_width=w; b_height=h;
-                if (window.globalBufferPool) {
-                    blendBuffer = window.globalBufferPool.acquireFloat32(size);
-                    layerBuffer = window.globalBufferPool.acquireFloat32(size);
-                    blurTemp = window.globalBufferPool.acquireFloat32(size);
-                    dispBuffer = window.globalBufferPool.acquireFloat32(size);
-                    pendingMaskTargetBuffer = window.globalBufferPool.acquireFloat32(size);
-                    pendingMaskAlphaBuffer = window.globalBufferPool.acquireFloat32(size);
-                } else {
-                    blendBuffer=new Float32Array(size); layerBuffer=new Float32Array(size);
-                    blurTemp=new Float32Array(size); dispBuffer=new Float32Array(size);
-                    pendingMaskTargetBuffer=new Float32Array(size);
-                    pendingMaskAlphaBuffer=new Float32Array(size);
+        function ensureBuffers(w, h) {
+            if (b_width !== w || b_height !== h) {
+                b_width = w; b_height = h;
+                if (dispBuffer && dispBuffer.length !== w * h) {
+                    dispBuffer = null;
                 }
             }
+            if (!dispBuffer || dispBuffer.length !== w * h) {
+                dispBuffer = new Float32Array(w * h);
+            }
         }
+
+        function freeHighResGlobalBuffers() {
+            if (window._globalFloatBuffers) {
+                for (let name in window._globalFloatBuffers) {
+                    delete window._globalFloatBuffers[name];
+                }
+            }
+            if (dispBuffer && dispBuffer.length > 1024 * 1024) {
+                dispBuffer = null;
+                b_width = 0; b_height = 0;
+            }
+        }
+        window.freeHighResGlobalBuffers = freeHighResGlobalBuffers;
 
         class CanvasDeformerManager {
             constructor(canvas = null, initialImageData = null) {
@@ -3120,15 +3126,31 @@
                 }
 
                 // Per-layer Caching Mechanism (RGB)
-                if (!lay.cachedBufferR || lay.isDirty || lay.cachedW !== w || lay.cachedH !== h) {
-                    if (!lay.cachedBufferR || lay.cachedBufferR.length !== w * h) {
-                        lay.cachedBufferR = new Float32Array(w * h);
-                        lay.cachedBufferG = new Float32Array(w * h);
-                        lay.cachedBufferB = new Float32Array(w * h);
+                let useLayerCache = !isExport && w <= 1024;
+                let needComputeLayer = true;
+
+                if (useLayerCache) {
+                    if (lay.cachedBufferR && !lay.isDirty && lay.cachedW === w && lay.cachedH === h) {
+                        needComputeLayer = false;
+                        layerBufferR.set(lay.cachedBufferR);
+                        layerBufferG.set(lay.cachedBufferG);
+                        layerBufferB.set(lay.cachedBufferB);
+                    } else {
+                        if (!lay.cachedBufferR || lay.cachedBufferR.length !== w * h) {
+                            lay.cachedBufferR = new Float32Array(w * h);
+                            lay.cachedBufferG = new Float32Array(w * h);
+                            lay.cachedBufferB = new Float32Array(w * h);
+                        }
+                        lay.cachedW = w;
+                        lay.cachedH = h;
+                        lay.isDirty = false;
                     }
-                    lay.cachedW = w;
-                    lay.cachedH = h;
-                    lay.isDirty = false;
+                }
+
+                if (needComputeLayer) {
+                    let targetBufR = useLayerCache ? lay.cachedBufferR : layerBufferR;
+                    let targetBufG = useLayerCache ? lay.cachedBufferG : layerBufferG;
+                    let targetBufB = useLayerCache ? lay.cachedBufferB : layerBufferB;
 
                     let activeCymaticsSources = null;
                     if (lay.generatorType === 'cymatics') {
@@ -3347,9 +3369,9 @@
                                 if(p.brightness!==undefined) { pr*=p.brightness; pg*=p.brightness; pb*=p.brightness; }
                                 if(p.contrast!==undefined) { pr=(pr-0.5)*p.contrast+0.5; pg=(pg-0.5)*p.contrast+0.5; pb=(pb-0.5)*p.contrast+0.5; }
                                 if(p.invert) { pr=1-pr; pg=1-pg; pb=1-pb; }
-                                lay.cachedBufferR[idx] = Math.max(0, Math.min(1, pr));
-                                lay.cachedBufferG[idx] = Math.max(0, Math.min(1, pg));
-                                lay.cachedBufferB[idx] = Math.max(0, Math.min(1, pb));
+                                targetBufR[idx] = Math.max(0, Math.min(1, pr));
+                                targetBufG[idx] = Math.max(0, Math.min(1, pg));
+                                targetBufB[idx] = Math.max(0, Math.min(1, pb));
                             } else {
                                 let v = 0;
                                 if (p.seamless || gForceSeamless) {
@@ -3388,17 +3410,19 @@
                                 let lutIdx = (v * 255.99) | 0;
                                 if (lutIdx < 0) lutIdx = 0; else if (lutIdx > 255) lutIdx = 255;
 
-                                lay.cachedBufferR[idx] = lutR[lutIdx];
-                                lay.cachedBufferG[idx] = lutG[lutIdx];
-                                lay.cachedBufferB[idx] = lutB[lutIdx];
+                                targetBufR[idx] = lutR[lutIdx];
+                                targetBufG[idx] = lutG[lutIdx];
+                                targetBufB[idx] = lutB[lutIdx];
                             }
                         }
                     }
                 }
 
-                layerBufferR.set(lay.cachedBufferR);
-                layerBufferG.set(lay.cachedBufferG);
-                layerBufferB.set(lay.cachedBufferB);
+                if (useLayerCache) {
+                    layerBufferR.set(lay.cachedBufferR);
+                    layerBufferG.set(lay.cachedBufferG);
+                    layerBufferB.set(lay.cachedBufferB);
+                }
 
                 if (p.useFindEdges) {
                     applyEdgeDetection(layerBufferR, blurTempR, w, h);
@@ -7548,14 +7572,69 @@
             renderExportPreview(currentExportRes); 
         }
 
+        let lastPreviewBlobUrl = null;
+
         function renderExportPreview(res) {
             currentExportRes = res;
             ['1024','2048','4096','8192'].forEach(r => { let b = $('exportRes'+r); if (b) b.classList.toggle('active', +r === res); });
-            $('exportRenderingIndicator').style.display = 'block';
-            $('modalPngPreview').style.opacity = '0.3';
+            
+            let downloadBtnText = $('exportDownloadBtnText');
+            if (downloadBtnText) {
+                downloadBtnText.textContent = `Завантажити PNG (${res} × ${res})`;
+            }
+
+            let ind = $('exportRenderingIndicator');
+            if (ind) {
+                ind.style.display = 'block';
+                ind.textContent = 'Рендеринг прев\'ю...';
+            }
+            let img = $('modalPngPreview');
+            if (img) img.style.opacity = '0.3';
+
             setTimeout(() => {
+                let previewRes = Math.min(res, 1024);
                 let tc = document.createElement('canvas'); 
-                tc.width = res; 
+                tc.width = previewRes; 
+                tc.height = previewRes;
+
+                const pbrContainer = $('mapGenViewportContainer');
+                const isPbrActive = pbrContainer && pbrContainer.style.display !== 'none' && (typeof currentTab !== 'undefined' && currentTab === 'maps');
+
+                if (isPbrActive && window.mapGeneratorTab) {
+                    window.mapGeneratorTab.renderMapToCanvasAtRes(tc, previewRes);
+                } else {
+                    renderProject(tc, true);
+                }
+
+                tc.toBlob((blob) => {
+                    if (!blob) return;
+                    if (lastPreviewBlobUrl) URL.revokeObjectURL(lastPreviewBlobUrl);
+                    lastPreviewBlobUrl = URL.createObjectURL(blob);
+                    if (img) {
+                        img.src = lastPreviewBlobUrl;
+                        img.style.opacity = '1';
+                    }
+                    if (ind) ind.style.display = 'none';
+                    if (previewRes >= 2048) freeHighResGlobalBuffers();
+                }, 'image/png');
+            }, 30);
+        }
+
+        async function triggerDirectPNGDownload() {
+            const res = currentExportRes || 1024;
+            const btn = $('btnDownloadPngModal');
+            const ind = $('exportRenderingIndicator');
+            if (ind) {
+                ind.style.display = 'block';
+                ind.textContent = `Генерація ${res}×${res} PNG... Будь ласка, зачекайте`;
+            }
+            if (btn) btn.disabled = true;
+
+            await new Promise(r => setTimeout(r, 50));
+
+            try {
+                let tc = document.createElement('canvas');
+                tc.width = res;
                 tc.height = res;
 
                 const pbrContainer = $('mapGenViewportContainer');
@@ -7567,10 +7646,33 @@
                     renderProject(tc, true);
                 }
 
-                $('modalPngPreview').src = tc.toDataURL('image/png');
-                $('modalPngPreview').style.opacity = '1';
-                $('exportRenderingIndicator').style.display = 'none';
-            }, 30);
+                tc.toBlob((blob) => {
+                    if (!blob) {
+                        alert("Не вдалося створити файл PNG.");
+                        if (ind) ind.style.display = 'none';
+                        if (btn) btn.disabled = false;
+                        return;
+                    }
+                    let url = URL.createObjectURL(blob);
+                    let a = document.createElement('a');
+                    let pbrSuffix = (isPbrActive && window.mapGeneratorTab) ? `_${window.mapGeneratorTab.selectedMapType || 'pbr'}` : '';
+                    a.download = `veil_texture${pbrSuffix}_${res}x${res}.png`;
+                    a.href = url;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    setTimeout(() => URL.revokeObjectURL(url), 2000);
+
+                    if (ind) ind.style.display = 'none';
+                    if (btn) btn.disabled = false;
+                    if (res >= 2048) freeHighResGlobalBuffers();
+                }, 'image/png');
+            } catch (err) {
+                console.error("Export error:", err);
+                alert("Помилка під час експорту: " + err.message);
+                if (ind) ind.style.display = 'none';
+                if (btn) btn.disabled = false;
+            }
         }
         // --- .veil File Export & Import ---
         async function exportVeilFile() {
@@ -8386,6 +8488,7 @@
         window.openSaveModal = openSaveModal;
         window.openPNGExportModal = openPNGExportModal;
         window.renderExportPreview = renderExportPreview;
+        window.triggerDirectPNGDownload = triggerDirectPNGDownload;
         window.loadProjectFromText = loadProjectFromText;
         window.pasteFromClipboardAndLoad = pasteFromClipboardAndLoad;
         window.showProgressLoader = showProgressLoader;
