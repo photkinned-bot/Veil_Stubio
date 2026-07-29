@@ -909,6 +909,56 @@ export class MapGeneratorTabComponent {
   }
 
   /**
+   * Get current PBR Map state object for history and autosave serialization
+   */
+  getPbrState() {
+    return {
+      params: JSON.parse(JSON.stringify(this.params)),
+      targetResolution: this.targetResolution,
+      fastPreview: this.fastPreview,
+      selectedMapType: this.selectedMapType,
+      sourceType: this.syncManager ? this.syncManager.sourceType : 'composite'
+    };
+  }
+
+  /**
+   * Load PBR Map state object from history or autosave draft
+   */
+  loadPbrState(pbrState) {
+    if (!pbrState) return;
+    if (pbrState.params) {
+      this.params = JSON.parse(JSON.stringify(pbrState.params));
+    }
+    if (typeof pbrState.targetResolution === 'number') {
+      this.targetResolution = pbrState.targetResolution;
+    }
+    if (typeof pbrState.fastPreview === 'boolean') {
+      this.fastPreview = pbrState.fastPreview;
+    }
+    if (pbrState.selectedMapType) {
+      this.selectedMapType = pbrState.selectedMapType;
+    }
+    if (pbrState.sourceType && this.syncManager) {
+      this.syncManager.setSourceType(pbrState.sourceType);
+    }
+    if (window.isPbrModeActive || (typeof currentTab !== 'undefined' && currentTab === 'maps')) {
+      this.renderRightPanelControls();
+      this.reprocess();
+    }
+  }
+
+  /**
+   * Trigger history snapshot and autosave scheduling when settings change
+   */
+  onSettingsChanged() {
+    if (window.state) {
+      window.state.pbrState = this.getPbrState();
+    }
+    if (window.scheduleHistorySnapshot) window.scheduleHistorySnapshot();
+    if (window.scheduleAutoSave) window.scheduleAutoSave();
+  }
+
+  /**
    * Bind event handlers for control panel sliders, checkboxes, selects, and buttons
    */
   bindRightPanelEvents() {
@@ -931,7 +981,10 @@ export class MapGeneratorTabComponent {
           this.sliderTimer = setTimeout(() => {
             this.isInteractingWithSliders = false;
             this.reprocess();
+            this.onSettingsChanged();
           }, 60);
+        } else {
+          this.onSettingsChanged();
         }
       };
 
@@ -963,6 +1016,7 @@ export class MapGeneratorTabComponent {
         const val = e.target.value;
         if (dropzone) dropzone.style.display = val === 'manual' ? 'block' : 'none';
         this.syncManager.setSourceType(val);
+        this.onSettingsChanged();
       };
     }
 
@@ -971,6 +1025,7 @@ export class MapGeneratorTabComponent {
       fileInput.onchange = (e) => {
         if (e.target.files && e.target.files[0]) {
           this.syncManager.loadManualFile(e.target.files[0]);
+          this.onSettingsChanged();
         }
       };
 
@@ -986,13 +1041,17 @@ export class MapGeneratorTabComponent {
         dropzone.style.borderColor = 'rgba(59,130,246,0.4)';
         if (e.dataTransfer.files && e.dataTransfer.files[0]) {
           this.syncManager.loadManualFile(e.dataTransfer.files[0]);
+          this.onSettingsChanged();
         }
       };
     }
 
     const btnResync = document.getElementById('btnResyncCanvas');
     if (btnResync) {
-      btnResync.onclick = () => this.syncManager.pullCanvasData();
+      btnResync.onclick = () => {
+        this.syncManager.pullCanvasData();
+        this.onSettingsChanged();
+      };
     }
 
     // Slider & Numeric Input linking helper
@@ -1023,6 +1082,7 @@ export class MapGeneratorTabComponent {
       selNormFilter.onchange = (e) => {
         this.params.normal.algorithm = e.target.value;
         this.reprocess();
+        this.onSettingsChanged();
       };
     }
 
@@ -1051,6 +1111,7 @@ export class MapGeneratorTabComponent {
       chkNormInvert.onchange = (e) => {
         this.params.normal.invert = e.target.checked;
         this.reprocess();
+        this.onSettingsChanged();
       };
     }
 
@@ -1062,6 +1123,7 @@ export class MapGeneratorTabComponent {
           if (idx === 1) this.params.normal.invertG = e.target.checked;
           if (idx === 2) this.params.normal.invertH = e.target.checked;
           this.reprocess();
+          this.onSettingsChanged();
         };
       }
     });
@@ -1077,6 +1139,7 @@ export class MapGeneratorTabComponent {
       chkDispInv.onchange = (e) => {
         this.params.displacement.invert = e.target.checked;
         this.reprocess();
+        this.onSettingsChanged();
       };
     }
 
@@ -1106,6 +1169,7 @@ export class MapGeneratorTabComponent {
       chkAOInvert.onchange = (e) => {
         this.params.ao.invert = e.target.checked;
         this.reprocess();
+        this.onSettingsChanged();
       };
     }
 
@@ -1125,6 +1189,7 @@ export class MapGeneratorTabComponent {
       selSpecFalloff.onchange = (e) => {
         this.params.specular.falloff = e.target.value;
         this.reprocess();
+        this.onSettingsChanged();
       };
     }
 

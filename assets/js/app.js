@@ -2380,19 +2380,34 @@
         }
 
         function prepareStateForSerialization() {
-            if (!state || !state.layers) return;
-            state.layers.forEach(lay => {
-                if (lay.generatorType === 'paint') {
-                    ensureLayerPaintCanvas(lay);
-                    if (lay.paintCanvas) {
-                        let comp = compressPaintCanvas(lay.paintCanvas);
-                        if (lay.params) {
-                            lay.params.paintDataUrl = comp.dataUrl;
-                            lay.params.paintCrop = comp.crop;
+            if (!state) return;
+            if (state.layers) {
+                state.layers.forEach(lay => {
+                    if (lay.generatorType === 'paint') {
+                        ensureLayerPaintCanvas(lay);
+                        if (lay.paintCanvas) {
+                            let comp = compressPaintCanvas(lay.paintCanvas);
+                            if (lay.params) {
+                                lay.params.paintDataUrl = comp.dataUrl;
+                                lay.params.paintCrop = comp.crop;
+                            }
                         }
                     }
+                });
+            }
+            if (typeof tilingState !== 'undefined' && tilingState) {
+                state.tilingState = JSON.parse(JSON.stringify(tilingState));
+                if (tilingState.customImageLoaded && typeof tilingOriginalCanvas !== 'undefined' && tilingOriginalCanvas && tilingOriginalCanvas.width > 0) {
+                    try {
+                        state.tilingCustomImageDataUrl = tilingOriginalCanvas.toDataURL('image/png');
+                    } catch(e) {}
+                } else {
+                    state.tilingCustomImageDataUrl = null;
                 }
-            });
+            }
+            if (window.mapGeneratorTab && typeof window.mapGeneratorTab.getPbrState === 'function') {
+                state.pbrState = window.mapGeneratorTab.getPbrState();
+            }
         }
 
         function serializeState(s) {
@@ -2487,7 +2502,42 @@
 
             invalidateCaches();
             renderLayers();
-            if (typeof currentTab !== 'undefined' && currentTab === 'global') renderGlobal(); else renderProps();
+
+            if (p.tilingState) {
+                tilingState = JSON.parse(JSON.stringify(p.tilingState));
+            }
+            if (p.tilingCustomImageDataUrl) {
+                let img = new Image();
+                img.onload = () => {
+                    if (!tilingOriginalCanvas) tilingOriginalCanvas = document.createElement('canvas');
+                    tilingOriginalCanvas.width = img.width;
+                    tilingOriginalCanvas.height = img.height;
+                    let octx = tilingOriginalCanvas.getContext('2d');
+                    octx.drawImage(img, 0, 0);
+                    tilingState.hasImage = true;
+                    tilingState.customImageLoaded = true;
+                    runTilingPipeline();
+                    if (currentTab === 'tiling') { renderTilingPanel(); renderTilingView(); }
+                };
+                img.src = p.tilingCustomImageDataUrl;
+            } else if (tilingState.hasImage) {
+                runTilingPipeline();
+            }
+
+            if (p.pbrState && window.mapGeneratorTab && typeof window.mapGeneratorTab.loadPbrState === 'function') {
+                window.mapGeneratorTab.loadPbrState(p.pbrState);
+            }
+
+            if (typeof currentTab !== 'undefined' && currentTab === 'global') {
+                renderGlobal();
+            } else if (typeof currentTab !== 'undefined' && currentTab === 'tiling') {
+                renderTilingPanel();
+                renderTilingView();
+            } else if (typeof currentTab !== 'undefined' && currentTab === 'maps' && window.mapGeneratorTab) {
+                window.mapGeneratorTab.renderRightPanelControls();
+            } else {
+                renderProps();
+            }
             requestRender();
             initHistory();
 
@@ -5581,6 +5631,8 @@
             if (chk) chk.checked = enabled;
             renderTilingPanel();
             requestRender();
+            commitHistorySnapshot();
+            scheduleAutoSave();
         }
         window.toggleEnableTiling = toggleEnableTiling;
 
@@ -5609,6 +5661,8 @@
             } else {
                 renderTilingView();
             }
+            scheduleHistorySnapshot();
+            scheduleAutoSave();
         }
 
         function tilingSlider(label, key, min, max, step, suffix, defVal) {
@@ -5621,9 +5675,9 @@
                         <span class="control-value" id="tiling_val_${key}">${val}${suffix}</span>
                     </div>
                     <div style="display:flex; gap:6px; align-items:center;">
-                        <input type="range" id="rng_tiling_${key}" min="${min}" max="${max}" step="${step}" value="${val}" oninput="updTiling('${key}', this.value, '${suffix}'); if ($('num_tiling_${key}')) $('num_tiling_${key}').value=this.value;">
-                        <input type="number" class="num-input" id="num_tiling_${key}" min="${min}" max="${max}" step="${step}" value="${val}" oninput="updTiling('${key}', this.value, '${suffix}'); if ($('rng_tiling_${key}')) $('rng_tiling_${key}').value=this.value;">
-                        <button type="button" class="reset-btn" title="${t('reset_default_title', {def: defVal})}" onclick="updTiling('${key}', ${defVal}, '${suffix}'); if ($('rng_tiling_${key}')) $('rng_tiling_${key}').value=${defVal}; if ($('num_tiling_${key}')) $('num_tiling_${key}').value=${defVal};">↺</button>
+                        <input type="range" id="rng_tiling_${key}" min="${min}" max="${max}" step="${step}" value="${val}" oninput="updTiling('${key}', this.value, '${suffix}'); if ($('num_tiling_${key}')) $('num_tiling_${key}').value=this.value;" onchange="scheduleHistorySnapshot(); scheduleAutoSave();">
+                        <input type="number" class="num-input" id="num_tiling_${key}" min="${min}" max="${max}" step="${step}" value="${val}" oninput="updTiling('${key}', this.value, '${suffix}'); if ($('rng_tiling_${key}')) $('rng_tiling_${key}').value=this.value;" onchange="scheduleHistorySnapshot(); scheduleAutoSave();">
+                        <button type="button" class="reset-btn" title="${t('reset_default_title', {def: defVal})}" onclick="updTiling('${key}', ${defVal}, '${suffix}'); if ($('rng_tiling_${key}')) $('rng_tiling_${key}').value=${defVal}; if ($('num_tiling_${key}')) $('num_tiling_${key}').value=${defVal}; scheduleHistorySnapshot(); scheduleAutoSave();">↺</button>
                     </div>
                 </div>
             `;
@@ -5691,6 +5745,8 @@
             }
             renderTilingPanel();
             if (tilingState.hasImage) runTilingPipeline();
+            commitHistorySnapshot();
+            scheduleAutoSave();
         }
 
         function resetTilingToDefaults() {
@@ -5741,6 +5797,8 @@
             if (canvas) canvas.style.cursor = 'grab';
             renderTilingPanel();
             if (tilingState.hasImage) runTilingPipeline();
+            commitHistorySnapshot();
+            scheduleAutoSave();
         }
 
         function captureProjectToTiling() {
@@ -6765,11 +6823,6 @@
                     <button onclick="openTilingExportModal()" class="btn btn-success" style="font-size:11px; padding:6px 4px;" title="Зберегти PNG зображення">💾 Зберегти PNG</button>
                 </div>
 
-                <div class="property-group" style="display:grid; grid-template-columns:1fr 1fr; gap:6px;">
-                    <button type="button" class="btn btn-secondary" onclick="undo()" style="font-size:11px;" ${historyIndex <= 0 ? 'disabled' : ''}>↩ Скасувати (Undo)</button>
-                    <button type="button" class="btn btn-secondary" onclick="redo()" style="font-size:11px;" ${historyIndex >= history.length - 1 ? 'disabled' : ''}>↪ Повторити (Redo)</button>
-                </div>
-
                 <div class="property-group">
                     <button onclick="resetTilingToDefaults()" class="btn btn-secondary" style="width:100%; font-size:11px;" title="Скинути всі налаштування тайлінгу">🔄 Скинути параметри тайлінгу</button>
                     <div style="font-size:11px; color:var(--text-muted, #a1a1aa); margin-top:4px; text-align:center;">
@@ -7156,7 +7209,7 @@
         }
 
         function captureTilingForHistory() {
-            if (!tilingState || !tilingState.hasImage) return null;
+            if (!tilingState) return null;
             let stampImgData = null;
             if (tilingStampCanvas && tilingStampCanvas.width > 0 && tilingStampCanvas.height > 0) {
                 let sctx = tilingStampCanvas.getContext('2d');
@@ -7181,36 +7234,67 @@
         }
 
         function restoreTilingFromHistory(entry) {
-            if (!entry || !entry.tilingData) return;
-            let td = entry.tilingData;
-            tilingState = JSON.parse(JSON.stringify(td.tilingState));
-            if (td.origImgData) {
-                if (!tilingOriginalCanvas) tilingOriginalCanvas = document.createElement('canvas');
-                tilingOriginalCanvas.width = td.origImgData.width;
-                tilingOriginalCanvas.height = td.origImgData.height;
-                let octx = tilingOriginalCanvas.getContext('2d');
-                octx.putImageData(td.origImgData, 0, 0);
+            if (!entry) return;
+            if (entry.tilingData && entry.tilingData.tilingState) {
+                let td = entry.tilingData;
+                tilingState = JSON.parse(JSON.stringify(td.tilingState));
+                if (td.origImgData) {
+                    if (!tilingOriginalCanvas) tilingOriginalCanvas = document.createElement('canvas');
+                    tilingOriginalCanvas.width = td.origImgData.width;
+                    tilingOriginalCanvas.height = td.origImgData.height;
+                    let octx = tilingOriginalCanvas.getContext('2d');
+                    octx.putImageData(td.origImgData, 0, 0);
+                }
+                if (td.stampImgData) {
+                    ensureTilingStampCanvas(td.stampImgData.width, td.stampImgData.height);
+                    let sctx = tilingStampCanvas.getContext('2d');
+                    sctx.putImageData(td.stampImgData, 0, 0);
+                } else if (tilingStampCanvas) {
+                    clearTilingStampCanvas();
+                }
+                if (td.maskImgData) {
+                    ensureTilingMaskCanvas(td.maskImgData.width, td.maskImgData.height);
+                    let mctx = tilingMaskCanvas.getContext('2d');
+                    mctx.putImageData(td.maskImgData, 0, 0);
+                } else if (tilingMaskCanvas) {
+                    clearTilingMaskCanvas();
+                }
+            } else if (entry.snap) {
+                try {
+                    let snapObj = typeof entry.snap === 'string' ? JSON.parse(entry.snap) : entry.snap;
+                    if (snapObj.tilingState) {
+                        tilingState = JSON.parse(JSON.stringify(snapObj.tilingState));
+                    }
+                } catch(e) {}
             }
-            if (td.stampImgData) {
-                ensureTilingStampCanvas(td.stampImgData.width, td.stampImgData.height);
-                let sctx = tilingStampCanvas.getContext('2d');
-                sctx.putImageData(td.stampImgData, 0, 0);
-            } else if (tilingStampCanvas) {
-                clearTilingStampCanvas();
-            }
-            if (td.maskImgData) {
-                ensureTilingMaskCanvas(td.maskImgData.width, td.maskImgData.height);
-                let mctx = tilingMaskCanvas.getContext('2d');
-                mctx.putImageData(td.maskImgData, 0, 0);
-            } else if (tilingMaskCanvas) {
-                clearTilingMaskCanvas();
-            }
-            if (tilingState.hasImage) {
+            if (tilingState && tilingState.hasImage) {
                 runTilingPipeline();
             }
-            if (currentTab === 'tiling') {
+            if (typeof currentTab !== 'undefined' && currentTab === 'tiling') {
                 renderTilingPanel();
                 renderTilingView();
+            }
+        }
+
+        function capturePbrForHistory() {
+            if (window.mapGeneratorTab && typeof window.mapGeneratorTab.getPbrState === 'function') {
+                return window.mapGeneratorTab.getPbrState();
+            }
+            return null;
+        }
+
+        function restorePbrFromHistory(entry) {
+            let pbrState = null;
+            if (entry && entry.pbrData) {
+                pbrState = entry.pbrData;
+            } else if (entry && entry.snap) {
+                try {
+                    let snapObj = typeof entry.snap === 'string' ? JSON.parse(entry.snap) : entry.snap;
+                    if (snapObj.pbrState) pbrState = snapObj.pbrState;
+                } catch(e) {}
+            }
+            if (pbrState && window.mapGeneratorTab && typeof window.mapGeneratorTab.loadPbrState === 'function') {
+                window.mapGeneratorTab.loadPbrState(pbrState);
             }
         }
 
@@ -7218,7 +7302,8 @@
             let snap = serializeState(state);
             let paintData = capturePaintCanvasesForHistory();
             let tilingData = captureTilingForHistory();
-            history = [{ snap, paintData, tilingData }];
+            let pbrData = capturePbrForHistory();
+            history = [{ snap, paintData, tilingData, pbrData }];
             historyIndex = 0;
             historyReady = true;
             updateHistoryButtons();
@@ -7242,16 +7327,20 @@
             clearTimeout(historyTimer);
             let snap = serializeState(state);
             let tilingData = captureTilingForHistory();
+            let pbrData = capturePbrForHistory();
 
             let prevEntry = history[historyIndex];
-            if (prevEntry && prevEntry.snap === snap && JSON.stringify(prevEntry.tilingData) === JSON.stringify(tilingData)) {
-                return;
+            if (prevEntry) {
+                let snapSame = prevEntry.snap === snap;
+                let tilingSame = JSON.stringify(prevEntry.tilingData) === JSON.stringify(tilingData);
+                let pbrSame = JSON.stringify(prevEntry.pbrData) === JSON.stringify(pbrData);
+                if (snapSame && tilingSame && pbrSame) return;
             }
 
             history = history.slice(0, historyIndex + 1);
 
             let paintData = capturePaintCanvasesForHistory();
-            history.push({ snap, paintData, tilingData });
+            history.push({ snap, paintData, tilingData, pbrData });
             if (history.length > MAX_HISTORY) { history.shift(); }
             historyIndex = history.length - 1;
             updateHistoryButtons();
@@ -7275,6 +7364,7 @@
             setState(JSON.parse(entry.snap));
             restorePaintCanvasesFromHistory(entry);
             restoreTilingFromHistory(entry);
+            restorePbrFromHistory(entry);
             afterHistoryRestore();
             isRestoringHistory = false;
         }
@@ -7293,6 +7383,7 @@
             setState(JSON.parse(entry.snap));
             restorePaintCanvasesFromHistory(entry);
             restoreTilingFromHistory(entry);
+            restorePbrFromHistory(entry);
             afterHistoryRestore();
             isRestoringHistory = false;
         }
@@ -7312,7 +7403,16 @@
             }
             invalidateCaches();
             renderLayers();
-            if (currentTab === 'global') renderGlobal(); else renderProps();
+            if (typeof currentTab !== 'undefined' && currentTab === 'global') {
+                renderGlobal();
+            } else if (typeof currentTab !== 'undefined' && currentTab === 'tiling') {
+                renderTilingPanel();
+                renderTilingView();
+            } else if (typeof currentTab !== 'undefined' && currentTab === 'maps' && window.mapGeneratorTab) {
+                window.mapGeneratorTab.renderRightPanelControls();
+            } else {
+                renderProps();
+            }
             requestRender();
             updateHistoryButtons();
         }
@@ -7828,8 +7928,44 @@
 
                 invalidateCaches();
                 renderLayers();
-                if (typeof currentTab !== 'undefined' && currentTab === 'global') renderGlobal(); else renderProps();
+
+                if (record.tilingState || (record.state && record.state.tilingState)) {
+                    tilingState = JSON.parse(JSON.stringify(record.tilingState || record.state.tilingState));
+                }
+                if (record.state && record.state.tilingCustomImageDataUrl) {
+                    let img = new Image();
+                    img.onload = () => {
+                        if (!tilingOriginalCanvas) tilingOriginalCanvas = document.createElement('canvas');
+                        tilingOriginalCanvas.width = img.width;
+                        tilingOriginalCanvas.height = img.height;
+                        let octx = tilingOriginalCanvas.getContext('2d');
+                        octx.drawImage(img, 0, 0);
+                        tilingState.hasImage = true;
+                        tilingState.customImageLoaded = true;
+                        runTilingPipeline();
+                        if (currentTab === 'tiling') { renderTilingPanel(); renderTilingView(); }
+                    };
+                    img.src = record.state.tilingCustomImageDataUrl;
+                } else if (tilingState && tilingState.hasImage) {
+                    runTilingPipeline();
+                }
+
+                if (record.state && record.state.pbrState && window.mapGeneratorTab && typeof window.mapGeneratorTab.loadPbrState === 'function') {
+                    window.mapGeneratorTab.loadPbrState(record.state.pbrState);
+                }
+
+                if (typeof currentTab !== 'undefined' && currentTab === 'global') {
+                    renderGlobal();
+                } else if (typeof currentTab !== 'undefined' && currentTab === 'tiling') {
+                    renderTilingPanel();
+                    renderTilingView();
+                } else if (typeof currentTab !== 'undefined' && currentTab === 'maps' && window.mapGeneratorTab) {
+                    window.mapGeneratorTab.renderRightPanelControls();
+                } else {
+                    renderProps();
+                }
                 requestRender();
+                initHistory();
 
                 const timeStr = localStorage.getItem('veil_autosave_time') || record.dateStr;
                 updateAutosaveUI(`Відновлено (${timeStr})`, '#10b981', `Відновлено автозбережену чернетку: ${record.dateStr}`);
