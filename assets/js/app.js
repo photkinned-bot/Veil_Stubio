@@ -7420,6 +7420,8 @@
         function updateHistoryButtons() {
             if ($('btnUndo')) $('btnUndo').disabled = (historyIndex <= 0);
             if ($('btnRedo')) $('btnRedo').disabled = (historyIndex >= history.length - 1 || historyIndex < 0);
+            if ($('btnUndoPbr')) $('btnUndoPbr').disabled = (historyIndex <= 0);
+            if ($('btnRedoPbr')) $('btnRedoPbr').disabled = (historyIndex >= history.length - 1 || historyIndex < 0);
         }
 
         document.addEventListener('keydown', e => {

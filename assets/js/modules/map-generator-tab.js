@@ -227,6 +227,21 @@ export class MapGeneratorTabComponent {
 
             <!-- 2D Viewport Controls Bar (Same as Layer / Tiling bar) -->
             <div class="2d-toolbar" style="position:absolute; bottom:12px; left:50%; transform:translateX(-50%); background:rgba(18,18,20,0.88); backdrop-filter:blur(8px); border:1px solid rgba(255,255,255,0.12); border-radius:8px; padding:6px 12px; display:flex; gap:10px; align-items:center; font-size:11px; z-index:10; box-shadow:0 8px 24px rgba(0,0,0,0.5); flex-wrap:wrap; justify-content:center;">
+              <button id="btnUndoPbr" class="btn btn-secondary history-btn" style="padding:2px 8px; display:inline-flex; align-items:center;" title="Скасувати (Undo)" disabled>
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M3 7v6h6"/>
+                  <path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/>
+                </svg>
+              </button>
+              <button id="btnRedoPbr" class="btn btn-secondary history-btn" style="padding:2px 8px; display:inline-flex; align-items:center;" title="Повторити (Redo)" disabled>
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M21 7v6h-6"/>
+                  <path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3l3 2.7"/>
+                </svg>
+              </button>
+
+              <div style="width:1px; height:16px; background:rgba(255,255,255,0.15);"></div>
+
               <button id="btnZoomOut2D" class="btn btn-secondary" style="padding:2px 8px;" title="Зменшити">➖</button>
               <button id="btnZoomIn2D" class="btn btn-secondary" style="padding:2px 8px;" title="Збільшити">➕</button>
               <button id="btnReset2D" class="btn btn-secondary" style="padding:2px 8px;" title="Скинути масштаб і поворот">Fit</button>
@@ -461,6 +476,20 @@ export class MapGeneratorTabComponent {
     }
 
     // 2D Toolbar buttons
+    const btnUndoPbr = document.getElementById('btnUndoPbr');
+    if (btnUndoPbr) btnUndoPbr.onclick = () => {
+      if (typeof window.undo === 'function') window.undo();
+    };
+
+    const btnRedoPbr = document.getElementById('btnRedoPbr');
+    if (btnRedoPbr) btnRedoPbr.onclick = () => {
+      if (typeof window.redo === 'function') window.redo();
+    };
+
+    if (typeof window.updateHistoryButtons === 'function') {
+      window.updateHistoryButtons();
+    }
+
     const btnZoomIn = document.getElementById('btnZoomIn2D');
     if (btnZoomIn) btnZoomIn.onclick = () => {
       this.zoomScale = Math.min(4.0, this.zoomScale + 0.2);
@@ -869,7 +898,14 @@ export class MapGeneratorTabComponent {
           </button>
         </div>
 
-        <!-- Sub-Tabs Selector for Contextual Panels -->
+        <!-- Sub-Tabs Selector for Contextual Panels with Reset Button -->
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-top:2px; margin-bottom:2px;">
+          <span style="font-size:10px; font-weight:700; color:var(--text-muted, #a1a1aa);">НАЛАШТУВАННЯ КАРТ:</span>
+          <button id="btnResetPbrParams" class="btn btn-secondary" style="padding:2px 6px; font-size:10px; color:#fca5a5; border-color:rgba(239,68,68,0.3); border-radius:4px;" title="Повернути всі налаштування PBR карт до значення за замовчуванням">
+            ↺ Скинути
+          </button>
+        </div>
+
         <div style="display:flex; gap:3px; background:rgba(0,0,0,0.3); padding:3px; border-radius:6px; border:1px solid var(--border-color, rgba(255,255,255,0.1));">
           <button class="pbr-subtab-btn ${currentMap === 'normal' ? 'active' : ''}" data-submap="normal" style="flex:1; min-width:45px; padding:4px 2px; font-size:10px; border-radius:4px;">Normal</button>
           <button class="pbr-subtab-btn ${currentMap === 'displacement' ? 'active' : ''}" data-submap="displacement" style="flex:1; min-width:45px; padding:4px 2px; font-size:10px; border-radius:4px;">Disp</button>
@@ -897,8 +933,8 @@ export class MapGeneratorTabComponent {
             💾 Завантажити активну карту (${currentMap.toUpperCase()})
           </button>
 
-          <button id="btnDownloadAllMaps" class="btn btn-secondary" style="width:100%; padding:6px; font-size:11px;" title="Завантажити всі 4 PBR карти одним ZIP-файлом для обходу обмежень iPad">
-            📦 Завантажити всі 4 PBR карти (ZIP)
+          <button id="btnDownloadAllMaps" class="btn btn-secondary" style="width:100%; padding:6px; font-size:11px;" title="Завантажити всі 5 PBR карт (Normal, Displacement, AO, Specular, Diffuse) одним ZIP-файлом">
+            📦 Завантажити всі 5 PBR карт (ZIP)
           </button>
         </div>
 
@@ -1194,6 +1230,11 @@ export class MapGeneratorTabComponent {
     }
 
     // Export & Layer Actions
+    const btnResetParams = document.getElementById('btnResetPbrParams');
+    if (btnResetParams) {
+      btnResetParams.onclick = () => this.resetToDefaults();
+    }
+
     const btnApply = document.getElementById('btnApplyAsLayer');
     if (btnApply) btnApply.onclick = () => this.applySelectedMapAsLayer();
 
@@ -1202,6 +1243,124 @@ export class MapGeneratorTabComponent {
 
     const btnDownloadAll = document.getElementById('btnDownloadAllMaps');
     if (btnDownloadAll) btnDownloadAll.onclick = () => this.downloadAllMaps();
+  }
+
+  /**
+   * Reset all PBR map generation parameters to default values
+   */
+  resetToDefaults() {
+    this.params = {
+      normal: {
+        algorithm: 'sobel',
+        strength: 2.5,
+        level: 1.0,
+        blur: 0,
+        sharp: 0,
+        invert: false,
+        invertR: false,
+        invertG: false,
+        invertH: false
+      },
+      displacement: {
+        contrast: 1.0,
+        invert: false
+      },
+      ao: {
+        strength: 1.8,
+        level: 1.0,
+        blur: 1.0,
+        sharp: 0,
+        range: 8,
+        falloff: 'linear',
+        invert: false
+      },
+      specular: {
+        mean: 0.5,
+        range: 1.0,
+        falloff: 'linear',
+        strength: 1.2,
+        level: 1.0,
+        blur: 0,
+        sharp: 0,
+        invert: false
+      }
+    };
+    this.renderRightPanelControls();
+    this.reprocess();
+    this.onSettingsChanged();
+  }
+
+  /**
+   * Show animated rotating and pulsing lightning bolt loading overlay on canvas window
+   */
+  showExportProgressOverlay(message = 'Формування архіву PBR...') {
+    let container = document.getElementById('mapGenViewportContainer') || document.getElementById('view2DStage');
+    if (!container) return;
+
+    let overlay = document.getElementById('pbrExportLoadingOverlay');
+    if (!overlay) {
+      overlay = document.createElement('div');
+      overlay.id = 'pbrExportLoadingOverlay';
+      overlay.style.cssText = `
+        position: absolute;
+        inset: 0;
+        z-index: 300;
+        background: rgba(10, 10, 14, 0.85);
+        backdrop-filter: blur(10px);
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        gap: 16px;
+        color: #f4f4f5;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        user-select: none;
+        pointer-events: all;
+      `;
+
+      overlay.innerHTML = `
+        <style>
+          @keyframes pbrLightningSpin {
+            0% { transform: rotate(0deg) scale(1); filter: drop-shadow(0 0 10px #f59e0b); }
+            50% { transform: rotate(180deg) scale(1.35); filter: drop-shadow(0 0 30px #f59e0b); }
+            100% { transform: rotate(360deg) scale(1); filter: drop-shadow(0 0 10px #f59e0b); }
+          }
+          @keyframes pbrGlowPulse {
+            0%, 100% { opacity: 0.6; transform: scale(0.95); }
+            50% { opacity: 1; transform: scale(1.1); }
+          }
+        </style>
+        <div style="position:relative; display:flex; justify-content:center; align-items:center;">
+          <div style="position:absolute; width:110px; height:110px; border-radius:50%; background:radial-gradient(circle, rgba(245,158,11,0.3) 0%, rgba(0,0,0,0) 70%); animation:pbrGlowPulse 1.4s infinite ease-in-out;"></div>
+          <div style="font-size:58px; animation:pbrLightningSpin 1.1s infinite ease-in-out; display:inline-block; line-height:1; cursor:wait;">⚡</div>
+        </div>
+        <div style="display:flex; flex-direction:column; align-items:center; gap:6px;">
+          <div id="pbrExportProgressTitle" style="font-size:15px; font-weight:700; color:#f59e0b; letter-spacing:0.02em;">
+            ${message}
+          </div>
+          <div id="pbrExportProgressSubtext" style="font-size:12px; color:#a1a1aa; max-width:340px; text-align:center;">
+            Будь ласка, зачекайте. Іде обробка та формування файлів...
+          </div>
+        </div>
+      `;
+
+      container.appendChild(overlay);
+    }
+
+    const titleEl = document.getElementById('pbrExportProgressTitle');
+    if (titleEl) titleEl.textContent = message;
+
+    overlay.style.display = 'flex';
+  }
+
+  updateExportProgressOverlay(subtext) {
+    const subEl = document.getElementById('pbrExportProgressSubtext');
+    if (subEl) subEl.textContent = subtext;
+  }
+
+  hideExportProgressOverlay() {
+    const overlay = document.getElementById('pbrExportLoadingOverlay');
+    if (overlay) overlay.style.display = 'none';
   }
 
   /**
@@ -1505,28 +1664,47 @@ export class MapGeneratorTabComponent {
   }
 
   /**
-   * Download single map file
+   * Download single map file with spinner overlay
    */
   downloadMap(mapType) {
     const mapName = (mapType || this.selectedMapType || 'normal').toUpperCase();
-    this.promptResolutionAndExport(`Експорт ${mapName} Карти`, 1024, (res) => {
-      const canvas = document.createElement('canvas');
-      this.renderMapToCanvasAtRes(canvas, res, mapType);
+    this.promptResolutionAndExport(`Експорт ${mapName} Карти`, 1024, async (res) => {
+      this.showExportProgressOverlay(`Формування ${mapName} (${res}×${res})...`);
+      if (window.showProgressLoader) {
+        window.showProgressLoader("Генерація карти...", `${mapName} (${res}×${res})`);
+      }
 
-      const dataUrl = canvas.toDataURL('image/png');
-      const a = document.createElement('a');
-      a.href = dataUrl;
-      a.download = `veil_studio_${mapType}_map_${res}x${res}.png`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
+      await new Promise(r => setTimeout(r, 60));
+
+      try {
+        const canvas = document.createElement('canvas');
+        this.renderMapToCanvasAtRes(canvas, res, mapType);
+
+        const blob = await new Promise(r => canvas.toBlob(r, 'image/png'));
+        if (blob) {
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = `veil_studio_${mapType}_map_${res}x${res}.png`;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          setTimeout(() => URL.revokeObjectURL(url), 10000);
+        }
+      } catch (err) {
+        console.error('Error exporting map:', err);
+        alert('Помилка експорту: ' + err.message);
+      } finally {
+        this.hideExportProgressOverlay();
+        if (window.hideProgressLoader) window.hideProgressLoader();
+      }
     });
   }
 
   /**
-   * iPad & Web Compatible Multi-Map Exporter
-   * Generates single ZIP archive to bypass iPad Safari pop-up / multi-download restrictions,
-   * and displays a high-res preview sheet.
+   * Memory-Optimized & Crash-Proof Multi-Map Exporter (All 5 PBR Maps)
+   * Prevents browser RAM crashes at 4096x4096 by processing maps sequentially,
+   * avoiding massive base64 string allocations, and using lightweight Object URLs.
    */
   downloadAllMaps() {
     this.promptResolutionAndExport('Експорт Всіх 5 PBR Карт (ZIP)', 1024, async (res) => {
@@ -1535,25 +1713,65 @@ export class MapGeneratorTabComponent {
 
       if (btn) {
         btn.disabled = true;
-        btn.innerHTML = '⌛ Формування ZIP...';
+        btn.innerHTML = '⚡ Формую архів...';
+      }
+
+      this.showExportProgressOverlay(`Формування архіву 5 карт (${res}×${res})...`);
+      if (window.showProgressLoader) {
+        window.showProgressLoader("Формування архіву...", `Обробка 5 PBR карт (${res}×${res})`);
       }
 
       try {
-        const mapTypes = ['normal', 'displacement', 'ao', 'specular', 'diffuse'];
+        const mapItems = [
+          { id: 'normal', name: 'Normal Map' },
+          { id: 'displacement', name: 'Displacement Map' },
+          { id: 'ao', name: 'Ambient Occlusion' },
+          { id: 'specular', name: 'Specular Map' },
+          { id: 'diffuse', name: 'Diffuse Map' }
+        ];
+
         const mapBlobs = {};
-        const dataUrls = {};
+        const mapObjectUrls = {};
 
-        for (const type of mapTypes) {
-          const canvas = document.createElement('canvas');
-          this.renderMapToCanvasAtRes(canvas, res, type);
-          const dataUrl = canvas.toDataURL('image/png');
-          dataUrls[type] = dataUrl;
+        // Reusable single offscreen canvas to prevent multi-canvas RAM duplication at 4096x4096
+        const tempCanvas = document.createElement('canvas');
 
-          const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
-          if (blob) mapBlobs[type] = blob;
+        for (let i = 0; i < mapItems.length; i++) {
+          const item = mapItems[i];
+          const stepMsg = `Генерація (${i + 1}/${mapItems.length}): ${item.name} ${res}×${res}...`;
+
+          this.updateExportProgressOverlay(stepMsg);
+          if (window.updateProgressLoaderSubtext) {
+            window.updateProgressLoaderSubtext(stepMsg);
+          }
+
+          // Yield execution to allow browser UI thread to update spinner & run GC
+          await new Promise(r => setTimeout(r, 60));
+
+          this.renderMapToCanvasAtRes(tempCanvas, res, item.id);
+
+          // Convert canvas directly to binary Blob
+          const blob = await new Promise(resolve => tempCanvas.toBlob(resolve, 'image/png'));
+
+          // Clear pixels immediately
+          const ctx = tempCanvas.getContext('2d');
+          ctx.clearRect(0, 0, res, res);
+
+          if (blob) {
+            mapBlobs[item.id] = blob;
+            mapObjectUrls[item.id] = URL.createObjectURL(blob);
+          }
+
+          await new Promise(r => setTimeout(r, 40));
         }
 
-        // 1. Package single ZIP file (iPad / Safari bypasses multi-file blockage via 1 zip download)
+        this.updateExportProgressOverlay(`⚡ Пакування в ZIP-архів (${res}×${res})...`);
+        if (window.updateProgressLoaderSubtext) {
+          window.updateProgressLoaderSubtext(`Пакування в ZIP...`);
+        }
+        await new Promise(r => setTimeout(r, 60));
+
+        // Package single ZIP file using JSZip
         if (window.JSZip) {
           const zip = new window.JSZip();
           const folder = zip.folder(`pbr_maps_${res}x${res}`);
@@ -1564,7 +1782,8 @@ export class MapGeneratorTabComponent {
           if (mapBlobs.specular) folder.file(`veil_specular_${res}x${res}.png`, mapBlobs.specular);
           if (mapBlobs.diffuse) folder.file(`veil_diffuse_${res}x${res}.png`, mapBlobs.diffuse);
 
-          const zipBlob = await zip.generateAsync({ type: 'blob' });
+          // STORE compression avoids heavy CPU/RAM re-compression of already compressed PNGs
+          const zipBlob = await zip.generateAsync({ type: 'blob', compression: 'STORE' });
           const zipUrl = URL.createObjectURL(zipBlob);
 
           const a = document.createElement('a');
@@ -1573,30 +1792,33 @@ export class MapGeneratorTabComponent {
           document.body.appendChild(a);
           a.click();
           document.body.removeChild(a);
-          setTimeout(() => URL.revokeObjectURL(zipUrl), 10000);
+          setTimeout(() => URL.revokeObjectURL(zipUrl), 15000);
         } else {
-          // Fallback: trigger downloads with short delay
-          for (const type of ['normal', 'displacement', 'ao', 'specular']) {
-            const canvas = document.createElement('canvas');
-            this.renderMapToCanvasAtRes(canvas, res, type);
-            const dataUrl = canvas.toDataURL('image/png');
-            const a = document.createElement('a');
-            a.href = dataUrl;
-            a.download = `veil_studio_${type}_map_${res}x${res}.png`;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            await new Promise(r => setTimeout(r, 300));
+          // Fallback if JSZip is not loaded
+          for (const item of mapItems) {
+            const url = mapObjectUrls[item.id];
+            if (url) {
+              const a = document.createElement('a');
+              a.href = url;
+              a.download = `veil_studio_${item.id}_map_${res}x${res}.png`;
+              document.body.appendChild(a);
+              a.click();
+              document.body.removeChild(a);
+              await new Promise(r => setTimeout(r, 300));
+            }
           }
         }
 
-        // 2. Open iPad Export Sheet for visual confirmation and manual tap-hold saving to iOS Photos
-        this.showPbrExportModal(dataUrls, res);
+        // Display modal export sheet with all 5 maps
+        this.showPbrExportModal(mapObjectUrls, res);
 
       } catch (err) {
         console.error('Error generating PBR zip export:', err);
         alert('Помилка формування експорту PBR карт: ' + err.message);
       } finally {
+        this.hideExportProgressOverlay();
+        if (window.hideProgressLoader) window.hideProgressLoader();
+
         if (btn) {
           btn.disabled = false;
           btn.innerHTML = originalText;
@@ -1606,9 +1828,9 @@ export class MapGeneratorTabComponent {
   }
 
   /**
-   * Show iOS / iPad compatible Export Sheet Modal for saving maps
+   * Show iOS / iPad & Desktop compatible Export Sheet Modal for all 5 PBR maps
    */
-  showPbrExportModal(dataUrls, res) {
+  showPbrExportModal(objectUrls, res) {
     let modal = document.getElementById('pbrExportModalSheet');
     if (!modal) {
       modal = document.createElement('div');
@@ -1621,30 +1843,34 @@ export class MapGeneratorTabComponent {
       { id: 'normal', name: 'Normal Map', color: '#3b82f6' },
       { id: 'displacement', name: 'Displacement', color: '#10b981' },
       { id: 'ao', name: 'Ambient Occlusion', color: '#f59e0b' },
-      { id: 'specular', name: 'Specular', color: '#ec4899' }
+      { id: 'specular', name: 'Specular', color: '#ec4899' },
+      { id: 'diffuse', name: 'Diffuse', color: '#a855f7' }
     ];
 
     modal.innerHTML = `
-      <div style="background:#18181b; border:1px solid rgba(255,255,255,0.15); border-radius:12px; width:100%; max-width:680px; max-height:90vh; overflow-y:auto; padding:20px; box-shadow:0 20px 50px rgba(0,0,0,0.8); color:#f4f4f5;">
+      <div style="background:#18181b; border:1px solid rgba(255,255,255,0.15); border-radius:12px; width:100%; max-width:720px; max-height:90vh; overflow-y:auto; padding:20px; box-shadow:0 20px 50px rgba(0,0,0,0.8); color:#f4f4f5;">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; border-bottom:1px solid rgba(255,255,255,0.1); padding-bottom:10px;">
           <div>
-            <h3 style="margin:0; font-size:16px; font-weight:700;">📦 PBR Карти Готові (${res}x${res} px)</h3>
+            <h3 style="margin:0; font-size:16px; font-weight:700;">📦 Всі 5 PBR Карт Готові (${res}x${res} px)</h3>
             <span style="font-size:11px; color:#a1a1aa;">Архів завантажено! Для збереження в iOS "Фотографії" затисніть потрібне фото пальцем.</span>
           </div>
           <button id="btnClosePbrModal" class="btn btn-secondary" style="padding:4px 12px; font-size:14px; border-radius:6px;">✕</button>
         </div>
 
-        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(130px, 1fr)); gap:12px; margin-bottom:16px;">
-          ${maps.map(m => `
-            <div style="background:#27272a; border:1px solid rgba(255,255,255,0.1); border-radius:8px; padding:8px; text-align:center; display:flex; flex-direction:column; align-items:center;">
-              <span style="font-size:11px; font-weight:700; color:${m.color}; margin-bottom:6px;">${m.name}</span>
-              <img src="${dataUrls[m.id]}" style="width:100%; aspect-ratio:1; object-fit:cover; border-radius:4px; border:1px solid rgba(255,255,255,0.1); margin-bottom:8px; background:#000;">
-              <div style="display:flex; flex-direction:column; gap:4px; width:100%;">
-                <a href="${dataUrls[m.id]}" download="veil_${m.id}_${res}x${res}.png" class="btn btn-primary" style="padding:4px 6px; font-size:10px; text-decoration:none; text-align:center;">💾 Завантажити</a>
-                <a href="${dataUrls[m.id]}" target="_blank" class="btn btn-secondary" style="padding:3px 6px; font-size:9px; text-decoration:none; text-align:center; opacity:0.8;">👁️ Відкрити</a>
+        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(120px, 1fr)); gap:10px; margin-bottom:16px;">
+          ${maps.map(m => {
+            const imgUrl = objectUrls[m.id] || '';
+            return `
+              <div style="background:#27272a; border:1px solid rgba(255,255,255,0.1); border-radius:8px; padding:8px; text-align:center; display:flex; flex-direction:column; align-items:center;">
+                <span style="font-size:11px; font-weight:700; color:${m.color}; margin-bottom:6px;">${m.name}</span>
+                <img src="${imgUrl}" style="width:100%; aspect-ratio:1; object-fit:cover; border-radius:4px; border:1px solid rgba(255,255,255,0.1); margin-bottom:8px; background:#000;">
+                <div style="display:flex; flex-direction:column; gap:4px; width:100%;">
+                  <a href="${imgUrl}" download="veil_${m.id}_${res}x${res}.png" class="btn btn-primary" style="padding:4px 6px; font-size:10px; text-decoration:none; text-align:center;">💾 Зберегти</a>
+                  <a href="${imgUrl}" target="_blank" class="btn btn-secondary" style="padding:3px 6px; font-size:9px; text-decoration:none; text-align:center; opacity:0.8;">👁️ Перегляд</a>
+                </div>
               </div>
-            </div>
-          `).join('')}
+            `;
+          }).join('')}
         </div>
 
         <div style="display:flex; justify-content:flex-end;">
