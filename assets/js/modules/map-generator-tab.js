@@ -215,6 +215,22 @@ export class MapGeneratorTabComponent {
         </div>
 
         <div class="viewport-stage" style="flex:1; position:relative; overflow:hidden; display:flex; justify-content:center; align-items:center; background:#0d0d0e;">
+          <!-- Canvas History Controls (Vertical bar on the right side - identical to main canvas view) -->
+          <div class="canvas-history-controls" style="position:absolute; top:50%; right:14px; transform:translateY(-50%); z-index:20;">
+            <button id="btnUndoPbr" class="btn btn-secondary history-btn" title="Скасувати (Undo)" data-i18n-title="undo_title" disabled>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M3 7v6h6"/>
+                <path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/>
+              </svg>
+            </button>
+            <button id="btnRedoPbr" class="btn btn-secondary history-btn" title="Повторити (Redo)" data-i18n-title="redo_title" disabled>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 7v6h-6"/>
+                <path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3l3 2.7"/>
+              </svg>
+            </button>
+          </div>
+
           <!-- 2D Preview Viewport -->
           <div id="view2DStage" style="position:absolute; inset:0; display:flex; flex-direction:column; justify-content:center; align-items:center; user-select:none;">
             
@@ -225,23 +241,8 @@ export class MapGeneratorTabComponent {
               </div>
             </div>
 
-            <!-- 2D Viewport Controls Bar (Same as Layer / Tiling bar) -->
+            <!-- 2D Viewport Controls Bar -->
             <div class="2d-toolbar" style="position:absolute; bottom:12px; left:50%; transform:translateX(-50%); background:rgba(18,18,20,0.88); backdrop-filter:blur(8px); border:1px solid rgba(255,255,255,0.12); border-radius:8px; padding:6px 12px; display:flex; gap:10px; align-items:center; font-size:11px; z-index:10; box-shadow:0 8px 24px rgba(0,0,0,0.5); flex-wrap:wrap; justify-content:center;">
-              <button id="btnUndoPbr" class="btn btn-secondary history-btn" style="padding:2px 8px; display:inline-flex; align-items:center;" title="Скасувати (Undo)" disabled>
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M3 7v6h6"/>
-                  <path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/>
-                </svg>
-              </button>
-              <button id="btnRedoPbr" class="btn btn-secondary history-btn" style="padding:2px 8px; display:inline-flex; align-items:center;" title="Повторити (Redo)" disabled>
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M21 7v6h-6"/>
-                  <path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3l3 2.7"/>
-                </svg>
-              </button>
-
-              <div style="width:1px; height:16px; background:rgba(255,255,255,0.15);"></div>
-
               <button id="btnZoomOut2D" class="btn btn-secondary" style="padding:2px 8px;" title="Зменшити">➖</button>
               <button id="btnZoomIn2D" class="btn btn-secondary" style="padding:2px 8px;" title="Збільшити">➕</button>
               <button id="btnReset2D" class="btn btn-secondary" style="padding:2px 8px;" title="Скинути масштаб і поворот">Fit</button>
@@ -536,7 +537,12 @@ export class MapGeneratorTabComponent {
         if (!isNaN(res)) {
           this.targetResolution = res;
           updateResButtons();
-          this.reprocess();
+          if (this.syncManager && this.syncManager.sourceType === 'composite') {
+            this.syncManager.pullCanvasData();
+          } else {
+            this.reprocess();
+          }
+          this.onSettingsChanged();
         }
       };
     });
@@ -547,6 +553,12 @@ export class MapGeneratorTabComponent {
     if (chkFast) {
       chkFast.onchange = (e) => {
         this.fastPreview = e.target.checked;
+        if (this.syncManager && this.syncManager.sourceType === 'composite') {
+          this.syncManager.pullCanvasData();
+        } else {
+          this.reprocess();
+        }
+        this.onSettingsChanged();
       };
     }
 
@@ -1085,8 +1097,19 @@ export class MapGeneratorTabComponent {
     const btnResync = document.getElementById('btnResyncCanvas');
     if (btnResync) {
       btnResync.onclick = () => {
-        this.syncManager.pullCanvasData();
-        this.onSettingsChanged();
+        const originalText = btnResync.innerHTML;
+        btnResync.innerHTML = '⌛ Оновлення...';
+        btnResync.disabled = true;
+
+        setTimeout(() => {
+          this.syncManager.pullCanvasData();
+          this.onSettingsChanged();
+          btnResync.innerHTML = '✅ Оновлено з полотна';
+          setTimeout(() => {
+            btnResync.innerHTML = originalText;
+            btnResync.disabled = false;
+          }, 1000);
+        }, 50);
       };
     }
 
