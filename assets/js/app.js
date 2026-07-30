@@ -524,12 +524,22 @@
         window.addEventListener('touchend', handleCanvasTouchEnd, {passive:true});
         window.addEventListener('touchcancel', handleCanvasTouchEnd, {passive:true});
 
+        const mulberry32 = (seed) => {
+            let s = seed % 2147483647;
+            if (s <= 0) s += 2147483646;
+            return function() {
+                s = (s * 16807) % 2147483647;
+                return (s - 1) / 2147483646;
+            };
+        };
+
         const Perlin = {
             p: new Uint8Array(512),
-            init() {
+            init(seed = 1337) {
+                let rng = mulberry32(seed);
                 let a = new Uint8Array(256);
                 for(let i=0;i<256;i++) a[i]=i;
-                for(let i=255;i>0;i--){ let j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; }
+                for(let i=255;i>0;i--){ let j=Math.floor(rng()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; }
                 for(let i=0;i<512;i++) this.p[i]=a[i&255];
             },
             fade: t => t*t*t*(t*(t*6-15)+10),
@@ -541,7 +551,7 @@
                 return this.lerp(v, this.lerp(u, this.grad(this.p[A],x,y), this.grad(this.p[B],x-1,y)),
                                     this.lerp(u, this.grad(this.p[A+1],x,y-1), this.grad(this.p[B+1],x-1,y-1)));
             }
-        }; Perlin.init();
+        }; Perlin.init(1337);
 
         const NoiseCache = {
             size: 1024,
@@ -3697,7 +3707,7 @@
                     }
 
                     if(gr>0) {
-                        let gVal = (Math.random() - 0.5) * (gr / 255);
+                        let gVal = (pseudoNoise(px_idx, 999) - 0.5) * (gr / 255);
                         vr += gVal; vg += gVal; vb += gVal;
                     }
 
