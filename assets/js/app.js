@@ -4713,6 +4713,28 @@
                 rgba(255,255,255,0) 100%)`;
         };
 
+        window.toggleBlendIfActive = function(checked) {
+            let lay = state.layers.find(l => l.id === state.selectedLayerId);
+            if (!lay || !lay.params) return;
+            lay.params.useBlendIf = !!checked;
+            if (checked && lay.params.blendIfExpanded === undefined) {
+                lay.params.blendIfExpanded = true;
+            }
+            lay.isDirty = true;
+            invalidateCaches();
+            if (!suppressRender) requestRender();
+            renderProps();
+            scheduleHistorySnapshot();
+        };
+
+        window.toggleBlendIfExpand = function() {
+            let lay = state.layers.find(l => l.id === state.selectedLayerId);
+            if (!lay || !lay.params) return;
+            let isExpanded = lay.params.blendIfExpanded !== undefined ? lay.params.blendIfExpanded : false;
+            lay.params.blendIfExpanded = !isExpanded;
+            renderProps();
+        };
+
         window.updateBlendIfRange = function(k1, val1, k2, val2) {
             let lay = state.layers.find(l => l.id === state.selectedLayerId);
             if (!lay || !lay.params) return;
@@ -5146,16 +5168,22 @@
             `;
 
             // Block: fx
+            let isBlendIfExpanded = lp.blendIfExpanded !== undefined ? lp.blendIfExpanded : false;
+
             let blendIfCardHTML = `
-            <div style="background: rgba(255,255,255,0.03); border: 1px solid var(--border-color, #27272a); border-radius: 8px; padding: 10px; margin: 10px 0;">
-                <div style="display:flex; justify-content:space-between; align-items:center;">
-                    <label class="checkbox-label" style="font-weight:700; color:var(--primary-color, #3b82f6); margin:0;">
-                        <input type="checkbox" ${lp.useBlendIf ? 'checked' : ''} onchange="upd('useBlendIf', this.checked); renderProps();">
-                        <span>🎚️ Blend If (Накласти якщо)</span>
-                    </label>
+            <div style="background: rgba(255,255,255,0.03); border: 1px solid var(--border-color, #27272a); border-radius: 8px; margin: 10px 0; overflow:hidden;">
+                <div onclick="toggleBlendIfExpand()" style="display:flex; justify-content:space-between; align-items:center; padding: 10px 12px; cursor:pointer; user-select:none; background: rgba(255,255,255,0.02);" title="Натисніть для розгортання/згортання налаштувань Blend If">
+                    <div style="display:flex; align-items:center; gap:8px;">
+                        <input type="checkbox" ${lp.useBlendIf ? 'checked' : ''} onclick="event.stopPropagation();" onchange="toggleBlendIfActive(this.checked);" style="cursor:pointer; width:15px; height:15px; accent-color: var(--primary-color, #3b82f6);">
+                        <span style="font-weight:700; color:${lp.useBlendIf ? 'var(--primary-color, #3b82f6)' : 'var(--text-color)'}; font-size:12px;">🎚️ Blend If (Накласти якщо)</span>
+                    </div>
+                    <div style="display:flex; align-items:center; gap:8px;">
+                        ${lp.useBlendIf ? '<span style="font-size:9px; background:rgba(59,130,246,0.2); color:#3b82f6; padding:2px 6px; border-radius:4px; font-weight:700; letter-spacing:0.03em;">АКТИВНО</span>' : ''}
+                        <span class="accordion-chevron ${isBlendIfExpanded ? 'open' : ''}" style="font-size:10px; color:var(--text-muted); transition:transform 0.2s; display:inline-block;">▼</span>
+                    </div>
                 </div>
-                ${lp.useBlendIf ? `
-                    <div style="margin-top:8px;">
+                ${isBlendIfExpanded ? `
+                    <div style="padding: 10px; border-top: 1px solid rgba(255,255,255,0.06);">
                         <div class="property-group" style="margin-bottom:8px;">
                             <label class="property-label" style="font-size:10px;">Канал порівняння</label>
                             <div class="gen-grid" style="grid-template-columns:repeat(4,1fr);">
