@@ -171,7 +171,9 @@
                 "Глобальне Зерно / Шум": "Глобальне Зерно / Шум",
                 "Глобальна Гама": "Глобальна Гама",
                 "Контраст": "Контраст",
-                "Гамма": "Гамма"
+                "Гамма": "Гамма",
+                "Перспектива вертикальна": "Перспектива вертикальна",
+                "Перспектива горизонтальна": "Перспектива горизонтальна"
             },
             en: {
                 app_title: "Veil Studio — Procedural Texture Generator",
@@ -339,7 +341,9 @@
                 "Глобальне Зерно / Шум": "Global Grain / Noise",
                 "Глобальна Гама": "Global Gamma",
                 "Контраст": "Contrast",
-                "Гамма": "Gamma"
+                "Гамма": "Gamma",
+                "Перспектива вертикальна": "Vertical Perspective",
+                "Перспектива горизонтальна": "Horizontal Perspective"
             }
         };
 
@@ -3089,6 +3093,8 @@
             let gRot = state.global.globalRotation || 0;
             let gOffX = state.global.globalOffsetX || 0;
             let gOffY = state.global.globalOffsetY || 0;
+            let gPerspV = state.global.globalPerspectiveV || 0;
+            let gPerspH = state.global.globalPerspectiveH || 0;
             let gTileMode = state.global.tileMode || 'off';
             let gRepX = Math.max(1, state.global.tileRepeatX || 1);
             let gRepY = Math.max(1, state.global.tileRepeatY || 1);
@@ -3189,7 +3195,7 @@
                             let nx = x/w, ny = baseY, idx = y*w+x;
 
                             // --- Глобальна трансформація + тайлінг ---
-                            if (gZoom !== 1 || gRot || gOffX || gOffY || gTileMode !== 'off') {
+                            if (gZoom !== 1 || gRot || gOffX || gOffY || gTileMode !== 'off' || gPerspV || gPerspH) {
                                 nx -= 0.5; ny -= 0.5;
                                 if (gZoom !== 1) { nx /= gZoom; ny /= gZoom; }
                                 if (gRot) {
@@ -3197,6 +3203,13 @@
                                     let grx = nx * Math.cos(gr) - ny * Math.sin(gr);
                                     let gry = nx * Math.sin(gr) + ny * Math.cos(gr);
                                     nx = grx; ny = gry;
+                                }
+                                if (gPerspV || gPerspH) {
+                                    let gpv = gPerspV / 200;
+                                    let gph = gPerspH / 200;
+                                    let gpw = Math.max(0.1, 1 + nx * gph + ny * gpv);
+                                    nx /= gpw;
+                                    ny /= gpw;
                                 }
                                 nx -= gOffX; ny -= gOffY;
                                 if (gTileMode !== 'off') {
@@ -3288,6 +3301,14 @@
                                 let rnx = nx * Math.cos(r) - ny * Math.sin(r); 
                                 let rny = nx * Math.sin(r) + ny * Math.cos(r); 
                                 nx = rnx; ny = rny;
+                            }
+
+                            if (p.perspectiveV || p.perspectiveH) {
+                                let pv = (p.perspectiveV || 0) / 200;
+                                let ph = (p.perspectiveH || 0) / 200;
+                                let pw = Math.max(0.1, 1 + nx * ph + ny * pv);
+                                nx /= pw;
+                                ny /= pw;
                             }
                             
                             nx += 0.5; ny += 0.5;
@@ -3986,7 +4007,7 @@
         // значення за замовчуванням через || / ?? у renderProps()/evalGenerator()
         // самі, щойно з'являються на екрані для свого типу генератора.
         function freshLayerParams() {
-            return { seamless:false, scale:10, scaleX:10, scaleY:10, lockScale:true, layerScale:1, contrast:1, brightness:1, angle:0, blur:0, blurType:'gaussian', blurClampEdge:false,
+            return { seamless:false, scale:10, scaleX:10, scaleY:10, lockScale:true, layerScale:1, contrast:1, brightness:1, angle:0, perspectiveV:0, perspectiveH:0, blur:0, blurType:'gaussian', blurClampEdge:false,
                 offsetX:0, offsetY:0, invert:false, warps:[],
                 useThreshold:false, thresholdVal:50, useLevels:false, levelMin:0, levelMax:100,
                 usePosterize:false, posterizeLevels:4, useFindEdges:false,
@@ -4009,6 +4030,7 @@
                 vignetteCenterY: 0.5,
                 grain:10, blur:0, blurType:'gaussian', blurClampEdge:false,
                 globalZoom:1, globalRotation:0, globalOffsetX:0, globalOffsetY:0,
+                globalPerspectiveV:0, globalPerspectiveH:0,
                 tileMode:'off', tileRepeatX:2, tileRepeatY:2, tileMirrorX:true, tileMirrorY:true,
                 tileSeamOffsetX:0, tileSeamOffsetY:0, blendCurve:'smooth',
                 forceSeamless:false, forceSeamlessSoftness:1,
@@ -5175,6 +5197,8 @@
                 ${createScaleSlider("Масштаб Y (Noise/Web)", "scaleY", lp.scaleY)}
                 ${createSlider("Масштаб Шару (Zoom)", "layerScale", 0.1, 10, 0.1, lp.layerScale, false, 1)}
                 ${createSlider("Кут обертання (−180° … +180°)", "angle", -180, 180, 1, lp.angle, false, 0)}
+                ${createSlider("Перспектива вертикальна", "perspectiveV", -500, 500, 1, lp.perspectiveV || 0, false, 0)}
+                ${createSlider("Перспектива горизонтальна", "perspectiveH", -500, 500, 1, lp.perspectiveH || 0, false, 0)}
             `;
 
             // Block: fx
@@ -5418,6 +5442,8 @@
                 ${createSlider("Поворот", "globalRotation", -180, 180, 1, g.globalRotation, true, 0)}
                 ${createSlider("Зсув X", "globalOffsetX", -2, 2, 0.02, g.globalOffsetX, true, 0)}
                 ${createSlider("Зсув Y", "globalOffsetY", -2, 2, 0.02, g.globalOffsetY, true, 0)}
+                ${createSlider("Перспектива вертикальна", "globalPerspectiveV", -500, 500, 1, g.globalPerspectiveV || 0, true, 0)}
+                ${createSlider("Перспектива горизонтальна", "globalPerspectiveH", -500, 500, 1, g.globalPerspectiveH || 0, true, 0)}
             `;
 
             // Block: tiling
