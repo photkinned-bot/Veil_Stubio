@@ -1723,6 +1723,17 @@
             return window._globalFloatBuffers[name];
         }
 
+        function freeHighResGlobalBuffers() {
+            if (window._globalFloatBuffers) {
+                for (let k in window._globalFloatBuffers) {
+                    window._globalFloatBuffers[k] = null;
+                    delete window._globalFloatBuffers[k];
+                }
+                window._globalFloatBuffers = {};
+            }
+        }
+        window.freeHighResGlobalBuffers = freeHighResGlobalBuffers;
+
         const PALETTE_PRESETS = {
             custom: null,
             wood_oak: [
@@ -2487,13 +2498,16 @@
             await new Promise(res => setTimeout(res, 30));
 
             setState(p);
-            if (!state.global) state.global = freshGlobalSettings();
+            state.global = Object.assign(freshGlobalSettings(), state.global || {});
+            if (!state.global.warps) state.global.warps = [];
 
-            state.layers.forEach(l => {
-                l.isDirty = true;
-                if (!l.params) l.params = freshLayerParams();
-                if (!l.params.warps) l.params.warps = [];
-            });
+            if (state.layers) {
+                state.layers.forEach(l => {
+                    l.isDirty = true;
+                    l.params = Object.assign(freshLayerParams(), l.params || {});
+                    if (!l.params.warps) l.params.warps = [];
+                });
+            }
 
             if (!state.layers.find(l => l.id === state.selectedLayerId)) {
                 state.selectedLayerId = state.layers.length ? state.layers[0].id : null;
@@ -3444,11 +3458,45 @@
                     }
                 }
 
+                let useBlendIf = !!p.useBlendIf;
+                let bIfChan = p.blendIfChannel || 'gray';
+                let tb1 = (p.blendIfThisBlack1 !== undefined ? p.blendIfThisBlack1 : 0);
+                let tb2 = (p.blendIfThisBlack2 !== undefined ? p.blendIfThisBlack2 : 0);
+                let tw1 = (p.blendIfThisWhite1 !== undefined ? p.blendIfThisWhite1 : 100);
+                let tw2 = (p.blendIfThisWhite2 !== undefined ? p.blendIfThisWhite2 : 100);
+
+                let ub1 = (p.blendIfUnderBlack1 !== undefined ? p.blendIfUnderBlack1 : 0);
+                let ub2 = (p.blendIfUnderBlack2 !== undefined ? p.blendIfUnderBlack2 : 0);
+                let uw1 = (p.blendIfUnderWhite1 !== undefined ? p.blendIfUnderWhite1 : 100);
+                let uw2 = (p.blendIfUnderWhite2 !== undefined ? p.blendIfUnderWhite2 : 100);
+
+                const getBIfVal = (r, g, b, chan) => {
+                    if (chan === 'red') return r * 100;
+                    if (chan === 'green') return g * 100;
+                    if (chan === 'blue') return b * 100;
+                    return (0.299 * r + 0.587 * g + 0.114 * b) * 100;
+                };
+
+                const calcBIfRampAlpha = (val, b1, b2, w1, w2) => {
+                    let a = 1.0;
+                    if (val < b1) a = 0;
+                    else if (val < b2) a = (b2 > b1) ? (val - b1) / (b2 - b1) : 1;
+                    else if (val > w2) a = 0;
+                    else if (val > w1) a = (w2 > w1) ? 1 - (val - w1) / (w2 - w1) : 1;
+                    return a < 0 ? 0 : (a > 1 ? 1 : a);
+                };
+
                 if (lay.isMask) {
                     if (pendingRemaining > 0) {
                         for (let i=0;i<w*h;i++) {
                             let maskLum = 0.299 * layerBufferR[i] + 0.587 * layerBufferG[i] + 0.114 * layerBufferB[i];
-                            pendingMaskAlphaBuffer[i] *= maskLum;
+                            let bifA = 1.0;
+                            if (useBlendIf) {
+                                let sVal = getBIfVal(layerBufferR[i], layerBufferG[i], layerBufferB[i], bIfChan);
+                                let uVal = getBIfVal(pendingMaskTargetR[i], pendingMaskTargetG[i], pendingMaskTargetB[i], bIfChan);
+                                bifA = calcBIfRampAlpha(sVal, tb1, tb2, tw1, tw2) * calcBIfRampAlpha(uVal, ub1, ub2, uw1, uw2);
+                            }
+                            pendingMaskAlphaBuffer[i] *= maskLum * bifA;
                         }
                         pendingRemaining--;
                         if (pendingRemaining === 0) {
@@ -3474,25 +3522,56 @@
                     pendingMaskTargetR.set(layerBufferR);
                     pendingMaskTargetG.set(layerBufferG);
                     pendingMaskTargetB.set(layerBufferB);
-                    pendingMaskAlphaBuffer.fill(1);
+                    if (useBlendIf) {
+                        for (let i=0; i<w*h; i++) {
+                            let sVal = getBIfVal(layerBufferR[i], layerBufferG[i], layerBufferB[i], bIfChan);
+                            let uVal = getBIfVal(blendBufferR[i], blendBufferG[i], blendBufferB[i], bIfChan);
+                            pendingMaskAlphaBuffer[i] = calcBIfRampAlpha(sVal, tb1, tb2, tw1, tw2) * calcBIfRampAlpha(uVal, ub1, ub2, uw1, uw2);
+                        }
+                    } else {
+                        pendingMaskAlphaBuffer.fill(1);
+                    }
                     pendingOp = op; pendingBlendFn = bFn;
                     pendingRemaining = clippedByMasks[lIdx].length;
                 } else {
                     if (firstBlend) {
-                        blendBufferR.set(layerBufferR);
-                        blendBufferG.set(layerBufferG);
-                        blendBufferB.set(layerBufferB);
+                        if (useBlendIf) {
+                            for(let i=0; i<w*h; i++) {
+                                let sVal = getBIfVal(layerBufferR[i], layerBufferG[i], layerBufferB[i], bIfChan);
+                                let uVal = getBIfVal(blendBufferR[i], blendBufferG[i], blendBufferB[i], bIfChan);
+                                let bifA = calcBIfRampAlpha(sVal, tb1, tb2, tw1, tw2) * calcBIfRampAlpha(uVal, ub1, ub2, uw1, uw2);
+                                blendBufferR[i] = layerBufferR[i] * bifA;
+                                blendBufferG[i] = layerBufferG[i] * bifA;
+                                blendBufferB[i] = layerBufferB[i] * bifA;
+                            }
+                        } else {
+                            blendBufferR.set(layerBufferR);
+                            blendBufferG.set(layerBufferG);
+                            blendBufferB.set(layerBufferB);
+                        }
                         firstBlend = false;
-                    } else if (op === 1.0 && bFn === Blend.normal) {
+                    } else if (op === 1.0 && bFn === Blend.normal && !useBlendIf) {
                         blendBufferR.set(layerBufferR);
                         blendBufferG.set(layerBufferG);
                         blendBufferB.set(layerBufferB);
                     } else {
-                        let oneMinusOp = 1 - op;
-                        for(let i=0; i<w*h; i++) {
-                            blendBufferR[i] = blendBufferR[i] * oneMinusOp + bFn(blendBufferR[i], layerBufferR[i]) * op;
-                            blendBufferG[i] = blendBufferG[i] * oneMinusOp + bFn(blendBufferG[i], layerBufferG[i]) * op;
-                            blendBufferB[i] = blendBufferB[i] * oneMinusOp + bFn(blendBufferB[i], layerBufferB[i]) * op;
+                        if (useBlendIf) {
+                            for(let i=0; i<w*h; i++) {
+                                let sVal = getBIfVal(layerBufferR[i], layerBufferG[i], layerBufferB[i], bIfChan);
+                                let uVal = getBIfVal(blendBufferR[i], blendBufferG[i], blendBufferB[i], bIfChan);
+                                let bifA = calcBIfRampAlpha(sVal, tb1, tb2, tw1, tw2) * calcBIfRampAlpha(uVal, ub1, ub2, uw1, uw2);
+                                let effOp = op * bifA;
+                                blendBufferR[i] = blendBufferR[i] * (1 - effOp) + bFn(blendBufferR[i], layerBufferR[i]) * effOp;
+                                blendBufferG[i] = blendBufferG[i] * (1 - effOp) + bFn(blendBufferG[i], layerBufferG[i]) * effOp;
+                                blendBufferB[i] = blendBufferB[i] * (1 - effOp) + bFn(blendBufferB[i], layerBufferB[i]) * effOp;
+                            }
+                        } else {
+                            let oneMinusOp = 1 - op;
+                            for(let i=0; i<w*h; i++) {
+                                blendBufferR[i] = blendBufferR[i] * oneMinusOp + bFn(blendBufferR[i], layerBufferR[i]) * op;
+                                blendBufferG[i] = blendBufferG[i] * oneMinusOp + bFn(blendBufferG[i], layerBufferG[i]) * op;
+                                blendBufferB[i] = blendBufferB[i] * oneMinusOp + bFn(blendBufferB[i], layerBufferB[i]) * op;
+                            }
                         }
                     }
                 }
@@ -3901,6 +3980,9 @@
                 offsetX:0, offsetY:0, invert:false, warps:[],
                 useThreshold:false, thresholdVal:50, useLevels:false, levelMin:0, levelMax:100,
                 usePosterize:false, posterizeLevels:4, useFindEdges:false,
+                useBlendIf:false, blendIfChannel:'gray',
+                blendIfThisBlack1:0, blendIfThisBlack2:0, blendIfThisWhite1:100, blendIfThisWhite2:100,
+                blendIfUnderBlack1:0, blendIfUnderBlack2:0, blendIfUnderWhite1:100, blendIfUnderWhite2:100,
                 colorMode: 'grayscale', colorA: '#ffffff', colorB: '#000000', palettePreset: 'custom',
                 colorStops: [{ pos: 0, color: '#000000' }, { pos: 1, color: '#ffffff' }],
                 hueShift: 0, saturation: 100, vibrance: 0, colorInvert: false };
@@ -4605,6 +4687,100 @@
             if (!suppressRender) requestRender();
         };
 
+        window.updateBlendIfRampInDOM = function(k1) {
+            let lay = state.layers.find(l => l.id === state.selectedLayerId);
+            if (!lay || !lay.params) return;
+            let lp = lay.params;
+            let isThis = k1.includes('This');
+            let rampId = isThis ? 'ramp_this' : 'ramp_under';
+            let rampEl = $(rampId);
+            if (!rampEl) return;
+            let b1 = isThis ? (lp.blendIfThisBlack1 || 0) : (lp.blendIfUnderBlack1 || 0);
+            let b2 = isThis ? (lp.blendIfThisBlack2 || 0) : (lp.blendIfUnderBlack2 || 0);
+            let w1 = isThis ? (lp.blendIfThisWhite1 !== undefined ? lp.blendIfThisWhite1 : 100) : (lp.blendIfUnderWhite1 !== undefined ? lp.blendIfUnderWhite1 : 100);
+            let w2 = isThis ? (lp.blendIfThisWhite2 !== undefined ? lp.blendIfThisWhite2 : 100) : (lp.blendIfUnderWhite2 !== undefined ? lp.blendIfUnderWhite2 : 100);
+
+            let p_b1 = Math.round(b1);
+            let p_b2 = Math.round(b2);
+            let p_w1 = Math.round(w1);
+            let p_w2 = Math.round(w2);
+            rampEl.style.background = `linear-gradient(to right, 
+                rgba(255,255,255,0) 0%, 
+                rgba(255,255,255,0) ${p_b1}%, 
+                rgba(59,130,246,0.9) ${p_b2}%, 
+                rgba(59,130,246,0.9) ${p_w1}%, 
+                rgba(255,255,255,0) ${p_w2}%, 
+                rgba(255,255,255,0) 100%)`;
+        };
+
+        window.updateBlendIfRange = function(k1, val1, k2, val2) {
+            let lay = state.layers.find(l => l.id === state.selectedLayerId);
+            if (!lay || !lay.params) return;
+            triggerInteraction();
+
+            val1 = parseFloat(val1);
+            val2 = parseFloat(val2);
+
+            if (val1 > val2) {
+                if (typeof event !== 'undefined' && event && event.target && event.target.id && event.target.id.includes(k1)) {
+                    val2 = val1;
+                    let el2 = $('rng_' + k2);
+                    if (el2) el2.value = val2;
+                } else {
+                    val1 = val2;
+                    let el1 = $('rng_' + k1);
+                    if (el1) el1.value = val1;
+                }
+            }
+
+            lay.params[k1] = val1;
+            lay.params[k2] = val2;
+
+            let lbl = $('lbl_' + k1 + '_' + k2);
+            if (lbl) lbl.innerText = `${Math.round(val1)}% … ${Math.round(val2)}%`;
+
+            updateBlendIfRampInDOM(k1);
+
+            lay.isDirty = true;
+            invalidateCaches();
+            if (!suppressRender) requestRender();
+        };
+
+        function renderBlendIfRampPreview(b1, b2, w1, w2, id = '') {
+            let p_b1 = Math.round(b1);
+            let p_b2 = Math.round(b2);
+            let p_w1 = Math.round(w1);
+            let p_w2 = Math.round(w2);
+            return `
+            <div ${id ? `id="${id}"` : ''} style="height:8px; border-radius:3px; border:1px solid rgba(255,255,255,0.15); background: linear-gradient(to right, 
+                rgba(255,255,255,0) 0%, 
+                rgba(255,255,255,0) ${p_b1}%, 
+                rgba(59,130,246,0.9) ${p_b2}%, 
+                rgba(59,130,246,0.9) ${p_w1}%, 
+                rgba(255,255,255,0) ${p_w2}%, 
+                rgba(255,255,255,0) 100%); margin: 4px 0 8px 0;" title="Діапазон видимості (Синій = 100% видимий, градієнт = м'який спад)"></div>`;
+        }
+
+        function blendIfRow(label, k1, k2, v1, v2) {
+            return `
+            <div style="margin-bottom:6px;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:2px;">
+                    <span style="font-size:10px; font-weight:600; color:var(--text-muted);">${label}</span>
+                    <span id="lbl_${k1}_${k2}" style="font-size:10px; font-weight:700; color:var(--primary-color, #3b82f6);">${Math.round(v1)}% … ${Math.round(v2)}%</span>
+                </div>
+                <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px; align-items:center;">
+                    <div>
+                        <label style="font-size:9px; color:var(--text-muted); display:block; margin-bottom:1px;">Поріг (Min)</label>
+                        <input type="range" min="0" max="100" step="1" value="${v1}" id="rng_${k1}" oninput="updateBlendIfRange('${k1}', this.value, '${k2}', $('rng_${k2}').value)" onchange="commitHistorySnapshot();" style="width:100%;">
+                    </div>
+                    <div>
+                        <label style="font-size:9px; color:var(--text-muted); display:block; margin-bottom:1px;">Розщеплення (Max)</label>
+                        <input type="range" min="0" max="100" step="1" value="${v2}" id="rng_${k2}" oninput="updateBlendIfRange('${k1}', $('rng_${k1}').value, '${k2}', this.value)" onchange="commitHistorySnapshot();" style="width:100%;">
+                    </div>
+                </div>
+            </div>`;
+        }
+
         // --- Accordion Blocks & Drag-and-Drop Reordering State ---
         let accordionConfig = {
             layer: {
@@ -4970,7 +5146,51 @@
             `;
 
             // Block: fx
+            let blendIfCardHTML = `
+            <div style="background: rgba(255,255,255,0.03); border: 1px solid var(--border-color, #27272a); border-radius: 8px; padding: 10px; margin: 10px 0;">
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <label class="checkbox-label" style="font-weight:700; color:var(--primary-color, #3b82f6); margin:0;">
+                        <input type="checkbox" ${lp.useBlendIf ? 'checked' : ''} onchange="upd('useBlendIf', this.checked); renderProps();">
+                        <span>🎚️ Blend If (Накласти якщо)</span>
+                    </label>
+                </div>
+                ${lp.useBlendIf ? `
+                    <div style="margin-top:8px;">
+                        <div class="property-group" style="margin-bottom:8px;">
+                            <label class="property-label" style="font-size:10px;">Канал порівняння</label>
+                            <div class="gen-grid" style="grid-template-columns:repeat(4,1fr);">
+                                <button type="button" onclick="upd('blendIfChannel','gray'); renderProps();" class="gen-btn ${(lp.blendIfChannel||'gray')==='gray'?'active':''}">Сірий</button>
+                                <button type="button" onclick="upd('blendIfChannel','red'); renderProps();" class="gen-btn ${lp.blendIfChannel==='red'?'active':''}" style="${lp.blendIfChannel==='red'?'color:#ef4444;font-weight:700;':''}">R</button>
+                                <button type="button" onclick="upd('blendIfChannel','green'); renderProps();" class="gen-btn ${lp.blendIfChannel==='green'?'active':''}" style="${lp.blendIfChannel==='green'?'color:#22c55e;font-weight:700;':''}">G</button>
+                                <button type="button" onclick="upd('blendIfChannel','blue'); renderProps();" class="gen-btn ${lp.blendIfChannel==='blue'?'active':''}" style="${lp.blendIfChannel==='blue'?'color:#3b82f6;font-weight:700;':''}">B</button>
+                            </div>
+                        </div>
+
+                        <!-- This Layer Section -->
+                        <div style="background:rgba(0,0,0,0.25); padding:8px; border-radius:6px; margin-bottom:8px; border:1px solid rgba(255,255,255,0.06);">
+                            <div style="font-size:11px; font-weight:700; color:#f4f4f5; margin-bottom:2px;">🔹 Цей шар (This Layer)</div>
+                            <div style="font-size:9.5px; color:var(--text-muted); margin-bottom:6px;">Приховує темні/світлі зони даного шару</div>
+                            
+                            ${blendIfRow("Тіні (Blacks)", "blendIfThisBlack1", "blendIfThisBlack2", lp.blendIfThisBlack1||0, lp.blendIfThisBlack2||0)}
+                            ${blendIfRow("Світла (Whites)", "blendIfThisWhite1", "blendIfThisWhite2", lp.blendIfThisWhite1!==undefined?lp.blendIfThisWhite1:100, lp.blendIfThisWhite2!==undefined?lp.blendIfThisWhite2:100)}
+                            ${renderBlendIfRampPreview(lp.blendIfThisBlack1||0, lp.blendIfThisBlack2||0, lp.blendIfThisWhite1!==undefined?lp.blendIfThisWhite1:100, lp.blendIfThisWhite2!==undefined?lp.blendIfThisWhite2:100, 'ramp_this')}
+                        </div>
+
+                        <!-- Underlying Layer Section -->
+                        <div style="background:rgba(0,0,0,0.25); padding:8px; border-radius:6px; border:1px solid rgba(255,255,255,0.06);">
+                            <div style="font-size:11px; font-weight:700; color:#f4f4f5; margin-bottom:2px;">🔸 Нижній шар (Underlying Layer)</div>
+                            <div style="font-size:9.5px; color:var(--text-muted); margin-bottom:6px;">Проявляє темні/світлі зони фону крізь цей шар</div>
+
+                            ${blendIfRow("Тіні (Blacks)", "blendIfUnderBlack1", "blendIfUnderBlack2", lp.blendIfUnderBlack1||0, lp.blendIfUnderBlack2||0)}
+                            ${blendIfRow("Світла (Whites)", "blendIfUnderWhite1", "blendIfUnderWhite2", lp.blendIfUnderWhite1!==undefined?lp.blendIfUnderWhite1:100, lp.blendIfUnderWhite2!==undefined?lp.blendIfUnderWhite2:100)}
+                            ${renderBlendIfRampPreview(lp.blendIfUnderBlack1||0, lp.blendIfUnderBlack2||0, lp.blendIfUnderWhite1!==undefined?lp.blendIfUnderWhite1:100, lp.blendIfUnderWhite2!==undefined?lp.blendIfUnderWhite2:100, 'ramp_under')}
+                        </div>
+                    </div>
+                ` : ''}
+            </div>`;
+
             layerBlockContents.fx = `
+                ${blendIfCardHTML}
                 <div class="property-group">
                     <label class="property-label"><input type="checkbox" ${lp.useThreshold?'checked':''} onchange="upd('useThreshold',this.checked)"> Threshold (Поріг)</label>
                     ${lp.useThreshold ? sliderRow(0, 100, 1, lp.thresholdVal||50, 50, "upd('thresholdVal',this.value)") : ''}
@@ -7180,7 +7400,7 @@
         let historyTimer = null;
         let historyReady = false;
         let isRestoringHistory = false;
-        const MAX_HISTORY = 60;
+        const MAX_HISTORY = 20;
         const HISTORY_DEBOUNCE_MS = 450;
 
         function capturePaintCanvasesForHistory() {
@@ -7341,7 +7561,11 @@
             clearTimeout(historyTimer);
             historyTimer = setTimeout(() => {
                 if (!isPainting && !strokeBackupActive && !isRestoringHistory) {
-                    commitHistorySnapshot();
+                    if (isInteracting) {
+                        scheduleHistorySnapshot();
+                    } else {
+                        commitHistorySnapshot();
+                    }
                 }
             }, HISTORY_DEBOUNCE_MS);
         }
@@ -7484,7 +7708,7 @@
             interactionTimer = setTimeout(() => {
                 isInteracting = false;
                 requestRender();
-            }, 250);
+            }, 60);
         }
 
         function upd(k, v, isGlobal = false) {
@@ -7917,6 +8141,7 @@
                     }
                 }
 
+                prepareStateForSerialization();
                 const stateClean = JSON.parse(JSON.stringify(state, (key, value) => {
                     if (key === 'paintCanvas' || key === 'paintBuffer' || key === 'paintDataUrl') {
                         return undefined;
@@ -7977,13 +8202,16 @@
                 }
 
                 setState(record.state);
-                if (!state.global) state.global = freshGlobalSettings();
+                state.global = Object.assign(freshGlobalSettings(), state.global || {});
+                if (!state.global.warps) state.global.warps = [];
 
-                state.layers.forEach(l => {
-                    l.isDirty = true;
-                    if (!l.params) l.params = freshLayerParams();
-                    if (!l.params.warps) l.params.warps = [];
-                });
+                if (state.layers) {
+                    state.layers.forEach(l => {
+                        l.isDirty = true;
+                        l.params = Object.assign(freshLayerParams(), l.params || {});
+                        if (!l.params.warps) l.params.warps = [];
+                    });
+                }
 
                 if (!state.layers.find(l => l.id === state.selectedLayerId)) {
                     state.selectedLayerId = state.layers.length ? state.layers[0].id : null;
@@ -8147,13 +8375,16 @@
                 if (!record) throw new Error("Слот не знайдено");
 
                 setState(record.state);
-                if (!state.global) state.global = freshGlobalSettings();
+                state.global = Object.assign(freshGlobalSettings(), state.global || {});
+                if (!state.global.warps) state.global.warps = [];
 
-                state.layers.forEach(l => {
-                    l.isDirty = true;
-                    if (!l.params) l.params = freshLayerParams();
-                    if (!l.params.warps) l.params.warps = [];
-                });
+                if (state.layers) {
+                    state.layers.forEach(l => {
+                        l.isDirty = true;
+                        l.params = Object.assign(freshLayerParams(), l.params || {});
+                        if (!l.params.warps) l.params.warps = [];
+                    });
+                }
 
                 if (!state.layers.find(l => l.id === state.selectedLayerId)) {
                     state.selectedLayerId = state.layers.length ? state.layers[0].id : null;
