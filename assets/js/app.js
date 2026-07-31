@@ -163,6 +163,8 @@
                 "Контраст шару": "Контраст шару",
                 "Розмиття (px)": "Розмиття (px)",
                 "Масштаб (Zoom)": "Масштаб (Zoom)",
+                "Масштаб по X": "Масштаб по X",
+                "Масштаб по Y": "Масштаб по Y",
                 "Поворот": "Поворот",
                 "Глобальна Яскравість": "Глобальна Яскравість",
                 "Глобальний Контраст": "Глобальний Контраст",
@@ -333,6 +335,8 @@
                 "Контраст шару": "Layer Contrast",
                 "Розмиття (px)": "Blur (px)",
                 "Масштаб (Zoom)": "Global Zoom",
+                "Масштаб по X": "Scale X",
+                "Масштаб по Y": "Scale Y",
                 "Поворот": "Global Rotation",
                 "Глобальна Яскравість": "Global Brightness",
                 "Глобальний Контраст": "Global Contrast",
@@ -3090,6 +3094,8 @@
 
             // --- Глобальна трансформація (Zoom/Rotate/Offset) + глобальний тайлінг ---
             let gZoom = state.global.globalZoom || 1;
+            let gScaleX = state.global.globalScaleX !== undefined ? state.global.globalScaleX : 1;
+            let gScaleY = state.global.globalScaleY !== undefined ? state.global.globalScaleY : 1;
             let gRot = state.global.globalRotation || 0;
             let gOffX = state.global.globalOffsetX || 0;
             let gOffY = state.global.globalOffsetY || 0;
@@ -3195,9 +3201,12 @@
                             let nx = x/w, ny = baseY, idx = y*w+x;
 
                             // --- Глобальна трансформація + тайлінг ---
-                            if (gZoom !== 1 || gRot || gOffX || gOffY || gTileMode !== 'off' || gPerspV || gPerspH) {
+                            if (gZoom !== 1 || gScaleX !== 1 || gScaleY !== 1 || gRot || gOffX || gOffY || gTileMode !== 'off' || gPerspV || gPerspH) {
                                 nx -= 0.5; ny -= 0.5;
-                                if (gZoom !== 1) { nx /= gZoom; ny /= gZoom; }
+                                if (gZoom !== 1 || gScaleX !== 1 || gScaleY !== 1) {
+                                    nx /= (gZoom * gScaleX);
+                                    ny /= (gZoom * gScaleY);
+                                }
                                 if (gRot) {
                                     let gr = -gRot * Math.PI / 180;
                                     let grx = nx * Math.cos(gr) - ny * Math.sin(gr);
@@ -4029,7 +4038,7 @@
                 vignetteCenterX: 0.5,
                 vignetteCenterY: 0.5,
                 grain:10, blur:0, blurType:'gaussian', blurClampEdge:false,
-                globalZoom:1, globalRotation:0, globalOffsetX:0, globalOffsetY:0,
+                globalZoom:1, globalScaleX:1, globalScaleY:1, globalRotation:0, globalOffsetX:0, globalOffsetY:0,
                 globalPerspectiveV:0, globalPerspectiveH:0,
                 tileMode:'off', tileRepeatX:2, tileRepeatY:2, tileMirrorX:true, tileMirrorY:true,
                 tileSeamOffsetX:0, tileSeamOffsetY:0, blendCurve:'smooth',
@@ -5439,6 +5448,8 @@
                     <button onclick="resetGlobalSettings()" class="btn btn-secondary" style="width:100%;" title="Скинути корекції, трансформацію і тайлінг до значень за замовчуванням">↺ Скинути глобальні налаштування</button>
                 </div>
                 ${createSlider("Масштаб (Zoom)", "globalZoom", 0.1, 5, 0.05, g.globalZoom, true, 1)}
+                ${createSlider("Масштаб по X", "globalScaleX", 0.1, 10, 0.05, g.globalScaleX !== undefined ? g.globalScaleX : 1, true, 1)}
+                ${createSlider("Масштаб по Y", "globalScaleY", 0.1, 10, 0.05, g.globalScaleY !== undefined ? g.globalScaleY : 1, true, 1)}
                 ${createSlider("Поворот", "globalRotation", -180, 180, 1, g.globalRotation, true, 0)}
                 ${createSlider("Зсув X", "globalOffsetX", -2, 2, 0.02, g.globalOffsetX, true, 0)}
                 ${createSlider("Зсув Y", "globalOffsetY", -2, 2, 0.02, g.globalOffsetY, true, 0)}
@@ -7798,8 +7809,8 @@
                     state.global.vignetteAmount = -parsedVal * 100;
                 }
 
-                const COORD_PARAMS = ['globalZoom', 'globalRotation', 'globalOffsetX', 'globalOffsetY', 'tileRepeatX', 'tileRepeatY', 'tileSeamOffsetX', 'tileSeamOffsetY', 'forceSeamlessSoftness', 'blur', 'blurClampEdge', 'blurType', 'globalHueShift', 'globalSaturation', 'globalVibrance', 'globalColorTemp', 'globalColorTint', 'globalColorOverlayOpacity', 'globalColorOverlay', 'contrast', 'gamma', 'grain', 'invert'];
-                if (COORD_PARAMS.includes(k)) {
+                const COORD_PARAMS = ['globalZoom', 'globalScaleX', 'globalScaleY', 'globalRotation', 'globalOffsetX', 'globalOffsetY', 'globalPerspectiveV', 'globalPerspectiveH', 'tileRepeatX', 'tileRepeatY', 'tileSeamOffsetX', 'tileSeamOffsetY', 'forceSeamlessSoftness', 'blur', 'blurClampEdge', 'blurType', 'globalHueShift', 'globalSaturation', 'globalVibrance', 'globalColorTemp', 'globalColorTint', 'globalColorOverlayOpacity', 'globalColorOverlay', 'contrast', 'gamma', 'grain', 'invert'];
+                if (COORD_PARAMS.includes(k) || k.startsWith('global') || k.startsWith('tile')) {
                     invalidateCaches();
                 }
                 if (['blurType', 'tileMode', 'blendCurve', 'forceSeamless'].includes(k)) {
