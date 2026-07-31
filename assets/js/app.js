@@ -3184,270 +3184,530 @@
 
                     const { lutR, lutG, lutB } = buildLayerColorLUT(p, lay.generatorType);
 
+                    let isGlobalWarpFirst = (state.global.warpOrder === 'warp_first');
+                    let hasGlobalTransform = (gZoom !== 1 || gScaleX !== 1 || gScaleY !== 1 || gRot || gOffX || gOffY || gTileMode !== 'off' || gPerspV || gPerspH);
+                    let hasGlobalWarps = (state.global.warps && state.global.warps.length > 0);
+
+                    let isLayerWarpFirst = (p.warpOrder === 'warp_first');
+                    let hasLayerTransform = (lScale !== 1 || p.angle || p.perspectiveV || p.perspectiveH || p.offsetX || p.offsetY);
+                    let hasLayerWarps = (p.warps && p.warps.length > 0);
+
                     for(let y=0; y<h; y++){
                         const baseY = y/h;
                         for(let x=0; x<w; x++){
                             let nx = x/w, ny = baseY, idx = y*w+x;
 
-                            // --- Глобальна трансформація + тайлінг ---
-                            if (gZoom !== 1 || gScaleX !== 1 || gScaleY !== 1 || gRot || gOffX || gOffY || gTileMode !== 'off' || gPerspV || gPerspH) {
-                                nx -= 0.5; ny -= 0.5;
-                                if (gZoom !== 1 || gScaleX !== 1 || gScaleY !== 1) {
-                                    nx /= (gZoom * gScaleX);
-                                    ny /= (gZoom * gScaleY);
-                                }
-                                if (gRot) {
-                                    let gr = -gRot * Math.PI / 180;
-                                    let grx = nx * Math.cos(gr) - ny * Math.sin(gr);
-                                    let gry = nx * Math.sin(gr) + ny * Math.cos(gr);
-                                    nx = grx; ny = gry;
-                                }
-                                if (gPerspV || gPerspH) {
-                                    let gpv = gPerspV / 200;
-                                    let gph = gPerspH / 200;
-                                    let gpw = Math.max(0.1, 1 + nx * gph + ny * gpv);
-                                    nx /= gpw;
-                                    ny /= gpw;
-                                }
-                                nx -= gOffX; ny -= gOffY;
-                                if (gTileMode !== 'off') {
-                                    let rx = nx * gRepX + 0.5 + gSeamOffX, ry = ny * gRepY + 0.5 + gSeamOffY;
-                                    if (gTileMode === 'wrap' || gTileMode === 'blend') {
-                                        rx = wrapFold(rx); ry = wrapFold(ry);
-                                    } else if (gTileMode === 'mirror') {
-                                        rx = gMirX ? mirrorFold(rx) : wrapFold(rx);
-                                        ry = gMirY ? mirrorFold(ry) : wrapFold(ry);
-                                    }
-                                    nx = rx - 0.5; ny = ry - 0.5;
-                                }
-                                nx += 0.5; ny += 0.5;
-                            }
-                            // --- Глобальні деформатори (warps) ---
-                            if (state.global.warps && state.global.warps.length > 0) {
-                                for (let wIdx = 0; wIdx < state.global.warps.length; wIdx++) {
-                                    let wModifier = state.global.warps[wIdx];
-                                    if (wModifier.type === 'none' || wModifier.visible === false) continue;
-                                    let st = Number(wModifier.strength) / 100;
-                                    let fq = Math.max(0.1, Number(wModifier.freq) || 4);
-                                    
-                                    let cdx = nx - 0.5, cdy = ny - 0.5;
-                                    let cdist = Math.sqrt(cdx*cdx + cdy*cdy);
+                            // --- GLOBAL TRANSFORMATION & WARPING ---
+                            if (isGlobalWarpFirst) {
+                                // 1. Global Warps First
+                                if (hasGlobalWarps) {
+                                    for (let wIdx = 0; wIdx < state.global.warps.length; wIdx++) {
+                                        let wModifier = state.global.warps[wIdx];
+                                        if (wModifier.type === 'none' || wModifier.visible === false) continue;
+                                        let st = Number(wModifier.strength) / 100;
+                                        let fq = Math.max(0.1, Number(wModifier.freq) || 4);
+                                        let cdx = nx - 0.5, cdy = ny - 0.5;
+                                        let cdist = Math.sqrt(cdx*cdx + cdy*cdy);
 
-                                    if (wModifier.type === 'displacement') { 
-                                        let mode = wModifier.dispMode || 'height_gradient';
-                                        if (mode === 'vector_field') {
-                                            let ox = NoiseCache.get(nx * fq * 10 + 13.5, ny * fq * 10 + 27.1) - 0.5;
-                                            let oy = NoiseCache.get(nx * fq * 10 + 71.3, ny * fq * 10 + 83.9) - 0.5;
-                                            let dispFactor = st * 0.05;
-                                            nx += ox * dispFactor;
-                                            ny += oy * dispFactor;
-                                        } else if (mode === 'directional') {
-                                            let h = (NoiseCache.get(nx * fq * 10, ny * fq * 10) + 0.5 * NoiseCache.get(nx * fq * 20 + 31.7, ny * fq * 20 + 53.1)) / 1.5 - 0.5;
-                                            let ang = ((wModifier.angle || 0) * Math.PI) / 180;
-                                            let dispFactor = h * st * 0.08;
-                                            nx += Math.cos(ang) * dispFactor;
-                                            ny += Math.sin(ang) * dispFactor;
-                                        } else if (mode === 'radial') {
-                                            let rcdx = nx - 0.5, rcdy = ny - 0.5;
-                                            let rdist = Math.sqrt(rcdx * rcdx + rcdy * rcdy) || 0.001;
-                                            let h = (NoiseCache.get(nx * fq * 10, ny * fq * 10) + 0.5 * NoiseCache.get(nx * fq * 20 + 31.7, ny * fq * 20 + 53.1)) / 1.5 - 0.5;
-                                            let dispFactor = h * st * 0.08;
-                                            nx += (rcdx / rdist) * dispFactor;
-                                            ny += (rcdy / rdist) * dispFactor;
-                                        } else {
-                                            let eps = 0.005;
-                                            let px = nx * fq * 10, py = ny * fq * 10;
-                                            let pEps = eps * fq * 10;
-                                            
-                                            let hR = NoiseCache.get(px + pEps, py);
-                                            let hL = NoiseCache.get(px - pEps, py);
-                                            let hU = NoiseCache.get(px, py + pEps);
-                                            let hD = NoiseCache.get(px, py - pEps);
-
-                                            let gradX = (hR - hL) / (2 * eps);
-                                            let gradY = (hU - hD) / (2 * eps);
-
-                                            let dispFactor = st * 0.008;
-                                            nx += gradX * dispFactor;
-                                            ny += gradY * dispFactor;
+                                        if (wModifier.type === 'displacement') { 
+                                            let mode = wModifier.dispMode || 'height_gradient';
+                                            if (mode === 'vector_field') {
+                                                let ox = NoiseCache.get(nx * fq * 10 + 13.5, ny * fq * 10 + 27.1) - 0.5;
+                                                let oy = NoiseCache.get(nx * fq * 10 + 71.3, ny * fq * 10 + 83.9) - 0.5;
+                                                let dispFactor = st * 0.05;
+                                                nx += ox * dispFactor;
+                                                ny += oy * dispFactor;
+                                            } else if (mode === 'directional') {
+                                                let h = (NoiseCache.get(nx * fq * 10, ny * fq * 10) + 0.5 * NoiseCache.get(nx * fq * 20 + 31.7, ny * fq * 20 + 53.1)) / 1.5 - 0.5;
+                                                let ang = ((wModifier.angle || 0) * Math.PI) / 180;
+                                                let dispFactor = h * st * 0.08;
+                                                nx += Math.cos(ang) * dispFactor;
+                                                ny += Math.sin(ang) * dispFactor;
+                                            } else if (mode === 'radial') {
+                                                let rcdx = nx - 0.5, rcdy = ny - 0.5;
+                                                let rdist = Math.sqrt(rcdx * rcdx + rcdy * rcdy) || 0.001;
+                                                let h = (NoiseCache.get(nx * fq * 10, ny * fq * 10) + 0.5 * NoiseCache.get(nx * fq * 20 + 31.7, ny * fq * 20 + 53.1)) / 1.5 - 0.5;
+                                                let dispFactor = h * st * 0.08;
+                                                nx += (rcdx / rdist) * dispFactor;
+                                                ny += (rcdy / rdist) * dispFactor;
+                                            } else {
+                                                let eps = 0.005;
+                                                let px = nx * fq * 10, py = ny * fq * 10;
+                                                let pEps = eps * fq * 10;
+                                                let hR = NoiseCache.get(px + pEps, py);
+                                                let hL = NoiseCache.get(px - pEps, py);
+                                                let hU = NoiseCache.get(px, py + pEps);
+                                                let hD = NoiseCache.get(px, py - pEps);
+                                                let gradX = (hR - hL) / (2 * eps);
+                                                let gradY = (hU - hD) / (2 * eps);
+                                                let dispFactor = st * 0.008;
+                                                nx += gradX * dispFactor;
+                                                ny += gradY * dispFactor;
+                                            }
                                         }
-                                    }
-                                    else if (wModifier.type === 'vortex') { 
-                                        let a = cdist * st * 15; 
-                                        nx = 0.5 + cdx*Math.cos(a) - cdy*Math.sin(a); 
-                                        ny = 0.5 + cdx*Math.sin(a) + cdy*Math.cos(a); 
-                                    }
-                                    else if (wModifier.type === 'twirl') { 
-                                        let falloff = Math.max(0, 1 - (cdist / (fq * 0.25))); 
-                                        let a = falloff * st * 10;
-                                        nx = 0.5 + cdx*Math.cos(a) - cdy*Math.sin(a);
-                                        ny = 0.5 + cdx*Math.sin(a) + cdy*Math.cos(a);
-                                    }
-                                    else if (wModifier.type === 'sine') { 
-                                        const waveX = Math.sin(ny * fq * Math.PI) * st * 0.1;
-                                        const waveY = Math.cos(nx * fq * Math.PI) * st * 0.1;
-                                        nx += waveX; ny += waveY;
-                                    }
-                                    else if (wModifier.type === 'bulge') { 
-                                        let power = Math.exp(-cdist * fq);
-                                        let scale = 1 + power * st;
-                                        nx = 0.5 + cdx * scale;
-                                        ny = 0.5 + cdy * scale;
-                                    }
-                                    else if (wModifier.type === 'noise') { 
-                                        let noX = NoiseCache.get(nx*fq, ny*fq) - 0.5; 
-                                        let noY = NoiseCache.get(nx*fq + 100, ny*fq + 100) - 0.5; 
-                                        nx += noX * (st * 0.2); 
-                                        ny += noY * (st * 0.2); 
-                                    }
-                                    else if (wModifier.type === 'domain_warp') {
-                                        let offX = (NoiseCache.get(nx*fq, ny*fq) - 0.5) * st;
-                                        let offY = (NoiseCache.get(nx*fq + 100, ny*fq + 100) - 0.5) * st;
-                                        nx += offX; ny += offY;
-                                    }
-                                    else if (wModifier.type === 'distortion') {
-                                        nx += Math.sin(cdx * fq * Math.PI) * (st * 0.1);
-                                        ny += Math.cos(cdy * fq * Math.PI) * (st * 0.1);
-                                    }
-                                    else if (wModifier.type === 'polar') {
-                                        let r = cdist * fq;
-                                        let theta = Math.atan2(cdy, cdx) / (Math.PI * 2);
-                                        nx = 0.5 + r * Math.cos(theta * Math.PI * 2) * st;
-                                        ny = 0.5 + r * Math.sin(theta * Math.PI * 2) * st;
-                                    }
-                                    else if (wModifier.type === 'point_deformer') {
-                                        if (wModifier.points && wModifier.points.length > 0) {
-                                            let pRes = CanvasDeformerManager.transformPointArray(nx * w, ny * h, wModifier.points, w, h);
-                                            nx = pRes.x / w;
-                                            ny = pRes.y / h;
+                                        else if (wModifier.type === 'vortex') { 
+                                            let a = cdist * st * 15; 
+                                            nx = 0.5 + cdx*Math.cos(a) - cdy*Math.sin(a); 
+                                            ny = 0.5 + cdx*Math.sin(a) + cdy*Math.cos(a); 
+                                        }
+                                        else if (wModifier.type === 'twirl') { 
+                                            let falloff = Math.max(0, 1 - (cdist / (fq * 0.25))); 
+                                            let a = falloff * st * 10;
+                                            nx = 0.5 + cdx*Math.cos(a) - cdy*Math.sin(a);
+                                            ny = 0.5 + cdx*Math.sin(a) + cdy*Math.cos(a);
+                                        }
+                                        else if (wModifier.type === 'sine') { 
+                                            const waveX = Math.sin(ny * fq * Math.PI) * st * 0.1;
+                                            const waveY = Math.cos(nx * fq * Math.PI) * st * 0.1;
+                                            nx += waveX; ny += waveY;
+                                        }
+                                        else if (wModifier.type === 'bulge') { 
+                                            let power = Math.exp(-cdist * fq);
+                                            let scale = 1 + power * st;
+                                            nx = 0.5 + cdx * scale;
+                                            ny = 0.5 + cdy * scale;
+                                        }
+                                        else if (wModifier.type === 'noise') { 
+                                            let noX = NoiseCache.get(nx*fq, ny*fq) - 0.5; 
+                                            let noY = NoiseCache.get(nx*fq + 100, ny*fq + 100) - 0.5; 
+                                            nx += noX * (st * 0.2); 
+                                            ny += noY * (st * 0.2); 
+                                        }
+                                        else if (wModifier.type === 'domain_warp') {
+                                            let offX = (NoiseCache.get(nx*fq, ny*fq) - 0.5) * st;
+                                            let offY = (NoiseCache.get(nx*fq + 100, ny*fq + 100) - 0.5) * st;
+                                            nx += offX; ny += offY;
+                                        }
+                                        else if (wModifier.type === 'distortion') {
+                                            nx += Math.sin(cdx * fq * Math.PI) * (st * 0.1);
+                                            ny += Math.cos(cdy * fq * Math.PI) * (st * 0.1);
+                                        }
+                                        else if (wModifier.type === 'polar') {
+                                            let r = cdist * fq;
+                                            let theta = Math.atan2(cdy, cdx) / (Math.PI * 2);
+                                            nx = 0.5 + r * Math.cos(theta * Math.PI * 2) * st;
+                                            ny = 0.5 + r * Math.sin(theta * Math.PI * 2) * st;
+                                        }
+                                        else if (wModifier.type === 'point_deformer') {
+                                            if (wModifier.points && wModifier.points.length > 0) {
+                                                let pRes = CanvasDeformerManager.transformPointArray(nx * w, ny * h, wModifier.points, w, h);
+                                                nx = pRes.x / w;
+                                                ny = pRes.y / h;
+                                            }
                                         }
                                     }
                                 }
-                            }
-                            
-                            nx -= 0.5; ny -= 0.5;
-                            nx /= lScale; ny /= lScale;
-
-                            if(p.angle) { 
-                                let r = -p.angle * Math.PI / 180;
-                                let rnx = nx * Math.cos(r) - ny * Math.sin(r); 
-                                let rny = nx * Math.sin(r) + ny * Math.cos(r); 
-                                nx = rnx; ny = rny;
-                            }
-
-                            if (p.perspectiveV || p.perspectiveH) {
-                                let pv = (p.perspectiveV || 0) / 200;
-                                let ph = (p.perspectiveH || 0) / 200;
-                                let pw = Math.max(0.1, 1 + nx * ph + ny * pv);
-                                nx /= pw;
-                                ny /= pw;
-                            }
-                            
-                            nx += 0.5; ny += 0.5;
-
-                            if(p.warps && p.warps.length > 0){
-                                for (let wIdx = 0; wIdx < p.warps.length; wIdx++) {
-                                    let wModifier = p.warps[wIdx];
-                                    if(wModifier.type === 'none' || wModifier.visible === false) continue;
-                                    let st = Number(wModifier.strength) / 100;
-                                    let fq = Math.max(0.1, Number(wModifier.freq) || 4);
-                                    
-                                    let cdx = nx - 0.5, cdy = ny - 0.5;
-                                    let cdist = Math.sqrt(cdx*cdx + cdy*cdy);
-
-                                    if (wModifier.type === 'displacement') { 
-                                        let mode = wModifier.dispMode || 'height_gradient';
-                                        if (mode === 'vector_field') {
-                                            let ox = NoiseCache.get(nx * fq * 10 + 13.5, ny * fq * 10 + 27.1) - 0.5;
-                                            let oy = NoiseCache.get(nx * fq * 10 + 71.3, ny * fq * 10 + 83.9) - 0.5;
-                                            let dispFactor = st * 0.05;
-                                            nx += ox * dispFactor;
-                                            ny += oy * dispFactor;
-                                        } else if (mode === 'directional') {
-                                            let h = (NoiseCache.get(nx * fq * 10, ny * fq * 10) + 0.5 * NoiseCache.get(nx * fq * 20 + 31.7, ny * fq * 20 + 53.1)) / 1.5 - 0.5;
-                                            let ang = ((wModifier.angle || 0) * Math.PI) / 180;
-                                            let dispFactor = h * st * 0.08;
-                                            nx += Math.cos(ang) * dispFactor;
-                                            ny += Math.sin(ang) * dispFactor;
-                                        } else if (mode === 'radial') {
-                                            let rcdx = nx - 0.5, rcdy = ny - 0.5;
-                                            let rdist = Math.sqrt(rcdx * rcdx + rcdy * rcdy) || 0.001;
-                                            let h = (NoiseCache.get(nx * fq * 10, ny * fq * 10) + 0.5 * NoiseCache.get(nx * fq * 20 + 31.7, ny * fq * 20 + 53.1)) / 1.5 - 0.5;
-                                            let dispFactor = h * st * 0.08;
-                                            nx += (rcdx / rdist) * dispFactor;
-                                            ny += (rcdy / rdist) * dispFactor;
-                                        } else {
-                                            let eps = 0.005;
-                                            let px = nx * fq * 10, py = ny * fq * 10;
-                                            let pEps = eps * fq * 10;
-                                            
-                                            let hR = NoiseCache.get(px + pEps, py);
-                                            let hL = NoiseCache.get(px - pEps, py);
-                                            let hU = NoiseCache.get(px, py + pEps);
-                                            let hD = NoiseCache.get(px, py - pEps);
-
-                                            let gradX = (hR - hL) / (2 * eps);
-                                            let gradY = (hU - hD) / (2 * eps);
-
-                                            let dispFactor = st * 0.008;
-                                            nx += gradX * dispFactor;
-                                            ny += gradY * dispFactor;
+                                // 2. Global Transform
+                                if (hasGlobalTransform) {
+                                    nx -= 0.5; ny -= 0.5;
+                                    if (gZoom !== 1 || gScaleX !== 1 || gScaleY !== 1) {
+                                        nx /= (gZoom * gScaleX);
+                                        ny /= (gZoom * gScaleY);
+                                    }
+                                    if (gRot) {
+                                        let gr = -gRot * Math.PI / 180;
+                                        let grx = nx * Math.cos(gr) - ny * Math.sin(gr);
+                                        let gry = nx * Math.sin(gr) + ny * Math.cos(gr);
+                                        nx = grx; ny = gry;
+                                    }
+                                    if (gPerspV || gPerspH) {
+                                        let gpv = gPerspV / 200;
+                                        let gph = gPerspH / 200;
+                                        let gpw = Math.max(0.1, 1 + nx * gph + ny * gpv);
+                                        nx /= gpw;
+                                        ny /= gpw;
+                                    }
+                                    nx -= gOffX; ny -= gOffY;
+                                    if (gTileMode !== 'off') {
+                                        let rx = nx * gRepX + 0.5 + gSeamOffX, ry = ny * gRepY + 0.5 + gSeamOffY;
+                                        if (gTileMode === 'wrap' || gTileMode === 'blend') {
+                                            rx = wrapFold(rx); ry = wrapFold(ry);
+                                        } else if (gTileMode === 'mirror') {
+                                            rx = gMirX ? mirrorFold(rx) : wrapFold(rx);
+                                            ry = gMirY ? mirrorFold(ry) : wrapFold(ry);
                                         }
+                                        nx = rx - 0.5; ny = ry - 0.5;
                                     }
-                                    else if(wModifier.type==='vortex'){ 
-                                        let a = cdist * st * 15; 
-                                        nx = 0.5 + cdx*Math.cos(a) - cdy*Math.sin(a); 
-                                        ny = 0.5 + cdx*Math.sin(a) + cdy*Math.cos(a); 
+                                    nx += 0.5; ny += 0.5;
+                                }
+                            } else {
+                                // 1. Global Transform First
+                                if (hasGlobalTransform) {
+                                    nx -= 0.5; ny -= 0.5;
+                                    if (gZoom !== 1 || gScaleX !== 1 || gScaleY !== 1) {
+                                        nx /= (gZoom * gScaleX);
+                                        ny /= (gZoom * gScaleY);
                                     }
-                                    else if(wModifier.type==='twirl'){ 
-                                        let falloff = Math.max(0, 1 - (cdist / (fq * 0.25))); 
-                                        let a = falloff * st * 10;
-                                        nx = 0.5 + cdx*Math.cos(a) - cdy*Math.sin(a);
-                                        ny = 0.5 + cdx*Math.sin(a) + cdy*Math.cos(a);
+                                    if (gRot) {
+                                        let gr = -gRot * Math.PI / 180;
+                                        let grx = nx * Math.cos(gr) - ny * Math.sin(gr);
+                                        let gry = nx * Math.sin(gr) + ny * Math.cos(gr);
+                                        nx = grx; ny = gry;
                                     }
-                                    else if(wModifier.type==='sine'){ 
-                                        const waveX = Math.sin(ny * fq * Math.PI) * st * 0.1;
-                                        const waveY = Math.cos(nx * fq * Math.PI) * st * 0.1;
-                                        nx += waveX; ny += waveY;
+                                    if (gPerspV || gPerspH) {
+                                        let gpv = gPerspV / 200;
+                                        let gph = gPerspH / 200;
+                                        let gpw = Math.max(0.1, 1 + nx * gph + ny * gpv);
+                                        nx /= gpw;
+                                        ny /= gpw;
                                     }
-                                    else if(wModifier.type==='bulge'){ 
-                                        let power = Math.exp(-cdist * fq);
-                                        let scale = 1 + power * st;
-                                        nx = 0.5 + cdx * scale;
-                                        ny = 0.5 + cdy * scale;
+                                    nx -= gOffX; ny -= gOffY;
+                                    if (gTileMode !== 'off') {
+                                        let rx = nx * gRepX + 0.5 + gSeamOffX, ry = ny * gRepY + 0.5 + gSeamOffY;
+                                        if (gTileMode === 'wrap' || gTileMode === 'blend') {
+                                            rx = wrapFold(rx); ry = wrapFold(ry);
+                                        } else if (gTileMode === 'mirror') {
+                                            rx = gMirX ? mirrorFold(rx) : wrapFold(rx);
+                                            ry = gMirY ? mirrorFold(ry) : wrapFold(ry);
+                                        }
+                                        nx = rx - 0.5; ny = ry - 0.5;
                                     }
-                                    else if(wModifier.type==='noise'){ 
-                                        let noX = NoiseCache.get(nx*fq, ny*fq) - 0.5; 
-                                        let noY = NoiseCache.get(nx*fq + 100, ny*fq + 100) - 0.5; 
-                                        nx += noX * (st * 0.2); 
-                                        ny += noY * (st * 0.2); 
-                                    }
-                                    else if(wModifier.type==='domain_warp'){
-                                        let offX = (NoiseCache.get(nx*fq, ny*fq) - 0.5) * st;
-                                        let offY = (NoiseCache.get(nx*fq + 100, ny*fq + 100) - 0.5) * st;
-                                        nx += offX; ny += offY;
-                                    }
-                                    else if(wModifier.type==='distortion'){
-                                        nx += Math.sin(cdx * fq * Math.PI) * (st * 0.1);
-                                        ny += Math.cos(cdy * fq * Math.PI) * (st * 0.1);
-                                    }
-                                    else if(wModifier.type==='polar'){
-                                        let r = cdist * fq;
-                                        let theta = Math.atan2(cdy, cdx) / (Math.PI * 2);
-                                        nx = 0.5 + r * Math.cos(theta * Math.PI * 2) * st;
-                                        ny = 0.5 + r * Math.sin(theta * Math.PI * 2) * st;
-                                    }
-                                    else if(wModifier.type==='point_deformer'){
-                                        if (wModifier.points && wModifier.points.length > 0) {
-                                            let pRes = CanvasDeformerManager.transformPointArray(nx * w, ny * h, wModifier.points, w, h);
-                                            nx = pRes.x / w;
-                                            ny = pRes.y / h;
+                                    nx += 0.5; ny += 0.5;
+                                }
+                                // 2. Global Warps Second
+                                if (hasGlobalWarps) {
+                                    for (let wIdx = 0; wIdx < state.global.warps.length; wIdx++) {
+                                        let wModifier = state.global.warps[wIdx];
+                                        if (wModifier.type === 'none' || wModifier.visible === false) continue;
+                                        let st = Number(wModifier.strength) / 100;
+                                        let fq = Math.max(0.1, Number(wModifier.freq) || 4);
+                                        let cdx = nx - 0.5, cdy = ny - 0.5;
+                                        let cdist = Math.sqrt(cdx*cdx + cdy*cdy);
+
+                                        if (wModifier.type === 'displacement') { 
+                                            let mode = wModifier.dispMode || 'height_gradient';
+                                            if (mode === 'vector_field') {
+                                                let ox = NoiseCache.get(nx * fq * 10 + 13.5, ny * fq * 10 + 27.1) - 0.5;
+                                                let oy = NoiseCache.get(nx * fq * 10 + 71.3, ny * fq * 10 + 83.9) - 0.5;
+                                                let dispFactor = st * 0.05;
+                                                nx += ox * dispFactor;
+                                                ny += oy * dispFactor;
+                                            } else if (mode === 'directional') {
+                                                let h = (NoiseCache.get(nx * fq * 10, ny * fq * 10) + 0.5 * NoiseCache.get(nx * fq * 20 + 31.7, ny * fq * 20 + 53.1)) / 1.5 - 0.5;
+                                                let ang = ((wModifier.angle || 0) * Math.PI) / 180;
+                                                let dispFactor = h * st * 0.08;
+                                                nx += Math.cos(ang) * dispFactor;
+                                                ny += Math.sin(ang) * dispFactor;
+                                            } else if (mode === 'radial') {
+                                                let rcdx = nx - 0.5, rcdy = ny - 0.5;
+                                                let rdist = Math.sqrt(rcdx * rcdx + rcdy * rcdy) || 0.001;
+                                                let h = (NoiseCache.get(nx * fq * 10, ny * fq * 10) + 0.5 * NoiseCache.get(nx * fq * 20 + 31.7, ny * fq * 20 + 53.1)) / 1.5 - 0.5;
+                                                let dispFactor = h * st * 0.08;
+                                                nx += (rcdx / rdist) * dispFactor;
+                                                ny += (rcdy / rdist) * dispFactor;
+                                            } else {
+                                                let eps = 0.005;
+                                                let px = nx * fq * 10, py = ny * fq * 10;
+                                                let pEps = eps * fq * 10;
+                                                let hR = NoiseCache.get(px + pEps, py);
+                                                let hL = NoiseCache.get(px - pEps, py);
+                                                let hU = NoiseCache.get(px, py + pEps);
+                                                let hD = NoiseCache.get(px, py - pEps);
+                                                let gradX = (hR - hL) / (2 * eps);
+                                                let gradY = (hU - hD) / (2 * eps);
+                                                let dispFactor = st * 0.008;
+                                                nx += gradX * dispFactor;
+                                                ny += gradY * dispFactor;
+                                            }
+                                        }
+                                        else if (wModifier.type === 'vortex') { 
+                                            let a = cdist * st * 15; 
+                                            nx = 0.5 + cdx*Math.cos(a) - cdy*Math.sin(a); 
+                                            ny = 0.5 + cdx*Math.sin(a) + cdy*Math.cos(a); 
+                                        }
+                                        else if (wModifier.type === 'twirl') { 
+                                            let falloff = Math.max(0, 1 - (cdist / (fq * 0.25))); 
+                                            let a = falloff * st * 10;
+                                            nx = 0.5 + cdx*Math.cos(a) - cdy*Math.sin(a);
+                                            ny = 0.5 + cdx*Math.sin(a) + cdy*Math.cos(a);
+                                        }
+                                        else if (wModifier.type === 'sine') { 
+                                            const waveX = Math.sin(ny * fq * Math.PI) * st * 0.1;
+                                            const waveY = Math.cos(nx * fq * Math.PI) * st * 0.1;
+                                            nx += waveX; ny += waveY;
+                                        }
+                                        else if (wModifier.type === 'bulge') { 
+                                            let power = Math.exp(-cdist * fq);
+                                            let scale = 1 + power * st;
+                                            nx = 0.5 + cdx * scale;
+                                            ny = 0.5 + cdy * scale;
+                                        }
+                                        else if (wModifier.type === 'noise') { 
+                                            let noX = NoiseCache.get(nx*fq, ny*fq) - 0.5; 
+                                            let noY = NoiseCache.get(nx*fq + 100, ny*fq + 100) - 0.5; 
+                                            nx += noX * (st * 0.2); 
+                                            ny += noY * (st * 0.2); 
+                                        }
+                                        else if (wModifier.type === 'domain_warp') {
+                                            let offX = (NoiseCache.get(nx*fq, ny*fq) - 0.5) * st;
+                                            let offY = (NoiseCache.get(nx*fq + 100, ny*fq + 100) - 0.5) * st;
+                                            nx += offX; ny += offY;
+                                        }
+                                        else if (wModifier.type === 'distortion') {
+                                            nx += Math.sin(cdx * fq * Math.PI) * (st * 0.1);
+                                            ny += Math.cos(cdy * fq * Math.PI) * (st * 0.1);
+                                        }
+                                        else if (wModifier.type === 'polar') {
+                                            let r = cdist * fq;
+                                            let theta = Math.atan2(cdy, cdx) / (Math.PI * 2);
+                                            nx = 0.5 + r * Math.cos(theta * Math.PI * 2) * st;
+                                            ny = 0.5 + r * Math.sin(theta * Math.PI * 2) * st;
+                                        }
+                                        else if (wModifier.type === 'point_deformer') {
+                                            if (wModifier.points && wModifier.points.length > 0) {
+                                                let pRes = CanvasDeformerManager.transformPointArray(nx * w, ny * h, wModifier.points, w, h);
+                                                nx = pRes.x / w;
+                                                ny = pRes.y / h;
+                                            }
                                         }
                                     }
                                 }
                             }
 
-                            let tx = nx + (p.offsetX||0) + (p.seed||0)*0.013, ty = ny + (p.offsetY||0) + (p.seed||0)*0.021;
+                            // --- LOCAL LAYER TRANSFORMATION & WARPING ---
+                            if (isLayerWarpFirst) {
+                                // 1. Local Warps First
+                                if (hasLayerWarps) {
+                                    for (let wIdx = 0; wIdx < p.warps.length; wIdx++) {
+                                        let wModifier = p.warps[wIdx];
+                                        if (wModifier.type === 'none' || wModifier.visible === false) continue;
+                                        let st = Number(wModifier.strength) / 100;
+                                        let fq = Math.max(0.1, Number(wModifier.freq) || 4);
+                                        let cdx = nx - 0.5, cdy = ny - 0.5;
+                                        let cdist = Math.sqrt(cdx*cdx + cdy*cdy);
+
+                                        if (wModifier.type === 'displacement') { 
+                                            let mode = wModifier.dispMode || 'height_gradient';
+                                            if (mode === 'vector_field') {
+                                                let ox = NoiseCache.get(nx * fq * 10 + 13.5, ny * fq * 10 + 27.1) - 0.5;
+                                                let oy = NoiseCache.get(nx * fq * 10 + 71.3, ny * fq * 10 + 83.9) - 0.5;
+                                                let dispFactor = st * 0.05;
+                                                nx += ox * dispFactor;
+                                                ny += oy * dispFactor;
+                                            } else if (mode === 'directional') {
+                                                let h = (NoiseCache.get(nx * fq * 10, ny * fq * 10) + 0.5 * NoiseCache.get(nx * fq * 20 + 31.7, ny * fq * 20 + 53.1)) / 1.5 - 0.5;
+                                                let ang = ((wModifier.angle || 0) * Math.PI) / 180;
+                                                let dispFactor = h * st * 0.08;
+                                                nx += Math.cos(ang) * dispFactor;
+                                                ny += Math.sin(ang) * dispFactor;
+                                            } else if (mode === 'radial') {
+                                                let rcdx = nx - 0.5, rcdy = ny - 0.5;
+                                                let rdist = Math.sqrt(rcdx * rcdx + rcdy * rcdy) || 0.001;
+                                                let h = (NoiseCache.get(nx * fq * 10, ny * fq * 10) + 0.5 * NoiseCache.get(nx * fq * 20 + 31.7, ny * fq * 20 + 53.1)) / 1.5 - 0.5;
+                                                let dispFactor = h * st * 0.08;
+                                                nx += (rcdx / rdist) * dispFactor;
+                                                ny += (rcdy / rdist) * dispFactor;
+                                            } else {
+                                                let eps = 0.005;
+                                                let px = nx * fq * 10, py = ny * fq * 10;
+                                                let pEps = eps * fq * 10;
+                                                let hR = NoiseCache.get(px + pEps, py);
+                                                let hL = NoiseCache.get(px - pEps, py);
+                                                let hU = NoiseCache.get(px, py + pEps);
+                                                let hD = NoiseCache.get(px, py - pEps);
+                                                let gradX = (hR - hL) / (2 * eps);
+                                                let gradY = (hU - hD) / (2 * eps);
+                                                let dispFactor = st * 0.008;
+                                                nx += gradX * dispFactor;
+                                                ny += gradY * dispFactor;
+                                            }
+                                        }
+                                        else if (wModifier.type === 'vortex') { 
+                                            let a = cdist * st * 15; 
+                                            nx = 0.5 + cdx*Math.cos(a) - cdy*Math.sin(a); 
+                                            ny = 0.5 + cdx*Math.sin(a) + cdy*Math.cos(a); 
+                                        }
+                                        else if (wModifier.type === 'twirl') { 
+                                            let falloff = Math.max(0, 1 - (cdist / (fq * 0.25))); 
+                                            let a = falloff * st * 10;
+                                            nx = 0.5 + cdx*Math.cos(a) - cdy*Math.sin(a);
+                                            ny = 0.5 + cdx*Math.sin(a) + cdy*Math.cos(a);
+                                        }
+                                        else if (wModifier.type === 'sine') { 
+                                            const waveX = Math.sin(ny * fq * Math.PI) * st * 0.1;
+                                            const waveY = Math.cos(nx * fq * Math.PI) * st * 0.1;
+                                            nx += waveX; ny += waveY;
+                                        }
+                                        else if (wModifier.type === 'bulge') { 
+                                            let power = Math.exp(-cdist * fq);
+                                            let scale = 1 + power * st;
+                                            nx = 0.5 + cdx * scale;
+                                            ny = 0.5 + cdy * scale;
+                                        }
+                                        else if (wModifier.type === 'noise') { 
+                                            let noX = NoiseCache.get(nx*fq, ny*fq) - 0.5; 
+                                            let noY = NoiseCache.get(nx*fq + 100, ny*fq + 100) - 0.5; 
+                                            nx += noX * (st * 0.2); 
+                                            ny += noY * (st * 0.2); 
+                                        }
+                                        else if (wModifier.type === 'domain_warp') {
+                                            let offX = (NoiseCache.get(nx*fq, ny*fq) - 0.5) * st;
+                                            let offY = (NoiseCache.get(nx*fq + 100, ny*fq + 100) - 0.5) * st;
+                                            nx += offX; ny += offY;
+                                        }
+                                        else if (wModifier.type === 'distortion') {
+                                            nx += Math.sin(cdx * fq * Math.PI) * (st * 0.1);
+                                            ny += Math.cos(cdy * fq * Math.PI) * (st * 0.1);
+                                        }
+                                        else if (wModifier.type === 'polar') {
+                                            let r = cdist * fq;
+                                            let theta = Math.atan2(cdy, cdx) / (Math.PI * 2);
+                                            nx = 0.5 + r * Math.cos(theta * Math.PI * 2) * st;
+                                            ny = 0.5 + r * Math.sin(theta * Math.PI * 2) * st;
+                                        }
+                                        else if (wModifier.type === 'point_deformer') {
+                                            if (wModifier.points && wModifier.points.length > 0) {
+                                                let pRes = CanvasDeformerManager.transformPointArray(nx * w, ny * h, wModifier.points, w, h);
+                                                nx = pRes.x / w;
+                                                ny = pRes.y / h;
+                                            }
+                                        }
+                                    }
+                                }
+                                // 2. Local Layer Transform
+                                if (hasLayerTransform) {
+                                    nx -= 0.5; ny -= 0.5;
+                                    nx /= lScale; ny /= lScale;
+                                    if(p.angle) { 
+                                        let r = -p.angle * Math.PI / 180;
+                                        let rnx = nx * Math.cos(r) - ny * Math.sin(r); 
+                                        let rny = nx * Math.sin(r) + ny * Math.cos(r); 
+                                        nx = rnx; ny = rny;
+                                    }
+                                    if (p.perspectiveV || p.perspectiveH) {
+                                        let pv = (p.perspectiveV || 0) / 200;
+                                        let ph = (p.perspectiveH || 0) / 200;
+                                        let pw = Math.max(0.1, 1 + nx * ph + ny * pv);
+                                        nx /= pw;
+                                        ny /= pw;
+                                    }
+                                    nx -= (p.offsetX || 0);
+                                    ny -= (p.offsetY || 0);
+                                    nx += 0.5; ny += 0.5;
+                                }
+                            } else {
+                                // 1. Local Layer Transform First
+                                if (hasLayerTransform) {
+                                    nx -= 0.5; ny -= 0.5;
+                                    nx /= lScale; ny /= lScale;
+                                    if(p.angle) { 
+                                        let r = -p.angle * Math.PI / 180;
+                                        let rnx = nx * Math.cos(r) - ny * Math.sin(r); 
+                                        let rny = nx * Math.sin(r) + ny * Math.cos(r); 
+                                        nx = rnx; ny = rny;
+                                    }
+                                    if (p.perspectiveV || p.perspectiveH) {
+                                        let pv = (p.perspectiveV || 0) / 200;
+                                        let ph = (p.perspectiveH || 0) / 200;
+                                        let pw = Math.max(0.1, 1 + nx * ph + ny * pv);
+                                        nx /= pw;
+                                        ny /= pw;
+                                    }
+                                    nx -= (p.offsetX || 0);
+                                    ny -= (p.offsetY || 0);
+                                    nx += 0.5; ny += 0.5;
+                                }
+                                // 2. Local Warps Second
+                                if (hasLayerWarps) {
+                                    for (let wIdx = 0; wIdx < p.warps.length; wIdx++) {
+                                        let wModifier = p.warps[wIdx];
+                                        if (wModifier.type === 'none' || wModifier.visible === false) continue;
+                                        let st = Number(wModifier.strength) / 100;
+                                        let fq = Math.max(0.1, Number(wModifier.freq) || 4);
+                                        let cdx = nx - 0.5, cdy = ny - 0.5;
+                                        let cdist = Math.sqrt(cdx*cdx + cdy*cdy);
+
+                                        if (wModifier.type === 'displacement') { 
+                                            let mode = wModifier.dispMode || 'height_gradient';
+                                            if (mode === 'vector_field') {
+                                                let ox = NoiseCache.get(nx * fq * 10 + 13.5, ny * fq * 10 + 27.1) - 0.5;
+                                                let oy = NoiseCache.get(nx * fq * 10 + 71.3, ny * fq * 10 + 83.9) - 0.5;
+                                                let dispFactor = st * 0.05;
+                                                nx += ox * dispFactor;
+                                                ny += oy * dispFactor;
+                                            } else if (mode === 'directional') {
+                                                let h = (NoiseCache.get(nx * fq * 10, ny * fq * 10) + 0.5 * NoiseCache.get(nx * fq * 20 + 31.7, ny * fq * 20 + 53.1)) / 1.5 - 0.5;
+                                                let ang = ((wModifier.angle || 0) * Math.PI) / 180;
+                                                let dispFactor = h * st * 0.08;
+                                                nx += Math.cos(ang) * dispFactor;
+                                                ny += Math.sin(ang) * dispFactor;
+                                            } else if (mode === 'radial') {
+                                                let rcdx = nx - 0.5, rcdy = ny - 0.5;
+                                                let rdist = Math.sqrt(rcdx * rcdx + rcdy * rcdy) || 0.001;
+                                                let h = (NoiseCache.get(nx * fq * 10, ny * fq * 10) + 0.5 * NoiseCache.get(nx * fq * 20 + 31.7, ny * fq * 20 + 53.1)) / 1.5 - 0.5;
+                                                let dispFactor = h * st * 0.08;
+                                                nx += (rcdx / rdist) * dispFactor;
+                                                ny += (rcdy / rdist) * dispFactor;
+                                            } else {
+                                                let eps = 0.005;
+                                                let px = nx * fq * 10, py = ny * fq * 10;
+                                                let pEps = eps * fq * 10;
+                                                let hR = NoiseCache.get(px + pEps, py);
+                                                let hL = NoiseCache.get(px - pEps, py);
+                                                let hU = NoiseCache.get(px, py + pEps);
+                                                let hD = NoiseCache.get(px, py - pEps);
+                                                let gradX = (hR - hL) / (2 * eps);
+                                                let gradY = (hU - hD) / (2 * eps);
+                                                let dispFactor = st * 0.008;
+                                                nx += gradX * dispFactor;
+                                                ny += gradY * dispFactor;
+                                            }
+                                        }
+                                        else if (wModifier.type === 'vortex') { 
+                                            let a = cdist * st * 15; 
+                                            nx = 0.5 + cdx*Math.cos(a) - cdy*Math.sin(a); 
+                                            ny = 0.5 + cdx*Math.sin(a) + cdy*Math.cos(a); 
+                                        }
+                                        else if (wModifier.type === 'twirl') { 
+                                            let falloff = Math.max(0, 1 - (cdist / (fq * 0.25))); 
+                                            let a = falloff * st * 10;
+                                            nx = 0.5 + cdx*Math.cos(a) - cdy*Math.sin(a);
+                                            ny = 0.5 + cdx*Math.sin(a) + cdy*Math.cos(a);
+                                        }
+                                        else if (wModifier.type === 'sine') { 
+                                            const waveX = Math.sin(ny * fq * Math.PI) * st * 0.1;
+                                            const waveY = Math.cos(nx * fq * Math.PI) * st * 0.1;
+                                            nx += waveX; ny += waveY;
+                                        }
+                                        else if (wModifier.type === 'bulge') { 
+                                            let power = Math.exp(-cdist * fq);
+                                            let scale = 1 + power * st;
+                                            nx = 0.5 + cdx * scale;
+                                            ny = 0.5 + cdy * scale;
+                                        }
+                                        else if (wModifier.type === 'noise') { 
+                                            let noX = NoiseCache.get(nx*fq, ny*fq) - 0.5; 
+                                            let noY = NoiseCache.get(nx*fq + 100, ny*fq + 100) - 0.5; 
+                                            nx += noX * (st * 0.2); 
+                                            ny += noY * (st * 0.2); 
+                                        }
+                                        else if (wModifier.type === 'domain_warp') {
+                                            let offX = (NoiseCache.get(nx*fq, ny*fq) - 0.5) * st;
+                                            let offY = (NoiseCache.get(nx*fq + 100, ny*fq + 100) - 0.5) * st;
+                                            nx += offX; ny += offY;
+                                        }
+                                        else if (wModifier.type === 'distortion') {
+                                            nx += Math.sin(cdx * fq * Math.PI) * (st * 0.1);
+                                            ny += Math.cos(cdy * fq * Math.PI) * (st * 0.1);
+                                        }
+                                        else if (wModifier.type === 'polar') {
+                                            let r = cdist * fq;
+                                            let theta = Math.atan2(cdy, cdx) / (Math.PI * 2);
+                                            nx = 0.5 + r * Math.cos(theta * Math.PI * 2) * st;
+                                            ny = 0.5 + r * Math.sin(theta * Math.PI * 2) * st;
+                                        }
+                                        else if (wModifier.type === 'point_deformer') {
+                                            if (wModifier.points && wModifier.points.length > 0) {
+                                                let pRes = CanvasDeformerManager.transformPointArray(nx * w, ny * h, wModifier.points, w, h);
+                                                nx = pRes.x / w;
+                                                ny = pRes.y / h;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            let tx = nx + (p.seed||0)*0.013, ty = ny + (p.seed||0)*0.021;
                             let sx=p.scaleX||10, sy=p.scaleY||10;
 
                             if (lay.generatorType === 'paint') {
@@ -4074,7 +4334,7 @@
         // самі, щойно з'являються на екрані для свого типу генератора.
         function freshLayerParams() {
             return { seamless:false, scale:10, scaleX:10, scaleY:10, lockScale:true, layerScale:1, contrast:1, brightness:1, angle:0, perspectiveV:0, perspectiveH:0, blur:0, blurType:'gaussian', blurClampEdge:false,
-                offsetX:0, offsetY:0, invert:false, warps:[],
+                offsetX:0, offsetY:0, invert:false, warps:[], warpOrder: 'transform_first',
                 useThreshold:false, thresholdVal:50, useLevels:false, levelMin:0, levelMax:100,
                 usePosterize:false, posterizeLevels:4, useFindEdges:false,
                 useBlendIf:false, blendIfChannel:'gray',
@@ -4103,7 +4363,7 @@
                 globalHueShift: 0, globalSaturation: 100, globalVibrance: 0,
                 globalColorTemp: 0, globalColorTint: 0,
                 globalColorOverlay: '#000000', globalColorOverlayOpacity: 0,
-                warps: [] };
+                warps: [], warpOrder: 'transform_first' };
         }
 
         function addLayer(){
@@ -5009,6 +5269,48 @@
             };
         };
 
+        window.updWarpOrder = function(val) {
+            let lay = state.layers.find(l => l.id === state.selectedLayerId);
+            if (!lay || !lay.params) return;
+            lay.params.warpOrder = val;
+            lay.isDirty = true;
+            invalidateCaches();
+            renderProps();
+            requestRender();
+            commitHistorySnapshot();
+        };
+
+        window.updGlobalWarpOrder = function(val) {
+            if (!state.global) state.global = freshGlobalSettings();
+            state.global.warpOrder = val;
+            invalidateCaches();
+            renderGlobal();
+            requestRender();
+            commitHistorySnapshot();
+        };
+
+        function renderWarpOrderToggle(currentVal, onChangeJS, isGlobal = false) {
+            let val = currentVal || 'transform_first';
+            let isTransformFirst = (val === 'transform_first');
+            return `
+                <div class="property-group" style="background: rgba(255,255,255,0.02); border: 1px solid var(--border-color, #27272a); border-radius: 8px; padding: 8px 10px; margin-bottom: 10px;">
+                    <div style="font-size:11px; font-weight:700; color:var(--primary-color, #3b82f6); margin-bottom:6px; display:flex; align-items:center; gap:6px;">
+                        <span>🔄 Порядок деформації (${isGlobal ? 'Глобальний' : 'Шар'})</span>
+                    </div>
+                    <div class="gen-grid" style="grid-template-columns:repeat(2,1fr); gap:6px;">
+                        <button type="button" onclick="${onChangeJS}('transform_first');" class="gen-btn ${isTransformFirst ? 'active' : ''}" style="font-size:10px; padding:6px 4px; text-align:center; height:auto; line-height:1.2;" title="Деформатор підпорядкований трансформації: деформується разом із кутом повороту, масштабом та перспективою">
+                            <div style="font-weight:700;">⛓️ В рамках</div>
+                            <div style="font-size:8.5px; opacity:0.8; margin-top:2px;">Підпорядковано</div>
+                        </button>
+                        <button type="button" onclick="${onChangeJS}('warp_first');" class="gen-btn ${!isTransformFirst ? 'active' : ''}" style="font-size:10px; padding:6px 4px; text-align:center; height:auto; line-height:1.2;" title="Деформатор накладається незалежно поверх трансформації без спотворення вектора викривлення">
+                            <div style="font-weight:700;">🎯 Над ним</div>
+                            <div style="font-size:8.5px; opacity:0.8; margin-top:2px;">Незалежно</div>
+                        </button>
+                    </div>
+                </div>
+            `;
+        }
+
         function renderAccordionBlock(tab, id, title, icon, contentHTML) {
             let isExpanded = accordionConfig[tab].states[id] === true;
             return `
@@ -5258,6 +5560,7 @@
 
             // Block: transform
             layerBlockContents.transform = `
+                ${renderWarpOrderToggle(lp.warpOrder, "updWarpOrder", false)}
                 ${createSlider("Зсув X", "offsetX", -2, 2, 0.05, lp.offsetX, false, 0)}
                 ${createSlider("Зсув Y", "offsetY", -2, 2, 0.05, lp.offsetY, false, 0)}
                 <div class="property-group"><label class="property-label">Масштаб по осях <button type="button" class="layer-btn" title="${lp.lockScale?'Масштаб X/Y пов’язаний':'Масштаб X/Y незалежний'}" onclick="upd('lockScale',${!lp.lockScale}); renderProps();">${lp.lockScale?'🔒':'🔓'}</button></label></div>
@@ -5452,6 +5755,7 @@
             `;
 
             layerBlockContents.warps = `
+                ${renderWarpOrderToggle(lp.warpOrder, "updWarpOrder", false)}
                 <div class="property-group" style="margin-bottom:0;">
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
                         <label class="property-label" style="margin:0;">Деформації шару</label>
@@ -5492,6 +5796,7 @@
             let globalWarpsHTML = (g.warps || []).map((w, idx) => renderWarpCardHTML(w, idx, true)).join('');
 
             globalBlockContents.warps = `
+                ${renderWarpOrderToggle(g.warpOrder, "updGlobalWarpOrder", true)}
                 <div class="property-group" style="margin-bottom:0;">
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
                         <label class="property-label" style="margin:0;">Глобальні деформації</label>
@@ -5504,8 +5809,9 @@
             // Block: transform
             globalBlockContents.transform = `
                 <div class="property-group" style="margin-bottom:8px;">
-                    <button onclick="resetGlobalSettings()" class="btn btn-secondary" style="width:100%;" title="Скинути корекції, трансформацію і тайлінг до значень за замовчуванням">↺ Скинути глобальні налаштування</button>
+                    <button onclick="resetGlobalSettings()" class="btn btn-secondary" style="width:100%;" title="Скинути корекції, трансформацію і тайлінг до значений за замовчуванням">↺ Скинути глобальні налаштування</button>
                 </div>
+                ${renderWarpOrderToggle(g.warpOrder, "updGlobalWarpOrder", true)}
                 ${createSlider("Масштаб (Zoom)", "globalZoom", 0.1, 5, 0.05, g.globalZoom, true, 1)}
                 ${createSlider("Масштаб по X", "globalScaleX", 0.1, 10, 0.05, g.globalScaleX !== undefined ? g.globalScaleX : 1, true, 1)}
                 ${createSlider("Масштаб по Y", "globalScaleY", 0.1, 10, 0.05, g.globalScaleY !== undefined ? g.globalScaleY : 1, true, 1)}
