@@ -1527,6 +1527,22 @@
                             <option value="distortion" ${w.type==='distortion'?'selected':''}>Дісторсія</option>
                             <option value="polar" ${w.type==='polar'?'selected':''}>Полярні координати</option>
                         </select>
+                        ${w.type === 'displacement' ? `
+                        <div style="margin-bottom:6px;">
+                            <label class="property-label" style="font-size:10px; margin-bottom:2px;">Режим Displacement</label>
+                            <select class="form-control" onchange="${updateFn}(${idx}, 'dispMode', this.value)" style="margin-bottom:6px; font-size:11px;">
+                                <option value="height_gradient" ${(w.dispMode || 'height_gradient') === 'height_gradient' ? 'selected' : ''}>🏔️ Градієнт висоти (Slope / Поверхня)</option>
+                                <option value="vector_field" ${w.dispMode === 'vector_field' ? 'selected' : ''}>🌀 Векторний шум (X/Y Offset)</option>
+                                <option value="directional" ${w.dispMode === 'directional' ? 'selected' : ''}>➡️ Напрямковий (по куту)</option>
+                                <option value="radial" ${w.dispMode === 'radial' ? 'selected' : ''}>⭕ Радіальний</option>
+                            </select>
+                        </div>
+                        ${(w.dispMode === 'directional') ? `
+                        <div style="margin-bottom:4px;">
+                            <label class="property-label" style="font-size:10px; margin-bottom:2px;">Кут напрямку (°)</label>
+                            ${sliderRow(0, 360, 1, w.angle !== undefined ? w.angle : 0, 0, `${updateFn}(${idx}, 'angle', this.value)`)}
+                        </div>` : ''}
+                        ` : ''}
                         ${w.type !== 'none' ? `
                         <div style="margin-bottom:4px;">
                             <label class="property-label" style="font-size:10px; margin-bottom:2px;">Сила (Strength)</label>
@@ -3218,9 +3234,43 @@
                                     let cdist = Math.sqrt(cdx*cdx + cdy*cdy);
 
                                     if (wModifier.type === 'displacement') { 
-                                        let ox = NoiseCache.get(nx * fq, ny * fq) - 0.5;
-                                        let oy = NoiseCache.get(nx * fq + 37.13, ny * fq + 71.89) - 0.5;
-                                        nx += ox * st; ny += oy * st;
+                                        let mode = wModifier.dispMode || 'height_gradient';
+                                        if (mode === 'vector_field') {
+                                            let ox = NoiseCache.get(nx * fq * 10 + 13.5, ny * fq * 10 + 27.1) - 0.5;
+                                            let oy = NoiseCache.get(nx * fq * 10 + 71.3, ny * fq * 10 + 83.9) - 0.5;
+                                            let dispFactor = st * 0.05;
+                                            nx += ox * dispFactor;
+                                            ny += oy * dispFactor;
+                                        } else if (mode === 'directional') {
+                                            let h = (NoiseCache.get(nx * fq * 10, ny * fq * 10) + 0.5 * NoiseCache.get(nx * fq * 20 + 31.7, ny * fq * 20 + 53.1)) / 1.5 - 0.5;
+                                            let ang = ((wModifier.angle || 0) * Math.PI) / 180;
+                                            let dispFactor = h * st * 0.08;
+                                            nx += Math.cos(ang) * dispFactor;
+                                            ny += Math.sin(ang) * dispFactor;
+                                        } else if (mode === 'radial') {
+                                            let rcdx = nx - 0.5, rcdy = ny - 0.5;
+                                            let rdist = Math.sqrt(rcdx * rcdx + rcdy * rcdy) || 0.001;
+                                            let h = (NoiseCache.get(nx * fq * 10, ny * fq * 10) + 0.5 * NoiseCache.get(nx * fq * 20 + 31.7, ny * fq * 20 + 53.1)) / 1.5 - 0.5;
+                                            let dispFactor = h * st * 0.08;
+                                            nx += (rcdx / rdist) * dispFactor;
+                                            ny += (rcdy / rdist) * dispFactor;
+                                        } else {
+                                            let eps = 0.005;
+                                            let px = nx * fq * 10, py = ny * fq * 10;
+                                            let pEps = eps * fq * 10;
+                                            
+                                            let hR = NoiseCache.get(px + pEps, py);
+                                            let hL = NoiseCache.get(px - pEps, py);
+                                            let hU = NoiseCache.get(px, py + pEps);
+                                            let hD = NoiseCache.get(px, py - pEps);
+
+                                            let gradX = (hR - hL) / (2 * eps);
+                                            let gradY = (hU - hD) / (2 * eps);
+
+                                            let dispFactor = st * 0.008;
+                                            nx += gradX * dispFactor;
+                                            ny += gradY * dispFactor;
+                                        }
                                     }
                                     else if (wModifier.type === 'vortex') { 
                                         let a = cdist * st * 15; 
@@ -3306,9 +3356,43 @@
                                     let cdist = Math.sqrt(cdx*cdx + cdy*cdy);
 
                                     if (wModifier.type === 'displacement') { 
-                                        let ox = NoiseCache.get(nx * fq, ny * fq) - 0.5;
-                                        let oy = NoiseCache.get(nx * fq + 37.13, ny * fq + 71.89) - 0.5;
-                                        nx += ox * st; ny += oy * st;
+                                        let mode = wModifier.dispMode || 'height_gradient';
+                                        if (mode === 'vector_field') {
+                                            let ox = NoiseCache.get(nx * fq * 10 + 13.5, ny * fq * 10 + 27.1) - 0.5;
+                                            let oy = NoiseCache.get(nx * fq * 10 + 71.3, ny * fq * 10 + 83.9) - 0.5;
+                                            let dispFactor = st * 0.05;
+                                            nx += ox * dispFactor;
+                                            ny += oy * dispFactor;
+                                        } else if (mode === 'directional') {
+                                            let h = (NoiseCache.get(nx * fq * 10, ny * fq * 10) + 0.5 * NoiseCache.get(nx * fq * 20 + 31.7, ny * fq * 20 + 53.1)) / 1.5 - 0.5;
+                                            let ang = ((wModifier.angle || 0) * Math.PI) / 180;
+                                            let dispFactor = h * st * 0.08;
+                                            nx += Math.cos(ang) * dispFactor;
+                                            ny += Math.sin(ang) * dispFactor;
+                                        } else if (mode === 'radial') {
+                                            let rcdx = nx - 0.5, rcdy = ny - 0.5;
+                                            let rdist = Math.sqrt(rcdx * rcdx + rcdy * rcdy) || 0.001;
+                                            let h = (NoiseCache.get(nx * fq * 10, ny * fq * 10) + 0.5 * NoiseCache.get(nx * fq * 20 + 31.7, ny * fq * 20 + 53.1)) / 1.5 - 0.5;
+                                            let dispFactor = h * st * 0.08;
+                                            nx += (rcdx / rdist) * dispFactor;
+                                            ny += (rcdy / rdist) * dispFactor;
+                                        } else {
+                                            let eps = 0.005;
+                                            let px = nx * fq * 10, py = ny * fq * 10;
+                                            let pEps = eps * fq * 10;
+                                            
+                                            let hR = NoiseCache.get(px + pEps, py);
+                                            let hL = NoiseCache.get(px - pEps, py);
+                                            let hU = NoiseCache.get(px, py + pEps);
+                                            let hD = NoiseCache.get(px, py - pEps);
+
+                                            let gradX = (hR - hL) / (2 * eps);
+                                            let gradY = (hU - hD) / (2 * eps);
+
+                                            let dispFactor = st * 0.008;
+                                            nx += gradX * dispFactor;
+                                            ny += gradY * dispFactor;
+                                        }
                                     }
                                     else if(wModifier.type==='vortex'){ 
                                         let a = cdist * st * 15; 
@@ -4368,7 +4452,8 @@
             let lay = state.layers.find(l=>l.id===state.selectedLayerId);
             if (!lay || !lay.params || !lay.params.warps || !lay.params.warps[idx]) return;
             triggerInteraction();
-            lay.params.warps[idx][key] = (key==='type') ? val : parseFloat(val);
+            let isStrKey = (key === 'type' || key === 'dispMode');
+            lay.params.warps[idx][key] = isStrKey ? val : parseFloat(val);
             if (key === 'type' && val === 'point_deformer') {
                 if (!lay.params.warps[idx].points || lay.params.warps[idx].points.length === 0) {
                     lay.params.warps[idx].points = [{ id: 'pt_1', x: 256, y: 256, type: 'inflate', falloff: 'smooth', radius: 100, strength: 0.5, angle: 0 }];
@@ -4377,9 +4462,9 @@
                 if (lay.params.warps[idx].showHandles === undefined) lay.params.warps[idx].showHandles = true;
             }
             lay.isDirty = true;
-            if(key==='type') renderProps();
+            if (isStrKey) renderProps();
             if(!suppressRender) requestRender();
-            if (key === 'type') {
+            if (isStrKey) {
                 commitHistorySnapshot();
             } else {
                 scheduleHistorySnapshot();
@@ -4433,7 +4518,8 @@
         window.updateGlobalWarp = function(idx, key, val) {
             if (!state.global || !state.global.warps || !state.global.warps[idx]) return;
             triggerInteraction();
-            state.global.warps[idx][key] = (key === 'type') ? val : parseFloat(val);
+            let isStrKey = (key === 'type' || key === 'dispMode');
+            state.global.warps[idx][key] = isStrKey ? val : parseFloat(val);
             if (key === 'type' && val === 'point_deformer') {
                 if (!state.global.warps[idx].points || state.global.warps[idx].points.length === 0) {
                     state.global.warps[idx].points = [{ id: 'pt_1', x: 256, y: 256, type: 'inflate', falloff: 'smooth', radius: 100, strength: 0.5, angle: 0 }];
@@ -4442,9 +4528,9 @@
                 if (state.global.warps[idx].showHandles === undefined) state.global.warps[idx].showHandles = true;
             }
             invalidateCaches();
-            if (key === 'type') renderGlobal();
+            if (isStrKey) renderGlobal();
             if (!suppressRender) requestRender();
-            if (key === 'type') {
+            if (isStrKey) {
                 commitHistorySnapshot();
             } else {
                 scheduleHistorySnapshot();
