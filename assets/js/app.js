@@ -3123,32 +3123,6 @@
             let { maskTargetIndex, clippedByMasks } = computeMaskRelationships();
             let pendingRemaining = 0, pendingOp = 1, pendingBlendFn = Blend.normal;
 
-            // Check if displacement warp is used by any visible layer or globally
-            let hasDisplacement = false;
-            if (state.global.warps) {
-                for (let wIdx = 0; wIdx < state.global.warps.length; wIdx++) {
-                    if (state.global.warps[wIdx].type === 'displacement' && state.global.warps[wIdx].visible !== false) {
-                        hasDisplacement = true;
-                        break;
-                    }
-                }
-            }
-            if (!hasDisplacement) {
-                for (let i = 0; i < state.layers.length; i++) {
-                    let l = state.layers[i];
-                    if (l.visible && l.params.warps) {
-                        for (let wIdx = 0; wIdx < l.params.warps.length; wIdx++) {
-                            if (l.params.warps[wIdx].type === 'displacement' && l.params.warps[wIdx].visible !== false) {
-                                hasDisplacement = true;
-                                break;
-                            }
-                        }
-                    }
-                    if (hasDisplacement) break;
-                }
-            }
-
-            let dispBufferPopulated = false;
             let firstBlend = true;
 
             for(let lIdx=state.layers.length-1; lIdx>=0; lIdx--){
@@ -3158,14 +3132,6 @@
 
                 if (lay.generatorType === 'paint') {
                     ensureLayerPaintCanvas(lay);
-                }
-
-                if (hasDisplacement && !dispBufferPopulated) {
-                    for(let i=0; i<w*h; i++) {
-                        let y=Math.floor(i/w), x=i%w, nx=x/w, ny=y/h, sc=p.scale||4;
-                        dispBuffer[i] = lay.generatorType==='simplex'?(Simplex.noise(nx*sc,ny*sc)+1)/2:(Perlin.noise(nx*sc,ny*sc)+1)/2;
-                    }
-                    dispBufferPopulated = true;
                 }
 
                 // Per-layer Caching Mechanism (RGB)
@@ -3252,9 +3218,9 @@
                                     let cdist = Math.sqrt(cdx*cdx + cdy*cdy);
 
                                     if (wModifier.type === 'displacement') { 
-                                        let ox = dispBuffer[idx] - 0.5;
-                                        let oy = NoiseCache.get(nx*fq + 37, ny*fq + 71) - 0.5;
-                                        nx += ox*st; ny += oy*st;
+                                        let ox = NoiseCache.get(nx * fq, ny * fq) - 0.5;
+                                        let oy = NoiseCache.get(nx * fq + 37.13, ny * fq + 71.89) - 0.5;
+                                        nx += ox * st; ny += oy * st;
                                     }
                                     else if (wModifier.type === 'vortex') { 
                                         let a = cdist * st * 15; 
@@ -3339,10 +3305,10 @@
                                     let cdx = nx - 0.5, cdy = ny - 0.5;
                                     let cdist = Math.sqrt(cdx*cdx + cdy*cdy);
 
-                                    if(wModifier.type==='displacement'){ 
-                                        let ox = dispBuffer[idx]-0.5;
-                                        let oy = NoiseCache.get(nx*fq + 37, ny*fq + 71)-0.5;
-                                        nx += ox*st; ny += oy*st;
+                                    if (wModifier.type === 'displacement') { 
+                                        let ox = NoiseCache.get(nx * fq, ny * fq) - 0.5;
+                                        let oy = NoiseCache.get(nx * fq + 37.13, ny * fq + 71.89) - 0.5;
+                                        nx += ox * st; ny += oy * st;
                                     }
                                     else if(wModifier.type==='vortex'){ 
                                         let a = cdist * st * 15; 
