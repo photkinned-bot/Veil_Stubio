@@ -1911,12 +1911,19 @@
             ];
         }
 
-        function buildLayerColorLUT(p) {
+        function buildLayerColorLUT(p, generatorType) {
             const lutR = new Float32Array(256);
             const lutG = new Float32Array(256);
             const lutB = new Float32Array(256);
 
-            const mode = p.colorMode || 'grayscale';
+            let mode = p.colorMode || 'grayscale';
+            let isGradient = (generatorType === 'gradient' || p.gradType !== undefined || (p.stops && p.stops.length > 0));
+
+            // Automatically use color_ramp mode for gradient generator layers or layers with stops
+            if (isGradient && mode === 'grayscale') {
+                mode = 'color_ramp';
+            }
+
             const hueShift = p.hueShift || 0;
             const sat = p.saturation !== undefined ? p.saturation : 100;
             const vib = p.vibrance || 0;
@@ -1926,10 +1933,10 @@
             if (mode === 'color_ramp') {
                 if (p.palettePreset && p.palettePreset !== 'custom' && PALETTE_PRESETS[p.palettePreset]) {
                     sortedStops = PALETTE_PRESETS[p.palettePreset];
-                } else if (p.colorStops && p.colorStops.length > 0) {
-                    sortedStops = p.colorStops.slice().sort((a, b) => a.pos - b.pos);
                 } else if (p.stops && p.stops.length > 0) {
                     sortedStops = p.stops.slice().sort((a, b) => a.pos - b.pos);
+                } else if (p.colorStops && p.colorStops.length > 0) {
+                    sortedStops = p.colorStops.slice().sort((a, b) => a.pos - b.pos);
                 }
             }
 
@@ -3193,7 +3200,7 @@
                         activeCymaticsSources = Cymatics.getSources(p.sourceMode||'Corners', p.sourcesCount||4);
                     }
 
-                    const { lutR, lutG, lutB } = buildLayerColorLUT(p);
+                    const { lutR, lutG, lutB } = buildLayerColorLUT(p, lay.generatorType);
 
                     for(let y=0; y<h; y++){
                         const baseY = y/h;
