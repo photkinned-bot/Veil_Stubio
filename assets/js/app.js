@@ -2996,8 +2996,21 @@
                 case 'fbm': v=fbm(tx*sx,ty*sy,p.octaves||3,p.lacunarity??2,p.gain??0.5,'simplex'); break;
                 case 'ridged': v=ridged(tx*sx,ty*sy,p.octaves||3,p.lacunarity??2,p.gain??0.5); break;
                 case 'sine': v=(Math.sin(tx*sx*Math.PI*2+(p.phase||0))+Math.cos(ty*sy*Math.PI*2+(p.phase||0))+2)/4; break;
-                case 'radial': let dc=Math.sqrt((tx-(p.centerX??0.5))**2+(ty-(p.centerY??0.5))**2); v=(Math.sin(dc*sx*Math.PI*2)+1)/2; break;
-                case 'spiral': let ds=Math.sqrt((tx-(p.centerX??0.5))**2+(ty-(p.centerY??0.5))**2), as=Math.atan2(ty-(p.centerY??0.5),tx-(p.centerX??0.5)); v=(Math.sin(ds*sx*Math.PI*2+as*(p.octaves||3))+1)/2; break;
+                case 'radial': {
+                    let cx = p.centerX ?? 0.5, cy = p.centerY ?? 0.5;
+                    let rdx = (tx - cx) * sx, rdy = (ty - cy) * sy;
+                    let dc = Math.sqrt(rdx * rdx + rdy * rdy);
+                    v = (Math.sin(dc * Math.PI * 2) + 1) / 2;
+                    break;
+                }
+                case 'spiral': {
+                    let cx = p.centerX ?? 0.5, cy = p.centerY ?? 0.5;
+                    let sdx = (tx - cx) * sx, sdy = (ty - cy) * sy;
+                    let ds = Math.sqrt(sdx * sdx + sdy * sdy);
+                    let as = Math.atan2(sdy, sdx);
+                    v = (Math.sin(ds * Math.PI * 2 + as * (p.octaves || 3)) + 1) / 2;
+                    break;
+                }
                 case 'hexagon': let hc=Math.cos(tx*sx*Math.PI*2)+Math.cos((tx*sx*0.5+ty*sy*0.866025)*Math.PI*2)+Math.cos((tx*sx*0.5-ty*sy*0.866025)*Math.PI*2); v=(hc+1.5)/4.5; break;
                 case 'pixel_noise': v=Voronoi.hash(Math.floor(tx*sx), Math.floor(ty*sy)); break;
                 case 'white_noise': v=Voronoi.hash(Math.floor(tx*sx*256)+(p.seed||0)*31, Math.floor(ty*sy*256)+(p.seed||0)*17); break;
