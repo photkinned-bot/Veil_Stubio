@@ -561,35 +561,6 @@
             }
         }; Perlin.init(1337);
 
-        const NoiseCache = {
-            size: 1024,
-            mask: 1023,
-            data: null,
-            init() {
-                this.data = new Float32Array(this.size * this.size);
-                for(let y=0; y<this.size; y++) {
-                    let rowOffset = y << 10;
-                    for(let x=0; x<this.size; x++) {
-                        this.data[rowOffset | x] = Perlin.noise(x/20, y/20);
-                    }
-                }
-            },
-            get(x, y) {
-                let px = x < 0 ? ((x % 1024) + 1024) : (x >= 1024 ? x % 1024 : x);
-                let py = y < 0 ? ((y % 1024) + 1024) : (y >= 1024 ? y % 1024 : y);
-                let x0 = px | 0, y0 = py | 0;
-                let x1 = (x0 + 1) & 1023, y1 = (y0 + 1) & 1023;
-                let fx = px - x0, fy = py - y0;
-                let idx0 = y0 << 10;
-                let idx1 = y1 << 10;
-                let v00 = this.data[idx0 | x0];
-                let v10 = this.data[idx1 | x0];
-                let v01 = this.data[idx0 | x1];
-                let v11 = this.data[idx1 | x1];
-                return v00 + fy * (v10 - v00) + fx * (v01 - v00 + fy * (v11 - v10 - v01 + v00));
-            }
-        }; NoiseCache.init();
-
         const Simplex = {
             F2: 0.5*(Math.sqrt(3)-1), G2: (3-Math.sqrt(3))/6,
             grad: Perlin.grad,
@@ -603,6 +574,13 @@
                 let t1=0.5-x1*x1-y1*y1, n1=t1<0?0:t1*t1*t1*t1*this.grad(g1,x1,y1);
                 let t2=0.5-x2*x2-y2*y2, n2=t2<0?0:t2*t2*t2*t2*this.grad(g2,x2,y2);
                 return 70*(n0+n1+n2);
+            }
+        };
+
+        const NoiseCache = {
+            init() {},
+            get(x, y) {
+                return Simplex.noise(x / 20, y / 20);
             }
         };
 
@@ -3212,35 +3190,33 @@
                                         if (wModifier.type === 'displacement') { 
                                             let mode = wModifier.dispMode || 'height_gradient';
                                             if (mode === 'vector_field') {
-                                                let ox = NoiseCache.get(nx * fq * 10 + 13.5, ny * fq * 10 + 27.1) - 0.5;
-                                                let oy = NoiseCache.get(nx * fq * 10 + 71.3, ny * fq * 10 + 83.9) - 0.5;
-                                                let dispFactor = st * 0.05;
+                                                let ox = Simplex.noise(nx * fq * 0.5 + 13.5, ny * fq * 0.5 + 27.1);
+                                                let oy = Simplex.noise(nx * fq * 0.5 + 71.3, ny * fq * 0.5 + 83.9);
+                                                let dispFactor = st * 0.2;
                                                 nx += ox * dispFactor;
                                                 ny += oy * dispFactor;
                                             } else if (mode === 'directional') {
-                                                let h = (NoiseCache.get(nx * fq * 10, ny * fq * 10) + 0.5 * NoiseCache.get(nx * fq * 20 + 31.7, ny * fq * 20 + 53.1)) / 1.5 - 0.5;
+                                                let h = (Simplex.noise(nx * fq * 0.5, ny * fq * 0.5) + 0.5 * Simplex.noise(nx * fq + 31.7, ny * fq + 53.1)) / 1.5;
                                                 let ang = ((wModifier.angle || 0) * Math.PI) / 180;
-                                                let dispFactor = h * st * 0.08;
+                                                let dispFactor = h * st * 0.2;
                                                 nx += Math.cos(ang) * dispFactor;
                                                 ny += Math.sin(ang) * dispFactor;
                                             } else if (mode === 'radial') {
                                                 let rcdx = nx - 0.5, rcdy = ny - 0.5;
                                                 let rdist = Math.sqrt(rcdx * rcdx + rcdy * rcdy) || 0.001;
-                                                let h = (NoiseCache.get(nx * fq * 10, ny * fq * 10) + 0.5 * NoiseCache.get(nx * fq * 20 + 31.7, ny * fq * 20 + 53.1)) / 1.5 - 0.5;
-                                                let dispFactor = h * st * 0.08;
+                                                let h = (Simplex.noise(nx * fq * 0.5, ny * fq * 0.5) + 0.5 * Simplex.noise(nx * fq + 31.7, ny * fq + 53.1)) / 1.5;
+                                                let dispFactor = h * st * 0.2;
                                                 nx += (rcdx / rdist) * dispFactor;
                                                 ny += (rcdy / rdist) * dispFactor;
                                             } else {
-                                                let eps = 0.005;
-                                                let px = nx * fq * 10, py = ny * fq * 10;
-                                                let pEps = eps * fq * 10;
-                                                let hR = NoiseCache.get(px + pEps, py);
-                                                let hL = NoiseCache.get(px - pEps, py);
-                                                let hU = NoiseCache.get(px, py + pEps);
-                                                let hD = NoiseCache.get(px, py - pEps);
-                                                let gradX = (hR - hL) / (2 * eps);
-                                                let gradY = (hU - hD) / (2 * eps);
-                                                let dispFactor = st * 0.008;
+                                                let eps = 0.001;
+                                                let px = nx * fq * 0.5, py = ny * fq * 0.5;
+                                                let h0 = Simplex.noise(px, py) + 0.5 * Simplex.noise(px * 2 + 13.7, py * 2 + 27.3);
+                                                let hR = Simplex.noise(px + eps, py) + 0.5 * Simplex.noise((px + eps) * 2 + 13.7, py * 2 + 27.3);
+                                                let hU = Simplex.noise(px, py + eps) + 0.5 * Simplex.noise(px * 2 + 13.7, (py + eps) * 2 + 27.3);
+                                                let gradX = (hR - h0) / eps;
+                                                let gradY = (hU - h0) / eps;
+                                                let dispFactor = st * 0.02;
                                                 nx += gradX * dispFactor;
                                                 ny += gradY * dispFactor;
                                             }
@@ -3377,35 +3353,33 @@
                                         if (wModifier.type === 'displacement') { 
                                             let mode = wModifier.dispMode || 'height_gradient';
                                             if (mode === 'vector_field') {
-                                                let ox = NoiseCache.get(nx * fq * 10 + 13.5, ny * fq * 10 + 27.1) - 0.5;
-                                                let oy = NoiseCache.get(nx * fq * 10 + 71.3, ny * fq * 10 + 83.9) - 0.5;
-                                                let dispFactor = st * 0.05;
+                                                let ox = Simplex.noise(nx * fq * 0.5 + 13.5, ny * fq * 0.5 + 27.1);
+                                                let oy = Simplex.noise(nx * fq * 0.5 + 71.3, ny * fq * 0.5 + 83.9);
+                                                let dispFactor = st * 0.2;
                                                 nx += ox * dispFactor;
                                                 ny += oy * dispFactor;
                                             } else if (mode === 'directional') {
-                                                let h = (NoiseCache.get(nx * fq * 10, ny * fq * 10) + 0.5 * NoiseCache.get(nx * fq * 20 + 31.7, ny * fq * 20 + 53.1)) / 1.5 - 0.5;
+                                                let h = (Simplex.noise(nx * fq * 0.5, ny * fq * 0.5) + 0.5 * Simplex.noise(nx * fq + 31.7, ny * fq + 53.1)) / 1.5;
                                                 let ang = ((wModifier.angle || 0) * Math.PI) / 180;
-                                                let dispFactor = h * st * 0.08;
+                                                let dispFactor = h * st * 0.2;
                                                 nx += Math.cos(ang) * dispFactor;
                                                 ny += Math.sin(ang) * dispFactor;
                                             } else if (mode === 'radial') {
                                                 let rcdx = nx - 0.5, rcdy = ny - 0.5;
                                                 let rdist = Math.sqrt(rcdx * rcdx + rcdy * rcdy) || 0.001;
-                                                let h = (NoiseCache.get(nx * fq * 10, ny * fq * 10) + 0.5 * NoiseCache.get(nx * fq * 20 + 31.7, ny * fq * 20 + 53.1)) / 1.5 - 0.5;
-                                                let dispFactor = h * st * 0.08;
+                                                let h = (Simplex.noise(nx * fq * 0.5, ny * fq * 0.5) + 0.5 * Simplex.noise(nx * fq + 31.7, ny * fq + 53.1)) / 1.5;
+                                                let dispFactor = h * st * 0.2;
                                                 nx += (rcdx / rdist) * dispFactor;
                                                 ny += (rcdy / rdist) * dispFactor;
                                             } else {
-                                                let eps = 0.005;
-                                                let px = nx * fq * 10, py = ny * fq * 10;
-                                                let pEps = eps * fq * 10;
-                                                let hR = NoiseCache.get(px + pEps, py);
-                                                let hL = NoiseCache.get(px - pEps, py);
-                                                let hU = NoiseCache.get(px, py + pEps);
-                                                let hD = NoiseCache.get(px, py - pEps);
-                                                let gradX = (hR - hL) / (2 * eps);
-                                                let gradY = (hU - hD) / (2 * eps);
-                                                let dispFactor = st * 0.008;
+                                                let eps = 0.001;
+                                                let px = nx * fq * 0.5, py = ny * fq * 0.5;
+                                                let h0 = Simplex.noise(px, py) + 0.5 * Simplex.noise(px * 2 + 13.7, py * 2 + 27.3);
+                                                let hR = Simplex.noise(px + eps, py) + 0.5 * Simplex.noise((px + eps) * 2 + 13.7, py * 2 + 27.3);
+                                                let hU = Simplex.noise(px, py + eps) + 0.5 * Simplex.noise(px * 2 + 13.7, (py + eps) * 2 + 27.3);
+                                                let gradX = (hR - h0) / eps;
+                                                let gradY = (hU - h0) / eps;
+                                                let dispFactor = st * 0.02;
                                                 nx += gradX * dispFactor;
                                                 ny += gradY * dispFactor;
                                             }
@@ -3479,35 +3453,33 @@
                                         if (wModifier.type === 'displacement') { 
                                             let mode = wModifier.dispMode || 'height_gradient';
                                             if (mode === 'vector_field') {
-                                                let ox = NoiseCache.get(nx * fq * 10 + 13.5, ny * fq * 10 + 27.1) - 0.5;
-                                                let oy = NoiseCache.get(nx * fq * 10 + 71.3, ny * fq * 10 + 83.9) - 0.5;
-                                                let dispFactor = st * 0.05;
+                                                let ox = Simplex.noise(nx * fq * 0.5 + 13.5, ny * fq * 0.5 + 27.1);
+                                                let oy = Simplex.noise(nx * fq * 0.5 + 71.3, ny * fq * 0.5 + 83.9);
+                                                let dispFactor = st * 0.2;
                                                 nx += ox * dispFactor;
                                                 ny += oy * dispFactor;
                                             } else if (mode === 'directional') {
-                                                let h = (NoiseCache.get(nx * fq * 10, ny * fq * 10) + 0.5 * NoiseCache.get(nx * fq * 20 + 31.7, ny * fq * 20 + 53.1)) / 1.5 - 0.5;
+                                                let h = (Simplex.noise(nx * fq * 0.5, ny * fq * 0.5) + 0.5 * Simplex.noise(nx * fq + 31.7, ny * fq + 53.1)) / 1.5;
                                                 let ang = ((wModifier.angle || 0) * Math.PI) / 180;
-                                                let dispFactor = h * st * 0.08;
+                                                let dispFactor = h * st * 0.2;
                                                 nx += Math.cos(ang) * dispFactor;
                                                 ny += Math.sin(ang) * dispFactor;
                                             } else if (mode === 'radial') {
                                                 let rcdx = nx - 0.5, rcdy = ny - 0.5;
                                                 let rdist = Math.sqrt(rcdx * rcdx + rcdy * rcdy) || 0.001;
-                                                let h = (NoiseCache.get(nx * fq * 10, ny * fq * 10) + 0.5 * NoiseCache.get(nx * fq * 20 + 31.7, ny * fq * 20 + 53.1)) / 1.5 - 0.5;
-                                                let dispFactor = h * st * 0.08;
+                                                let h = (Simplex.noise(nx * fq * 0.5, ny * fq * 0.5) + 0.5 * Simplex.noise(nx * fq + 31.7, ny * fq + 53.1)) / 1.5;
+                                                let dispFactor = h * st * 0.2;
                                                 nx += (rcdx / rdist) * dispFactor;
                                                 ny += (rcdy / rdist) * dispFactor;
                                             } else {
-                                                let eps = 0.005;
-                                                let px = nx * fq * 10, py = ny * fq * 10;
-                                                let pEps = eps * fq * 10;
-                                                let hR = NoiseCache.get(px + pEps, py);
-                                                let hL = NoiseCache.get(px - pEps, py);
-                                                let hU = NoiseCache.get(px, py + pEps);
-                                                let hD = NoiseCache.get(px, py - pEps);
-                                                let gradX = (hR - hL) / (2 * eps);
-                                                let gradY = (hU - hD) / (2 * eps);
-                                                let dispFactor = st * 0.008;
+                                                let eps = 0.001;
+                                                let px = nx * fq * 0.5, py = ny * fq * 0.5;
+                                                let h0 = Simplex.noise(px, py) + 0.5 * Simplex.noise(px * 2 + 13.7, py * 2 + 27.3);
+                                                let hR = Simplex.noise(px + eps, py) + 0.5 * Simplex.noise((px + eps) * 2 + 13.7, py * 2 + 27.3);
+                                                let hU = Simplex.noise(px, py + eps) + 0.5 * Simplex.noise(px * 2 + 13.7, (py + eps) * 2 + 27.3);
+                                                let gradX = (hR - h0) / eps;
+                                                let gradY = (hU - h0) / eps;
+                                                let dispFactor = st * 0.02;
                                                 nx += gradX * dispFactor;
                                                 ny += gradY * dispFactor;
                                             }
@@ -3620,35 +3592,33 @@
                                         if (wModifier.type === 'displacement') { 
                                             let mode = wModifier.dispMode || 'height_gradient';
                                             if (mode === 'vector_field') {
-                                                let ox = NoiseCache.get(nx * fq * 10 + 13.5, ny * fq * 10 + 27.1) - 0.5;
-                                                let oy = NoiseCache.get(nx * fq * 10 + 71.3, ny * fq * 10 + 83.9) - 0.5;
-                                                let dispFactor = st * 0.05;
+                                                let ox = Simplex.noise(nx * fq * 0.5 + 13.5, ny * fq * 0.5 + 27.1);
+                                                let oy = Simplex.noise(nx * fq * 0.5 + 71.3, ny * fq * 0.5 + 83.9);
+                                                let dispFactor = st * 0.2;
                                                 nx += ox * dispFactor;
                                                 ny += oy * dispFactor;
                                             } else if (mode === 'directional') {
-                                                let h = (NoiseCache.get(nx * fq * 10, ny * fq * 10) + 0.5 * NoiseCache.get(nx * fq * 20 + 31.7, ny * fq * 20 + 53.1)) / 1.5 - 0.5;
+                                                let h = (Simplex.noise(nx * fq * 0.5, ny * fq * 0.5) + 0.5 * Simplex.noise(nx * fq + 31.7, ny * fq + 53.1)) / 1.5;
                                                 let ang = ((wModifier.angle || 0) * Math.PI) / 180;
-                                                let dispFactor = h * st * 0.08;
+                                                let dispFactor = h * st * 0.2;
                                                 nx += Math.cos(ang) * dispFactor;
                                                 ny += Math.sin(ang) * dispFactor;
                                             } else if (mode === 'radial') {
                                                 let rcdx = nx - 0.5, rcdy = ny - 0.5;
                                                 let rdist = Math.sqrt(rcdx * rcdx + rcdy * rcdy) || 0.001;
-                                                let h = (NoiseCache.get(nx * fq * 10, ny * fq * 10) + 0.5 * NoiseCache.get(nx * fq * 20 + 31.7, ny * fq * 20 + 53.1)) / 1.5 - 0.5;
-                                                let dispFactor = h * st * 0.08;
+                                                let h = (Simplex.noise(nx * fq * 0.5, ny * fq * 0.5) + 0.5 * Simplex.noise(nx * fq + 31.7, ny * fq + 53.1)) / 1.5;
+                                                let dispFactor = h * st * 0.2;
                                                 nx += (rcdx / rdist) * dispFactor;
                                                 ny += (rcdy / rdist) * dispFactor;
                                             } else {
-                                                let eps = 0.005;
-                                                let px = nx * fq * 10, py = ny * fq * 10;
-                                                let pEps = eps * fq * 10;
-                                                let hR = NoiseCache.get(px + pEps, py);
-                                                let hL = NoiseCache.get(px - pEps, py);
-                                                let hU = NoiseCache.get(px, py + pEps);
-                                                let hD = NoiseCache.get(px, py - pEps);
-                                                let gradX = (hR - hL) / (2 * eps);
-                                                let gradY = (hU - hD) / (2 * eps);
-                                                let dispFactor = st * 0.008;
+                                                let eps = 0.001;
+                                                let px = nx * fq * 0.5, py = ny * fq * 0.5;
+                                                let h0 = Simplex.noise(px, py) + 0.5 * Simplex.noise(px * 2 + 13.7, py * 2 + 27.3);
+                                                let hR = Simplex.noise(px + eps, py) + 0.5 * Simplex.noise((px + eps) * 2 + 13.7, py * 2 + 27.3);
+                                                let hU = Simplex.noise(px, py + eps) + 0.5 * Simplex.noise(px * 2 + 13.7, (py + eps) * 2 + 27.3);
+                                                let gradX = (hR - h0) / eps;
+                                                let gradY = (hU - h0) / eps;
+                                                let dispFactor = st * 0.02;
                                                 nx += gradX * dispFactor;
                                                 ny += gradY * dispFactor;
                                             }
