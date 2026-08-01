@@ -5420,7 +5420,7 @@
                     let rawIdx = lp.stops.indexOf(s);
                     return `
                     <div style="background: rgba(255,255,255,0.03); border: 1px solid var(--border-color, #27272a); border-radius: 6px; padding: 6px 8px; margin-bottom: 6px; display: grid; grid-template-columns: 28px 1fr 1fr 24px; gap: 6px; align-items: center;">
-                        <input type="color" value="${s.color || '#ffffff'}" oninput="updateGradientStop(${rawIdx}, 'color', this.value)" onchange="finishGradientStopEdit();" style="width:24px; height:24px; padding:0; border:none; background:none; cursor:pointer;" title="Колір точки">
+                        <input type="color" value="${s.color || '#ffffff'}" oninput="updateGradientStop(${rawIdx}, 'color', this.value)" onchange="scheduleHistorySnapshot();" style="width:24px; height:24px; padding:0; border:none; background:none; cursor:pointer;" title="Колір точки">
                         <div>
                             <div id="lbl_stop_pos_${rawIdx}" style="font-size:9px; color:var(--text-muted, #a1a1aa);">Поз: ${Math.round(s.pos * 100)}%</div>
                             <input type="range" min="0" max="1" step="0.01" value="${s.pos}" oninput="updateGradientStop(${rawIdx}, 'pos', this.value)" onchange="finishGradientStopEdit();" style="width:100%;">
@@ -5649,7 +5649,7 @@
                 colorStopsHTML = sortedLayerStops.map((s, sIdx) => {
                     return `
                     <div style="background: rgba(255,255,255,0.03); border: 1px solid var(--border-color, #27272a); border-radius: 6px; padding: 4px 6px; margin-bottom: 4px; display: grid; grid-template-columns: 24px 1fr 20px; gap: 6px; align-items: center;">
-                        <input type="color" value="${s.color || '#ffffff'}" oninput="updateColorRampStop(${sIdx}, 'color', this.value)" style="width:22px; height:22px; padding:0; border:none; background:none; cursor:pointer;" title="Колір точки">
+                        <input type="color" value="${s.color || '#ffffff'}" oninput="updateColorRampStop(${sIdx}, 'color', this.value)" onchange="scheduleHistorySnapshot();" style="width:22px; height:22px; padding:0; border:none; background:none; cursor:pointer;" title="Колір точки">
                         <div>
                             <div style="font-size:9px; color:var(--text-muted, #a1a1aa);">Позиція: ${Math.round(s.pos * 100)}%</div>
                             <input type="range" min="0" max="1" step="0.01" value="${s.pos}" oninput="updateColorRampStop(${sIdx}, 'pos', this.value)" style="width:100%;">
