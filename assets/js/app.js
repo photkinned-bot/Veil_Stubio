@@ -1839,11 +1839,200 @@
             global: freshGlobalSettings()
         };
 
+        // Color blending helpers for HSL modes (Hue, Saturation, Color, Luminosity)
+        function blendGetLum(r, g, b) {
+            return 0.299 * r + 0.587 * g + 0.114 * b;
+        }
+
+        function blendClipColor(r, g, b) {
+            let l = blendGetLum(r, g, b);
+            let n = Math.min(r, g, b);
+            let x = Math.max(r, g, b);
+            if (n < 0) {
+                let inv = 1 / (l - n + 1e-6);
+                r = l + ((r - l) * l) * inv;
+                g = l + ((g - l) * l) * inv;
+                b = l + ((b - l) * l) * inv;
+            }
+            if (x > 1) {
+                let inv = 1 / (x - l + 1e-6);
+                r = l + ((r - l) * (1 - l)) * inv;
+                g = l + ((g - l) * (1 - l)) * inv;
+                b = l + ((b - l) * (1 - l)) * inv;
+            }
+            return [
+                Math.max(0, Math.min(1, r)),
+                Math.max(0, Math.min(1, g)),
+                Math.max(0, Math.min(1, b))
+            ];
+        }
+
+        function blendSetLum(r, g, b, l) {
+            let d = l - blendGetLum(r, g, b);
+            return blendClipColor(r + d, g + d, b + d);
+        }
+
+        function blendGetSat(r, g, b) {
+            return Math.max(r, g, b) - Math.min(r, g, b);
+        }
+
+        function blendSetSat(r, g, b, s) {
+            let rgb = [r, g, b];
+            let minI = 0, midI = 1, maxI = 2;
+            if (rgb[0] > rgb[1]) { minI = 1; midI = 0; }
+            if (rgb[midI] > rgb[2]) {
+                midI = 2;
+                if (rgb[minI] > rgb[midI]) { minI = 2; midI = 0; }
+            }
+            if (rgb[0] >= rgb[1] && rgb[0] >= rgb[2]) maxI = 0;
+            else if (rgb[1] >= rgb[0] && rgb[1] >= rgb[2]) maxI = 1;
+            else maxI = 2;
+
+            if (rgb[0] <= rgb[1] && rgb[0] <= rgb[2]) minI = 0;
+            else if (rgb[1] <= rgb[0] && rgb[1] <= rgb[2]) minI = 1;
+            else minI = 2;
+
+            midI = 3 - minI - maxI;
+
+            let res = [0, 0, 0];
+            if (rgb[maxI] > rgb[minI]) {
+                res[midI] = ((rgb[midI] - rgb[minI]) * s) / (rgb[maxI] - rgb[minI]);
+                res[maxI] = s;
+            } else {
+                res[midI] = 0;
+                res[maxI] = 0;
+            }
+            res[minI] = 0;
+            return res;
+        }
+
+        function makeColorBlendFn(fn) {
+            fn.isColorMode = true;
+            return fn;
+        }
+
+        const BLEND_MODE_GROUPS = [
+            {
+                label: 'Звичайний (Normal)',
+                modes: [
+                    { id: 'normal', name: 'Normal (Звичайний)' }
+                ]
+            },
+            {
+                label: 'Затемнення (Darken)',
+                modes: [
+                    { id: 'darken', name: 'Darken (Затемнення)' },
+                    { id: 'multiply', name: 'Multiply (Множення)' },
+                    { id: 'colorburn', name: 'Color Burn (Затемнення кольору)' },
+                    { id: 'linearburn', name: 'Linear Burn (Лінійне затемнення)' },
+                    { id: 'darkercolor', name: 'Darker Color (Темніший колір)' }
+                ]
+            },
+            {
+                label: 'Освітлення (Lighten)',
+                modes: [
+                    { id: 'lighten', name: 'Lighten (Освітлення)' },
+                    { id: 'screen', name: 'Screen (Екран)' },
+                    { id: 'colordodge', name: 'Color Dodge (Освітлення кольору)' },
+                    { id: 'lineardodge', name: 'Linear Dodge / Add (Лінійне освітлення)' },
+                    { id: 'lightercolor', name: 'Lighter Color (Світліший колір)' }
+                ]
+            },
+            {
+                label: 'Контраст (Contrast)',
+                modes: [
+                    { id: 'overlay', name: 'Overlay (Перекриття)' },
+                    { id: 'softlight', name: 'Soft Light (М\'яке світло)' },
+                    { id: 'hardlight', name: 'Hard Light (Жорстке світло)' },
+                    { id: 'vividlight', name: 'Vivid Light (Яскраве світло)' },
+                    { id: 'linearlight', name: 'Linear Light (Лінійне світло)' },
+                    { id: 'pinlight', name: 'Pin Light (Точкове світло)' },
+                    { id: 'hardmix', name: 'Hard Mix (Жорстке змішування)' }
+                ]
+            },
+            {
+                label: 'Різниця та інверсія (Comparative)',
+                modes: [
+                    { id: 'difference', name: 'Difference (Різниця)' },
+                    { id: 'exclusion', name: 'Exclusion (Виключення)' },
+                    { id: 'subtract', name: 'Subtract (Віднімання)' },
+                    { id: 'divide', name: 'Divide (Ділення)' },
+                    { id: 'average', name: 'Average (Середнє)' },
+                    { id: 'negation', name: 'Negation (Негатив)' }
+                ]
+            },
+            {
+                label: 'Колір HSL (Color / HSL)',
+                modes: [
+                    { id: 'hue', name: 'Hue (Тон)' },
+                    { id: 'saturation', name: 'Saturation (Насиченість)' },
+                    { id: 'color', name: 'Color (Колір)' },
+                    { id: 'luminosity', name: 'Luminosity (Світлота)' }
+                ]
+            },
+            {
+                label: 'Спеціальні (Special)',
+                modes: [
+                    { id: 'heightblend', name: 'Height Blend (Повисотна суміш)' }
+                ]
+            }
+        ];
+
         const Blend = {
-            normal:(b,t)=>t, multiply:(b,t)=>b*t, screen:(b,t)=>1-(1-b)*(1-t), overlay:(b,t)=>b<0.5?2*b*t:1-2*(1-b)*(1-t),
-            difference:(b,t)=>Math.abs(b-t), colorburn:(b,t)=>t===0?0:Math.max(0,1-(1-b)/t), colordodge:(b,t)=>t===1?1:Math.min(1,b/(1-t)), heightblend:(b,t)=>Math.max(b,t),
-            exclusion:(b,t)=>b+t-2*b*t, hardlight:(b,t)=>t<0.5?2*b*t:1-2*(1-b)*(1-t), 
-            lineardodge:(b,t)=>Math.min(1,b+t), linearburn:(b,t)=>Math.max(0,b+t-1)
+            normal: (b, t) => t,
+            multiply: (b, t) => b * t,
+            darken: (b, t) => Math.min(b, t),
+            colorburn: (b, t) => t <= 0 ? 0 : Math.max(0, 1 - (1 - b) / t),
+            linearburn: (b, t) => Math.max(0, b + t - 1),
+            darkercolor: makeColorBlendFn((bR, bG, bB, tR, tG, tB) => 
+                (0.299*bR + 0.587*bG + 0.114*bB < 0.299*tR + 0.587*tG + 0.114*tB) ? [bR, bG, bB] : [tR, tG, tB]
+            ),
+
+            screen: (b, t) => 1 - (1 - b) * (1 - t),
+            lighten: (b, t) => Math.max(b, t),
+            colordodge: (b, t) => t >= 1 ? 1 : Math.min(1, b / (1 - t)),
+            lineardodge: (b, t) => Math.min(1, b + t),
+            lightercolor: makeColorBlendFn((bR, bG, bB, tR, tG, tB) => 
+                (0.299*bR + 0.587*bG + 0.114*bB > 0.299*tR + 0.587*tG + 0.114*tB) ? [bR, bG, bB] : [tR, tG, tB]
+            ),
+
+            overlay: (b, t) => b < 0.5 ? 2 * b * t : 1 - 2 * (1 - b) * (1 - t),
+            softlight: (b, t) => t <= 0.5 ? b - (1 - 2 * t) * b * (1 - b) : (b <= 0.25 ? b + (2 * t - 1) * (((16 * b - 12) * b + 4) * b - b) : b + (2 * t - 1) * (Math.sqrt(b) - b)),
+            hardlight: (b, t) => t < 0.5 ? 2 * b * t : 1 - 2 * (1 - b) * (1 - t),
+            vividlight: (b, t) => t <= 0.5 ? (t <= 0 ? 0 : Math.max(0, 1 - (1 - b) / (2 * t))) : (t >= 1 ? 1 : Math.min(1, b / (2 * (1 - t)))),
+            linearlight: (b, t) => Math.max(0, Math.min(1, b + 2 * t - 1)),
+            pinlight: (b, t) => t < 0.5 ? Math.min(b, 2 * t) : Math.max(b, 2 * (t - 0.5)),
+            hardmix: (b, t) => ((t <= 0.5 ? (t <= 0 ? 0 : Math.max(0, 1 - (1 - b) / (2 * t))) : (t >= 1 ? 1 : Math.min(1, b / (2 * (1 - t))))) >= 0.5 ? 1 : 0),
+
+            difference: (b, t) => Math.abs(b - t),
+            exclusion: (b, t) => b + t - 2 * b * t,
+            subtract: (b, t) => Math.max(0, b - t),
+            divide: (b, t) => t <= 0 ? 1 : Math.min(1, b / t),
+            average: (b, t) => (b + t) * 0.5,
+            negation: (b, t) => 1 - Math.abs(1 - b - t),
+
+            hue: makeColorBlendFn((bR, bG, bB, tR, tG, tB) => {
+                let satB = blendGetSat(bR, bG, bB);
+                let lumB = blendGetLum(bR, bG, bB);
+                let satT = blendSetSat(tR, tG, tB, satB);
+                return blendSetLum(satT[0], satT[1], satT[2], lumB);
+            }),
+            saturation: makeColorBlendFn((bR, bG, bB, tR, tG, tB) => {
+                let satT = blendGetSat(tR, tG, tB);
+                let lumB = blendGetLum(bR, bG, bB);
+                let satB = blendSetSat(bR, bG, bB, satT);
+                return blendSetLum(satB[0], satB[1], satB[2], lumB);
+            }),
+            color: makeColorBlendFn((bR, bG, bB, tR, tG, tB) => {
+                let lumB = blendGetLum(bR, bG, bB);
+                return blendSetLum(tR, tG, tB, lumB);
+            }),
+            luminosity: makeColorBlendFn((bR, bG, bB, tR, tG, tB) => {
+                let lumT = blendGetLum(tR, tG, tB);
+                return blendSetLum(bR, bG, bB, lumT);
+            }),
+
+            heightblend: (b, t) => Math.max(b, t)
         };
 
         function applyBoxBlur(buf, tmp, w, h, rad, mode = 'wrap') {
@@ -4196,11 +4385,21 @@
                                     blendBufferB[i] = pendingMaskTargetB[i]*a;
                                 }
                             } else {
-                                for(let i=0;i<w*h;i++) {
-                                    let a = pendingMaskAlphaBuffer[i]*pendingOp;
-                                    blendBufferR[i] = blendBufferR[i]*(1-a) + pendingBlendFn(blendBufferR[i],pendingMaskTargetR[i])*a;
-                                    blendBufferG[i] = blendBufferG[i]*(1-a) + pendingBlendFn(blendBufferG[i],pendingMaskTargetG[i])*a;
-                                    blendBufferB[i] = blendBufferB[i]*(1-a) + pendingBlendFn(blendBufferB[i],pendingMaskTargetB[i])*a;
+                                if (pendingBlendFn.isColorMode) {
+                                    for(let i=0;i<w*h;i++) {
+                                        let a = pendingMaskAlphaBuffer[i]*pendingOp;
+                                        let res = pendingBlendFn(blendBufferR[i], blendBufferG[i], blendBufferB[i], pendingMaskTargetR[i], pendingMaskTargetG[i], pendingMaskTargetB[i]);
+                                        blendBufferR[i] = blendBufferR[i]*(1-a) + res[0]*a;
+                                        blendBufferG[i] = blendBufferG[i]*(1-a) + res[1]*a;
+                                        blendBufferB[i] = blendBufferB[i]*(1-a) + res[2]*a;
+                                    }
+                                } else {
+                                    for(let i=0;i<w*h;i++) {
+                                        let a = pendingMaskAlphaBuffer[i]*pendingOp;
+                                        blendBufferR[i] = blendBufferR[i]*(1-a) + pendingBlendFn(blendBufferR[i],pendingMaskTargetR[i])*a;
+                                        blendBufferG[i] = blendBufferG[i]*(1-a) + pendingBlendFn(blendBufferG[i],pendingMaskTargetG[i])*a;
+                                        blendBufferB[i] = blendBufferB[i]*(1-a) + pendingBlendFn(blendBufferB[i],pendingMaskTargetB[i])*a;
+                                    }
                                 }
                             }
                             firstBlend = false;
@@ -4243,22 +4442,45 @@
                         blendBufferG.set(layerBufferG);
                         blendBufferB.set(layerBufferB);
                     } else {
-                        if (useBlendIf) {
-                            for(let i=0; i<w*h; i++) {
-                                let sVal = getBIfVal(layerBufferR[i], layerBufferG[i], layerBufferB[i], bIfChan);
-                                let uVal = getBIfVal(blendBufferR[i], blendBufferG[i], blendBufferB[i], bIfChan);
-                                let bifA = calcBIfRampAlpha(sVal, tb1, tb2, tw1, tw2) * calcBIfRampAlpha(uVal, ub1, ub2, uw1, uw2);
-                                let effOp = op * bifA;
-                                blendBufferR[i] = blendBufferR[i] * (1 - effOp) + bFn(blendBufferR[i], layerBufferR[i]) * effOp;
-                                blendBufferG[i] = blendBufferG[i] * (1 - effOp) + bFn(blendBufferG[i], layerBufferG[i]) * effOp;
-                                blendBufferB[i] = blendBufferB[i] * (1 - effOp) + bFn(blendBufferB[i], layerBufferB[i]) * effOp;
+                        if (bFn.isColorMode) {
+                            if (useBlendIf) {
+                                for(let i=0; i<w*h; i++) {
+                                    let sVal = getBIfVal(layerBufferR[i], layerBufferG[i], layerBufferB[i], bIfChan);
+                                    let uVal = getBIfVal(blendBufferR[i], blendBufferG[i], blendBufferB[i], bIfChan);
+                                    let bifA = calcBIfRampAlpha(sVal, tb1, tb2, tw1, tw2) * calcBIfRampAlpha(uVal, ub1, ub2, uw1, uw2);
+                                    let effOp = op * bifA;
+                                    let res = bFn(blendBufferR[i], blendBufferG[i], blendBufferB[i], layerBufferR[i], layerBufferG[i], layerBufferB[i]);
+                                    blendBufferR[i] = blendBufferR[i] * (1 - effOp) + res[0] * effOp;
+                                    blendBufferG[i] = blendBufferG[i] * (1 - effOp) + res[1] * effOp;
+                                    blendBufferB[i] = blendBufferB[i] * (1 - effOp) + res[2] * effOp;
+                                }
+                            } else {
+                                let oneMinusOp = 1 - op;
+                                for(let i=0; i<w*h; i++) {
+                                    let res = bFn(blendBufferR[i], blendBufferG[i], blendBufferB[i], layerBufferR[i], layerBufferG[i], layerBufferB[i]);
+                                    blendBufferR[i] = blendBufferR[i] * oneMinusOp + res[0] * op;
+                                    blendBufferG[i] = blendBufferG[i] * oneMinusOp + res[1] * op;
+                                    blendBufferB[i] = blendBufferB[i] * oneMinusOp + res[2] * op;
+                                }
                             }
                         } else {
-                            let oneMinusOp = 1 - op;
-                            for(let i=0; i<w*h; i++) {
-                                blendBufferR[i] = blendBufferR[i] * oneMinusOp + bFn(blendBufferR[i], layerBufferR[i]) * op;
-                                blendBufferG[i] = blendBufferG[i] * oneMinusOp + bFn(blendBufferG[i], layerBufferG[i]) * op;
-                                blendBufferB[i] = blendBufferB[i] * oneMinusOp + bFn(blendBufferB[i], layerBufferB[i]) * op;
+                            if (useBlendIf) {
+                                for(let i=0; i<w*h; i++) {
+                                    let sVal = getBIfVal(layerBufferR[i], layerBufferG[i], layerBufferB[i], bIfChan);
+                                    let uVal = getBIfVal(blendBufferR[i], blendBufferG[i], blendBufferB[i], bIfChan);
+                                    let bifA = calcBIfRampAlpha(sVal, tb1, tb2, tw1, tw2) * calcBIfRampAlpha(uVal, ub1, ub2, uw1, uw2);
+                                    let effOp = op * bifA;
+                                    blendBufferR[i] = blendBufferR[i] * (1 - effOp) + bFn(blendBufferR[i], layerBufferR[i]) * effOp;
+                                    blendBufferG[i] = blendBufferG[i] * (1 - effOp) + bFn(blendBufferG[i], layerBufferG[i]) * effOp;
+                                    blendBufferB[i] = blendBufferB[i] * (1 - effOp) + bFn(blendBufferB[i], layerBufferB[i]) * effOp;
+                                }
+                            } else {
+                                let oneMinusOp = 1 - op;
+                                for(let i=0; i<w*h; i++) {
+                                    blendBufferR[i] = blendBufferR[i] * oneMinusOp + bFn(blendBufferR[i], layerBufferR[i]) * op;
+                                    blendBufferG[i] = blendBufferG[i] * oneMinusOp + bFn(blendBufferG[i], layerBufferG[i]) * op;
+                                    blendBufferB[i] = blendBufferB[i] * oneMinusOp + bFn(blendBufferB[i], layerBufferB[i]) * op;
+                                }
                             }
                         }
                     }
@@ -4501,7 +4723,7 @@
                     <div>
                         <label class="property-label" style="font-size:10px; margin-bottom:2px;">${t('blend_mode_label')}</label>
                         <select id="sticky_lay_blend" onchange="upd('blendMode',this.value,false)" class="form-control" style="height:30px; font-size:11px; width:100%;">
-                            ${['normal','multiply','screen','overlay','difference','colorburn','colordodge','heightblend','exclusion','hardlight','lineardodge','linearburn'].map(o=>`<option value="${o}" ${lay.blendMode===o?'selected':''}>${o}</option>`).join('')}
+                            ${BLEND_MODE_GROUPS.map(g => `<optgroup label="${g.label}">${g.modes.map(o => `<option value="${o.id}" ${lay.blendMode === o.id ? 'selected' : ''}>${o.name}</option>`).join('')}</optgroup>`).join('')}
                         </select>
                     </div>
                     <div>
