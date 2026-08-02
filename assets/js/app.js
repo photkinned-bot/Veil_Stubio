@@ -184,7 +184,17 @@
                 "Радіус скруглення кутів": "Радіус скруглення кутів",
                 "Поріг бінарності (Threshold)": "Поріг бінарності (Threshold)",
                 "Кількість рівнів (Steps)": "Кількість рівнів (Steps)",
-                "Інтенсивність 3D фаски": "Інтенсивність 3D фаски"
+                "Інтенсивність 3D фаски": "Інтенсивність 3D фаски",
+                "Кут повороту хвилі": "Кут повороту хвилі",
+                "Глобальна фаза (Phase)": "Глобальна фаза (Phase)",
+                "Зсув фази X (°)": "Зсув фази X (°)",
+                "Зсув фази Y (°)": "Зсув фази Y (°)",
+                "Гострота / Потужність (Exp)": "Гострота / Потужність (Exp)",
+                "Ширина імпульсу (Duty)": "Ширина імпульсу (Duty)",
+                "Гармоніки / Октави": "Гармоніки / Октави",
+                "Спад гармонік (Gain)": "Спад гармонік (Gain)",
+                "Викривлення / Wobble": "Викривлення / Wobble",
+                "Частота викривлення": "Частота викривлення"
             },
             en: {
                 app_title: "Veil Studio — Procedural Texture Generator",
@@ -365,7 +375,17 @@
                 "Радіус скруглення кутів": "Corner Rounding Radius",
                 "Поріг бінарності (Threshold)": "Binary Threshold",
                 "Кількість рівнів (Steps)": "Quantization Steps",
-                "Інтенсивність 3D фаски": "3D Bevel Intensity"
+                "Інтенсивність 3D фаски": "3D Bevel Intensity",
+                "Кут повороту хвилі": "Wave Rotation Angle",
+                "Глобальна фаза (Phase)": "Global Phase",
+                "Зсув фази X (°)": "Phase Offset X (°)",
+                "Зсув фази Y (°)": "Phase Offset Y (°)",
+                "Гострота / Потужність (Exp)": "Wave Sharpness / Power",
+                "Ширина імпульсу (Duty)": "Pulse Width (Duty)",
+                "Гармоніки / Октави": "Harmonics / Octaves",
+                "Спад гармонік (Gain)": "Harmonics Falloff (Gain)",
+                "Викривлення / Wobble": "Noise Distortion / Wobble",
+                "Частота викривлення": "Distortion Frequency"
             }
         };
 
@@ -778,6 +798,145 @@
             let v=0, a=1, f=1, max=0;
             for(let i=0;i<oct;i++){ let n=1-Math.abs(Perlin.noise(x*f,y*f)); v+=n*n*a; max+=a; a*=gain; f*=lac; }
             return v/max;
+        };
+
+        const SinusoidGenerator = {
+            evalWaveform(angle, profile, duty = 0.5) {
+                let norm = angle / (Math.PI * 2);
+                norm = norm - Math.floor(norm);
+                if (norm < 0) norm += 1;
+
+                switch (profile) {
+                    case 'cosine':
+                        return (Math.cos(angle) + 1) * 0.5;
+                    case 'triangle':
+                        return Math.abs(norm - 0.5) * 2;
+                    case 'square':
+                        return norm < duty ? 1.0 : 0.0;
+                    case 'absolute':
+                        return Math.abs(Math.sin(angle));
+                    case 'sawtooth':
+                        return norm;
+                    case 'sine':
+                    default:
+                        return (Math.sin(angle) + 1) * 0.5;
+                }
+            },
+
+            evalHarmonicWave(coord, phase, octaves, gain, profile, duty) {
+                let val = 0;
+                let amp = 1.0;
+                let freq = 1.0;
+                let maxAmp = 0;
+
+                for (let o = 0; o < octaves; o++) {
+                    let a = coord * Math.PI * 2 * freq + phase * (o + 1);
+                    val += amp * this.evalWaveform(a, profile, duty);
+                    maxAmp += amp;
+                    amp *= gain;
+                    freq *= 2.0;
+                }
+                return val / (maxAmp || 1);
+            },
+
+            eval(tx, ty, sx, sy, p) {
+                let mode = p.sineMode || 'cross_add';
+                let profile = p.sineProfile || 'sine';
+                let angleDeg = p.sineAngle || 0;
+                let rad = (angleDeg * Math.PI) / 180;
+
+                let globalPhase = (p.phase || 0);
+                let phaseX = ((p.sinePhaseX || 0) * Math.PI) / 180 + globalPhase;
+                let phaseY = ((p.sinePhaseY || 0) * Math.PI) / 180 + globalPhase;
+
+                let sharpness = p.sineSharpness !== undefined ? p.sineSharpness : 1.0;
+                let duty = p.sineDuty !== undefined ? p.sineDuty : 0.5;
+
+                let octaves = Math.max(1, Math.min(8, p.sineOctaves || 1));
+                let gain = p.sineGain !== undefined ? p.sineGain : 0.5;
+
+                let wobble = p.sineWobble || 0;
+                let wobbleFreq = p.sineWobbleFreq || 5.0;
+
+                let cx = p.centerX !== undefined ? p.centerX : 0.5;
+                let cy = p.centerY !== undefined ? p.centerY : 0.5;
+
+                let scaleX = (sx || 10);
+                let scaleY = (sy || 10);
+
+                let dx = (tx - cx) * scaleX;
+                let dy = (ty - cy) * scaleY;
+
+                let cosA = Math.cos(rad);
+                let sinA = Math.sin(rad);
+
+                let rx = dx * cosA - dy * sinA;
+                let ry = dx * sinA + dy * cosA;
+
+                if (wobble > 0) {
+                    let nX = Perlin.noise(tx * wobbleFreq, ty * wobbleFreq);
+                    let nY = Perlin.noise(tx * wobbleFreq + 100, ty * wobbleFreq + 100);
+                    rx += nX * wobble;
+                    ry += nY * wobble;
+                }
+
+                let v = 0.5;
+
+                switch (mode) {
+                    case 'horizontal':
+                        v = this.evalHarmonicWave(rx, phaseX, octaves, gain, profile, duty);
+                        break;
+                    case 'vertical':
+                        v = this.evalHarmonicWave(ry, phaseY, octaves, gain, profile, duty);
+                        break;
+                    case 'grid_mult': {
+                        let vx = this.evalHarmonicWave(rx, phaseX, octaves, gain, profile, duty);
+                        let vy = this.evalHarmonicWave(ry, phaseY, octaves, gain, profile, duty);
+                        v = vx * vy;
+                        break;
+                    }
+                    case 'diagonal':
+                        v = this.evalHarmonicWave(rx + ry, phaseX, octaves, gain, profile, duty);
+                        break;
+                    case 'radial': {
+                        let dist = Math.sqrt(rx * rx + ry * ry);
+                        v = this.evalHarmonicWave(dist, phaseX, octaves, gain, profile, duty);
+                        break;
+                    }
+                    case 'hex': {
+                        let v1 = this.evalHarmonicWave(rx, phaseX, octaves, gain, profile, duty);
+                        let v2 = this.evalHarmonicWave(rx * 0.5 + ry * 0.866025, phaseX, octaves, gain, profile, duty);
+                        let v3 = this.evalHarmonicWave(rx * 0.5 - ry * 0.866025, phaseX, octaves, gain, profile, duty);
+                        v = (v1 + v2 + v3) / 3.0;
+                        break;
+                    }
+                    case 'cross_max': {
+                        let vx = this.evalHarmonicWave(rx, phaseX, octaves, gain, profile, duty);
+                        let vy = this.evalHarmonicWave(ry, phaseY, octaves, gain, profile, duty);
+                        v = Math.max(vx, vy);
+                        break;
+                    }
+                    case 'cross_diff': {
+                        let vx = this.evalHarmonicWave(rx, phaseX, octaves, gain, profile, duty);
+                        let vy = this.evalHarmonicWave(ry, phaseY, octaves, gain, profile, duty);
+                        v = Math.abs(vx - vy);
+                        break;
+                    }
+                    case 'cross_add':
+                    default: {
+                        let vx = this.evalHarmonicWave(rx, phaseX, octaves, gain, profile, duty);
+                        let vy = this.evalHarmonicWave(ry, phaseY, octaves, gain, profile, duty);
+                        v = (vx + vy) * 0.5;
+                        break;
+                    }
+                }
+
+                if (sharpness !== 1.0 && sharpness > 0) {
+                    v = Math.pow(Math.max(0, Math.min(1, v)), sharpness);
+                }
+
+                return Math.max(0, Math.min(1, v));
+            }
         };
 
         const smoothstep = (edge0, edge1, x) => {
@@ -3481,7 +3640,7 @@
                 case 'voronoi': v=Voronoi.noise(tx*sx,ty*sy,p.mode||'f1',p.metric||'euclidean',p.distExp||2); break;
                 case 'fbm': v=fbm(tx*sx,ty*sy,p.octaves||3,p.lacunarity??2,p.gain??0.5,'simplex'); break;
                 case 'ridged': v=ridged(tx*sx,ty*sy,p.octaves||3,p.lacunarity??2,p.gain??0.5); break;
-                case 'sine': v=(Math.sin(tx*sx*Math.PI*2+(p.phase||0))+Math.cos(ty*sy*Math.PI*2+(p.phase||0))+2)/4; break;
+                case 'sine': v = SinusoidGenerator.eval(tx, ty, sx, sy, p); break;
                 case 'radial': {
                     let cx = p.centerX ?? 0.5, cy = p.centerY ?? 0.5;
                     let rdx = (tx - cx) * sx, rdy = (ty - cy) * sy;
@@ -5222,7 +5381,18 @@
                 p.mode = modes[Math.floor(Math.random() * modes.length)];
             }
             if (lay.generatorType === 'sine') {
+                let modes = ['cross_add', 'grid_mult', 'horizontal', 'vertical', 'diagonal', 'radial', 'hex', 'cross_max', 'cross_diff'];
+                let profiles = ['sine', 'cosine', 'triangle', 'square', 'absolute', 'sawtooth'];
+                p.sineMode = modes[Math.floor(Math.random() * modes.length)];
+                p.sineProfile = profiles[Math.floor(Math.random() * profiles.length)];
+                p.sineAngle = Math.floor(Math.random() * 360) - 180;
                 p.phase = parseFloat((Math.random() * 6.28).toFixed(2));
+                p.sinePhaseX = Math.floor(Math.random() * 360);
+                p.sinePhaseY = Math.floor(Math.random() * 360);
+                p.sineSharpness = parseFloat((0.5 + Math.random() * 2.0).toFixed(1));
+                p.sineOctaves = 1 + Math.floor(Math.random() * 3);
+                p.sineGain = parseFloat((0.3 + Math.random() * 0.4).toFixed(2));
+                p.sineWobble = Math.random() < 0.35 ? parseFloat((Math.random() * 0.5).toFixed(2)) : 0;
             }
             if (lay.generatorType === 'cymatics') {
                 p.frequency = 10 + Math.floor(Math.random() * 150);
@@ -6345,7 +6515,56 @@
 
             if(['perlin','fbm','ridged','spiral'].includes(lay.generatorType)) algoSpecificHTML+=createSlider(lay.generatorType==='spiral'?'Кількість рукавів (Arms)':'Октави', "octaves", 1, 10, 1, lp.octaves||3, false, 3);
             if(lay.generatorType==='voronoi') algoSpecificHTML+=`<div class="property-group grid-2"><div><label class="property-label">Метрика</label><select class="form-control" onchange="upd('metric',this.value)"><option value="euclidean" ${lp.metric==='euclidean'?'selected':''}>Euclidean</option><option value="manhattan" ${lp.metric==='manhattan'?'selected':''}>Manhattan</option><option value="chebyshev" ${lp.metric==='chebyshev'?'selected':''}>Chebyshev</option></select></div><div><label class="property-label">Режим</label><select class="form-control" onchange="upd('mode',this.value)"><option value="f1" ${lp.mode==='f1'?'selected':''}>F1</option><option value="f2" ${lp.mode==='f2'?'selected':''}>F2</option><option value="f2_minus_f1" ${lp.mode==='f2_minus_f1'?'selected':''}>F2-F1</option></select></div></div>`;
-            if(lay.generatorType==='sine') algoSpecificHTML+=createSlider("Фаза зсуву", "phase", 0, 6.28, 0.1, lp.phase||0, false, 0);
+            if (lay.generatorType === 'sine') {
+                algoSpecificHTML += `
+                <div class="section-title">Параметри синусоїди (Sine Waves PRO)</div>
+                <div class="property-group">
+                    <label class="property-label">Режим паттерну</label>
+                    <div class="gen-grid" style="grid-template-columns:repeat(3,1fr);">
+                        <button onclick="upd('sineMode','cross_add')" class="gen-btn ${(lp.sineMode||'cross_add')==='cross_add'?'active':''}">Сітка (Сума)</button>
+                        <button onclick="upd('sineMode','grid_mult')" class="gen-btn ${lp.sineMode==='grid_mult'?'active':''}">Точки (Множення)</button>
+                        <button onclick="upd('sineMode','horizontal')" class="gen-btn ${lp.sineMode==='horizontal'?'active':''}">Горизонтальний</button>
+                        <button onclick="upd('sineMode','vertical')" class="gen-btn ${lp.sineMode==='vertical'?'active':''}">Вертикальний</button>
+                        <button onclick="upd('sineMode','diagonal')" class="gen-btn ${lp.sineMode==='diagonal'?'active':''}">Діагональний</button>
+                        <button onclick="upd('sineMode','radial')" class="gen-btn ${lp.sineMode==='radial'?'active':''}">Концентричний</button>
+                        <button onclick="upd('sineMode','hex')" class="gen-btn ${lp.sineMode==='hex'?'active':''}">Гексагональний</button>
+                        <button onclick="upd('sineMode','cross_max')" class="gen-btn ${lp.sineMode==='cross_max'?'active':''}">Max (Коробка)</button>
+                        <button onclick="upd('sineMode','cross_diff')" class="gen-btn ${lp.sineMode==='cross_diff'?'active':''}">Diff (Ромби)</button>
+                    </div>
+                </div>
+
+                <div class="property-group">
+                    <label class="property-label">Форма хвилі (Profile)</label>
+                    <div class="gen-grid" style="grid-template-columns:repeat(3,1fr);">
+                        <button onclick="upd('sineProfile','sine')" class="gen-btn ${(lp.sineProfile||'sine')==='sine'?'active':''}">Синус</button>
+                        <button onclick="upd('sineProfile','cosine')" class="gen-btn ${lp.sineProfile==='cosine'?'active':''}">Косинус</button>
+                        <button onclick="upd('sineProfile','triangle')" class="gen-btn ${lp.sineProfile==='triangle'?'active':''}">Трикутник</button>
+                        <button onclick="upd('sineProfile','square')" class="gen-btn ${lp.sineProfile==='square'?'active':''}">Прямокутник</button>
+                        <button onclick="upd('sineProfile','absolute')" class="gen-btn ${lp.sineProfile==='absolute'?'active':''}">Арки (|Sin|)</button>
+                        <button onclick="upd('sineProfile','sawtooth')" class="gen-btn ${lp.sineProfile==='sawtooth'?'active':''}">Пила</button>
+                    </div>
+                </div>
+                `;
+
+                algoSpecificHTML += createSlider("Кут повороту хвилі", "sineAngle", -180, 180, 1, lp.sineAngle || 0, false, 0);
+                algoSpecificHTML += createSlider("Глобальна фаза (Phase)", "phase", 0, 6.28, 0.05, lp.phase || 0, false, 0);
+                algoSpecificHTML += createSlider("Зсув фази X (°)", "sinePhaseX", 0, 360, 1, lp.sinePhaseX || 0, false, 0);
+                algoSpecificHTML += createSlider("Зсув фази Y (°)", "sinePhaseY", 0, 360, 1, lp.sinePhaseY || 0, false, 0);
+
+                algoSpecificHTML += createSlider("Гострота / Потужність (Exp)", "sineSharpness", 0.1, 5.0, 0.1, lp.sineSharpness !== undefined ? lp.sineSharpness : 1.0, false, 1.0);
+                algoSpecificHTML += createSlider("Ширина імпульсу (Duty)", "sineDuty", 0.05, 0.95, 0.01, lp.sineDuty !== undefined ? lp.sineDuty : 0.5, false, 0.5);
+
+                algoSpecificHTML += createSlider("Гармоніки / Октави", "sineOctaves", 1, 8, 1, lp.sineOctaves || 1, false, 1);
+                algoSpecificHTML += createSlider("Спад гармонік (Gain)", "sineGain", 0.1, 0.9, 0.05, lp.sineGain !== undefined ? lp.sineGain : 0.5, false, 0.5);
+
+                algoSpecificHTML += createSlider("Викривлення / Wobble", "sineWobble", 0, 2.0, 0.05, lp.sineWobble || 0, false, 0);
+                algoSpecificHTML += createSlider("Частота викривлення", "sineWobbleFreq", 0.5, 20.0, 0.5, lp.sineWobbleFreq || 5.0, false, 5.0);
+
+                if ((lp.sineMode || 'cross_add') === 'radial') {
+                    algoSpecificHTML += createSlider("Центр X (Position X)", "centerX", 0, 1, 0.01, lp.centerX !== undefined ? lp.centerX : 0.5, false, 0.5);
+                    algoSpecificHTML += createSlider("Центр Y (Position Y)", "centerY", 0, 1, 0.01, lp.centerY !== undefined ? lp.centerY : 0.5, false, 0.5);
+                }
+            }
 
             const algoLabels = {
                 'gradient': 'Градієнт (Gradient)',
@@ -9037,7 +9256,7 @@
                 } else {
                     lay.params[k] = val;
                     lay.isDirty = true;
-                    if (['seamless', 'useThreshold', 'useLevels', 'useFindEdges', 'usePosterize', 'brushTool', 'gradType', 'spreadMethod', 'sourceMode', 'metric', 'mode', 'lockScale', 'blurClampEdge', 'enableRays', 'enableRings', 'blurType', 'colorMode', 'palettePreset'].includes(k)) {
+                    if (['seamless', 'useThreshold', 'useLevels', 'useFindEdges', 'usePosterize', 'brushTool', 'gradType', 'spreadMethod', 'sourceMode', 'metric', 'mode', 'lockScale', 'blurClampEdge', 'enableRays', 'enableRings', 'blurType', 'colorMode', 'palettePreset', 'sineMode', 'sineProfile'].includes(k)) {
                         renderProps();
                     }
                     if (String(k).startsWith('brush')) updateBrushPreview();
