@@ -794,10 +794,82 @@
             return v/max;
         };
 
-        const ridged = (x,y,oct,lac=2,gain=0.5) => {
-            let v=0, a=1, f=1, max=0;
-            for(let i=0;i<oct;i++){ let n=1-Math.abs(Perlin.noise(x*f,y*f)); v+=n*n*a; max+=a; a*=gain; f*=lac; }
-            return v/max;
+        const ridged = (x, y, oct, lac = 2, gain = 0.5, p = {}) => {
+            let mode = p.ridgeMode || 'ridges';
+            let noiseType = p.ridgeNoiseType || 'perlin';
+            let exponent = p.ridgePower !== undefined ? p.ridgePower : 2.0;
+            let offset = p.ridgeOffset !== undefined ? p.ridgeOffset : 1.0;
+            let attenuation = p.ridgeAttenuation !== undefined ? p.ridgeAttenuation : 2.0;
+            let isMulti = p.ridgeMultifractal !== false;
+            let warpAmount = p.ridgeWarp || 0;
+            let warpFreq = p.ridgeWarpFreq || 2.0;
+
+            let noiseFn;
+            if (noiseType === 'simplex') {
+                noiseFn = (nx, ny) => (Simplex.noise(nx, ny) + 1) * 0.5;
+            } else if (noiseType === 'value') {
+                noiseFn = (nx, ny) => {
+                    let ix = Math.floor(nx), iy = Math.floor(ny), fx = nx - ix, fy = ny - iy;
+                    let u = fx * fx * (3 - 2 * fx), v = fy * fy * (3 - 2 * fy);
+                    let h00 = Voronoi.hash(ix, iy), h10 = Voronoi.hash(ix + 1, iy);
+                    let h01 = Voronoi.hash(ix, iy + 1), h11 = Voronoi.hash(ix + 1, iy + 1);
+                    return (1 - v) * ((1 - u) * h00 + u * h10) + v * ((1 - u) * h01 + u * h11);
+                };
+            } else if (noiseType === 'cellular') {
+                noiseFn = (nx, ny) => Voronoi.noise(nx, ny, 'f1', 'euclidean');
+            } else {
+                noiseFn = (nx, ny) => (Perlin.noise(nx, ny) + 1) * 0.5;
+            }
+
+            let px = x, py = y;
+            if (warpAmount > 0) {
+                let wx = Perlin.noise(x * warpFreq, y * warpFreq);
+                let wy = Perlin.noise(x * warpFreq + 15.3, y * warpFreq + 31.7);
+                px += wx * warpAmount;
+                py += wy * warpAmount;
+            }
+
+            let value = 0;
+            let weight = 1.0;
+            let amplitude = 1.0;
+            let frequency = 1.0;
+            let maxVal = 0;
+
+            for (let i = 0; i < oct; i++) {
+                let sampleX = px * frequency;
+                let sampleY = py * frequency;
+
+                let rawN = noiseFn(sampleX, sampleY);
+                let n = offset - Math.abs(rawN * 2.0 - 1.0);
+                n = Math.max(0, n);
+
+                if (exponent !== 1.0) {
+                    n = Math.pow(n, exponent);
+                }
+
+                if (isMulti) {
+                    n *= weight;
+                    weight = Math.min(1.0, Math.max(0.0, n * attenuation));
+                }
+
+                value += n * amplitude;
+                maxVal += amplitude;
+
+                amplitude *= gain;
+                frequency *= lac;
+            }
+
+            let normVal = value / (maxVal || 1);
+
+            if (mode === 'valleys') {
+                normVal = 1.0 - normVal;
+            } else if (mode === 'dual') {
+                normVal = Math.abs(1.0 - normVal * 2.0);
+            } else if (mode === 'sharp_valley') {
+                normVal = Math.pow(1.0 - normVal, 2.0);
+            }
+
+            return Math.max(0, Math.min(1, normVal));
         };
 
         const SinusoidGenerator = {
@@ -3639,7 +3711,7 @@
                 case 'perlin': v=(Perlin.noise(tx*sx,ty*sy)+1)/2; break;
                 case 'voronoi': v=Voronoi.noise(tx*sx,ty*sy,p.mode||'f1',p.metric||'euclidean',p.distExp||2); break;
                 case 'fbm': v=fbm(tx*sx,ty*sy,p.octaves||3,p.lacunarity??2,p.gain??0.5,'simplex'); break;
-                case 'ridged': v=ridged(tx*sx,ty*sy,p.octaves||3,p.lacunarity??2,p.gain??0.5); break;
+                case 'ridged': v=ridged(tx*sx,ty*sy,p.octaves||3,p.lacunarity??2,p.gain??0.5,p); break;
                 case 'sine': v = SinusoidGenerator.eval(tx, ty, sx, sy, p); break;
                 case 'radial': {
                     let cx = p.centerX ?? 0.5, cy = p.centerY ?? 0.5;
@@ -5371,8 +5443,22 @@
             p.angle = Math.floor((Math.random() - 0.5) * 360);
             p.layerScale = parseFloat((0.5 + Math.random() * 2).toFixed(1));
 
-            if (['perlin', 'fbm', 'ridged', 'spiral'].includes(lay.generatorType)) {
+            if (['perlin', 'fbm', 'spiral'].includes(lay.generatorType)) {
                 p.octaves = 1 + Math.floor(Math.random() * 8);
+            }
+            if (lay.generatorType === 'ridged') {
+                let modes = ['ridges', 'valleys', 'dual', 'sharp_valley'];
+                let noiseTypes = ['perlin', 'simplex', 'value', 'cellular'];
+                p.ridgeMode = modes[Math.floor(Math.random() * modes.length)];
+                p.ridgeNoiseType = noiseTypes[Math.floor(Math.random() * noiseTypes.length)];
+                p.octaves = 1 + Math.floor(Math.random() * 7);
+                p.ridgePower = parseFloat((0.5 + Math.random() * 3.0).toFixed(1));
+                p.ridgeOffset = parseFloat((0.5 + Math.random() * 1.0).toFixed(2));
+                p.ridgeAttenuation = parseFloat((1.0 + Math.random() * 2.5).toFixed(1));
+                p.ridgeMultifractal = Math.random() > 0.15;
+                p.lacunarity = parseFloat((1.5 + Math.random() * 1.5).toFixed(1));
+                p.gain = parseFloat((0.3 + Math.random() * 0.4).toFixed(2));
+                p.ridgeWarp = Math.random() < 0.4 ? parseFloat((Math.random() * 0.8).toFixed(2)) : 0;
             }
             if (lay.generatorType === 'voronoi') {
                 let metrics = ['euclidean', 'manhattan', 'chebyshev'];
@@ -6513,7 +6599,66 @@
                 `;
             }
 
-            if(['perlin','fbm','ridged','spiral'].includes(lay.generatorType)) algoSpecificHTML+=createSlider(lay.generatorType==='spiral'?'Кількість рукавів (Arms)':'Октави', "octaves", 1, 10, 1, lp.octaves||3, false, 3);
+            if (['perlin', 'spiral'].includes(lay.generatorType)) {
+                algoSpecificHTML += createSlider(lay.generatorType === 'spiral' ? 'Кількість рукавів (Arms)' : 'Октави', "octaves", 1, 10, 1, lp.octaves || 3, false, 3);
+            }
+            if (lay.generatorType === 'fbm') {
+                algoSpecificHTML += createSlider("Октави (Octaves)", "octaves", 1, 10, 1, lp.octaves || 3, false, 3);
+                algoSpecificHTML += createSlider("Лакунарність (Lacunarity)", "lacunarity", 1.1, 4.0, 0.1, lp.lacunarity !== undefined ? lp.lacunarity : 2.0, false, 2.0);
+                algoSpecificHTML += createSlider("Амплітуда (Gain)", "gain", 0.1, 0.9, 0.05, lp.gain !== undefined ? lp.gain : 0.5, false, 0.5);
+            }
+            if (lay.generatorType === 'ridged') {
+                let mode = lp.ridgeMode || 'ridges';
+                let noiseType = lp.ridgeNoiseType || 'perlin';
+                let isMulti = lp.ridgeMultifractal !== false;
+
+                algoSpecificHTML += `
+                <div class="section-title" style="margin-top:12px; font-weight:700; color:var(--primary-color, #3b82f6);">⛰️ Ridged Multifractal (Гірські Хребти)</div>
+
+                <div class="property-group">
+                    <label class="property-label">Режим Хребтів (Ridge Mode)</label>
+                    <div class="gen-grid" style="grid-template-columns:repeat(2,1fr);">
+                        <button type="button" onclick="upd('ridgeMode','ridges'); renderProps();" class="gen-btn ${mode === 'ridges' ? 'active' : ''}">⛰️ Шпилі (Peaks)</button>
+                        <button type="button" onclick="upd('ridgeMode','valleys'); renderProps();" class="gen-btn ${mode === 'valleys' ? 'active' : ''}">🏜️ Яри (Ravines)</button>
+                        <button type="button" onclick="upd('ridgeMode','dual'); renderProps();" class="gen-btn ${mode === 'dual' ? 'active' : ''}">⚡ Подвійні жили (Dual)</button>
+                        <button type="button" onclick="upd('ridgeMode','sharp_valley'); renderProps();" class="gen-btn ${mode === 'sharp_valley' ? 'active' : ''}">🔪 Гострі долини</button>
+                    </div>
+                </div>
+
+                <div class="property-group">
+                    <label class="property-label">Базовий шум (Noise Function)</label>
+                    <div class="gen-grid" style="grid-template-columns:repeat(2,1fr);">
+                        <button type="button" onclick="upd('ridgeNoiseType','perlin'); renderProps();" class="gen-btn ${noiseType === 'perlin' ? 'active' : ''}">Perlin</button>
+                        <button type="button" onclick="upd('ridgeNoiseType','simplex'); renderProps();" class="gen-btn ${noiseType === 'simplex' ? 'active' : ''}">Simplex</button>
+                        <button type="button" onclick="upd('ridgeNoiseType','value'); renderProps();" class="gen-btn ${noiseType === 'value' ? 'active' : ''}">Value Cubic</button>
+                        <button type="button" onclick="upd('ridgeNoiseType','cellular'); renderProps();" class="gen-btn ${noiseType === 'cellular' ? 'active' : ''}">Cellular / Voronoi</button>
+                    </div>
+                </div>
+
+                <div class="property-group" style="margin-bottom:8px;">
+                    <label style="font-size:11px; cursor:pointer; display:flex; align-items:center; gap:6px;">
+                        <input type="checkbox" ${isMulti ? 'checked' : ''} onchange="upd('ridgeMultifractal', this.checked); renderProps();">
+                        <span><strong>Мультифрактальний зв'язок (Multifractal Coupling)</strong></span>
+                    </label>
+                    <div style="font-size:10px; color:var(--text-muted, #a1a1aa); margin-top:2px; line-height:1.3;">
+                        Зв'язок октав: деталі формуються переважно на піках хребтів (Musgrave Multifractal)
+                    </div>
+                </div>
+                `;
+
+                algoSpecificHTML += createSlider("Октави (Octaves)", "octaves", 1, 10, 1, lp.octaves || 3, false, 3);
+                algoSpecificHTML += createSlider("Гострота хребтів (Power / Exp)", "ridgePower", 0.2, 5.0, 0.1, lp.ridgePower !== undefined ? lp.ridgePower : 2.0, false, 2.0);
+                algoSpecificHTML += createSlider("Зсув / Ширина хребта (Offset)", "ridgeOffset", 0.1, 2.0, 0.05, lp.ridgeOffset !== undefined ? lp.ridgeOffset : 1.0, false, 1.0);
+                if (isMulti) {
+                    algoSpecificHTML += createSlider("Загасання / Зв'язок (Attenuation)", "ridgeAttenuation", 0.0, 4.0, 0.1, lp.ridgeAttenuation !== undefined ? lp.ridgeAttenuation : 2.0, false, 2.0);
+                }
+                algoSpecificHTML += createSlider("Лакунарність (Lacunarity)", "lacunarity", 1.1, 4.0, 0.1, lp.lacunarity !== undefined ? lp.lacunarity : 2.0, false, 2.0);
+                algoSpecificHTML += createSlider("Амплітуда (Gain)", "gain", 0.1, 0.9, 0.05, lp.gain !== undefined ? lp.gain : 0.5, false, 0.5);
+                algoSpecificHTML += createSlider("Викривлення домену (Warping)", "ridgeWarp", 0.0, 2.0, 0.05, lp.ridgeWarp || 0, false, 0);
+                if ((lp.ridgeWarp || 0) > 0) {
+                    algoSpecificHTML += createSlider("Частота викривлення", "ridgeWarpFreq", 0.5, 10.0, 0.5, lp.ridgeWarpFreq || 2.0, false, 2.0);
+                }
+            }
             if(lay.generatorType==='voronoi') algoSpecificHTML+=`<div class="property-group grid-2"><div><label class="property-label">Метрика</label><select class="form-control" onchange="upd('metric',this.value)"><option value="euclidean" ${lp.metric==='euclidean'?'selected':''}>Euclidean</option><option value="manhattan" ${lp.metric==='manhattan'?'selected':''}>Manhattan</option><option value="chebyshev" ${lp.metric==='chebyshev'?'selected':''}>Chebyshev</option></select></div><div><label class="property-label">Режим</label><select class="form-control" onchange="upd('mode',this.value)"><option value="f1" ${lp.mode==='f1'?'selected':''}>F1</option><option value="f2" ${lp.mode==='f2'?'selected':''}>F2</option><option value="f2_minus_f1" ${lp.mode==='f2_minus_f1'?'selected':''}>F2-F1</option></select></div></div>`;
             if (lay.generatorType === 'sine') {
                 algoSpecificHTML += `
