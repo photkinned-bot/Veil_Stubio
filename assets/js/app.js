@@ -177,7 +177,14 @@
                 "Перспектива вертикальна": "Перспектива вертикальна",
                 "Перспектива горизонтальна": "Перспектива горизонтальна",
                 "Розмір точок": "Розмір точок",
-                "М'якість країв": "М'якість країв"
+                "М'якість країв": "М'якість країв",
+                "Проміжок між пікселями (Gap)": "Проміжок між пікселями (Gap)",
+                "Яскравість шва / проміжку": "Яскравість шва / проміжку",
+                "М'якість країв шва": "М'якість країв шва",
+                "Радіус скруглення кутів": "Радіус скруглення кутів",
+                "Поріг бінарності (Threshold)": "Поріг бінарності (Threshold)",
+                "Кількість рівнів (Steps)": "Кількість рівнів (Steps)",
+                "Інтенсивність 3D фаски": "Інтенсивність 3D фаски"
             },
             en: {
                 app_title: "Veil Studio — Procedural Texture Generator",
@@ -351,7 +358,14 @@
                 "Перспектива вертикальна": "Vertical Perspective",
                 "Перспектива горизонтальна": "Horizontal Perspective",
                 "Розмір точок": "Dot Size",
-                "М'якість країв": "Edge Softness"
+                "М'якість країв": "Edge Softness",
+                "Проміжок між пікселями (Gap)": "Gap Between Pixels",
+                "Яскравість шва / проміжку": "Gap / Seam Brightness",
+                "М'якість країв шва": "Seam Edge Softness",
+                "Радіус скруглення кутів": "Corner Rounding Radius",
+                "Поріг бінарності (Threshold)": "Binary Threshold",
+                "Кількість рівнів (Steps)": "Quantization Steps",
+                "Інтенсивність 3D фаски": "3D Bevel Intensity"
             }
         };
 
@@ -3484,7 +3498,119 @@
                     break;
                 }
                 case 'hexagon': let hc=Math.cos(tx*sx*Math.PI*2)+Math.cos((tx*sx*0.5+ty*sy*0.866025)*Math.PI*2)+Math.cos((tx*sx*0.5-ty*sy*0.866025)*Math.PI*2); v=(hc+1.5)/4.5; break;
-                case 'pixel_noise': v=Voronoi.hash(Math.floor(tx*sx), Math.floor(ty*sy)); break;
+                case 'pixel_noise': {
+                    let gap = p.pixelGap !== undefined ? Math.max(0, p.pixelGap) : 0.0;
+                    let gapVal = p.pixelGapValue !== undefined ? p.pixelGapValue : 0.0;
+                    let gapSoft = p.pixelGapSoftness !== undefined ? Math.max(0, p.pixelGapSoftness) : 0.0;
+                    let shape = p.pixelShape || 'square';
+                    let cornerR = p.pixelCornerRadius !== undefined ? p.pixelCornerRadius : 0.1;
+                    let gridType = p.pixelGridType || 'standard';
+                    let distType = p.pixelDistribution || 'uniform';
+                    let thresh = p.pixelThreshold !== undefined ? p.pixelThreshold : 0.5;
+                    let steps = p.pixelSteps || 4;
+                    let bevel = p.pixelBevel !== undefined ? p.pixelBevel : 0.0;
+                    let bevelType = p.pixelBevelType || 'pyramid';
+                    let seed = p.pixelSeed || 0;
+
+                    let gx = tx * (sx || 10);
+                    let gy = ty * (sy || 10);
+
+                    let iyRaw = Math.floor(gy);
+                    let ixRaw = Math.floor(gx);
+
+                    if (gridType === 'staggered_h') {
+                        if (Math.abs(iyRaw) % 2 === 1) gx += 0.5;
+                    } else if (gridType === 'staggered_v') {
+                        if (Math.abs(ixRaw) % 2 === 1) gy += 0.5;
+                    }
+
+                    let ix = Math.floor(gx);
+                    let iy = Math.floor(gy);
+
+                    let fx = gx - ix;
+                    let fy = gy - iy;
+
+                    let cx = fx - 0.5;
+                    let cy = fy - 0.5;
+
+                    let h1 = Voronoi.hash(ix + seed * 1013, iy + seed * 31337);
+                    let cellVal = h1;
+
+                    if (distType === 'binary') {
+                        cellVal = h1 < thresh ? 0.0 : 1.0;
+                    } else if (distType === 'stepped') {
+                        let st = Math.max(2, steps);
+                        cellVal = Math.floor(h1 * st) / (st - 1);
+                    } else if (distType === 'gaussian') {
+                        let h2 = Voronoi.hash(ix * 3 + 17 + seed * 101, iy * 7 + 19 + seed * 307);
+                        cellVal = (h1 + h2) * 0.5;
+                    } else if (distType === 'dither') {
+                        let checker = (Math.abs(ix + iy) % 2 === 0) ? 0.8 : 0.2;
+                        cellVal = h1 * 0.6 + checker * 0.4;
+                    }
+
+                    if (gap <= 0.0001 && shape === 'square' && bevel <= 0.001) {
+                        v = cellVal;
+                        break;
+                    }
+
+                    let halfSize = 0.5 - gap * 0.5;
+                    if (halfSize <= 0.0001) {
+                        v = gapVal;
+                        break;
+                    }
+
+                    let d = 0;
+                    if (shape === 'circle') {
+                        d = Math.sqrt(cx * cx + cy * cy);
+                    } else if (shape === 'diamond') {
+                        d = Math.abs(cx) + Math.abs(cy);
+                    } else if (shape === 'round') {
+                        let r = Math.min(cornerR, halfSize);
+                        let qx = Math.max(Math.abs(cx) - (halfSize - r), 0);
+                        let qy = Math.max(Math.abs(cy) - (halfSize - r), 0);
+                        d = Math.sqrt(qx * qx + qy * qy) + (halfSize - r);
+                    } else {
+                        d = Math.max(Math.abs(cx), Math.abs(cy));
+                    }
+
+                    if (bevel > 0.001 && d < halfSize) {
+                        let edgeDist = 1.0 - (d / halfSize);
+                        let bevelShade = 1.0;
+                        if (bevelType === 'pyramid') {
+                            bevelShade = 0.35 + 0.65 * Math.pow(Math.max(0, edgeDist), 0.7 * bevel);
+                        } else if (bevelType === 'soft') {
+                            let sinShade = 0.5 + 0.5 * Math.sin((edgeDist - 0.5) * Math.PI);
+                            bevelShade = (1.0 - bevel) + sinShade * bevel;
+                        } else if (bevelType === 'inset') {
+                            bevelShade = 1.0 - (1.0 - Math.max(0, edgeDist)) * bevel * 0.7;
+                        }
+                        cellVal = Math.max(0, Math.min(1, cellVal * bevelShade));
+                    }
+
+                    if (gap > 0.0001) {
+                        if (d >= halfSize) {
+                            v = gapVal;
+                        } else {
+                            let fadeZone = gapSoft > 0.0001 ? gapSoft * halfSize * 0.5 : 0;
+                            let innerEdge = halfSize - fadeZone;
+                            if (fadeZone > 0 && d > innerEdge) {
+                                let t = (d - innerEdge) / fadeZone;
+                                let smoothT = t * t * (3 - 2 * t);
+                                v = cellVal * (1 - smoothT) + gapVal * smoothT;
+                            } else {
+                                v = cellVal;
+                            }
+                        }
+                    } else {
+                        if (d > halfSize + 0.0001) {
+                            v = gapVal;
+                        } else {
+                            v = cellVal;
+                        }
+                    }
+                    break;
+                }
                 case 'white_noise': v=Voronoi.hash(Math.floor(tx*sx*256)+(p.seed||0)*31, Math.floor(ty*sy*256)+(p.seed||0)*17); break;
                 case 'checkerboard': v=(Math.floor(tx*sx)+Math.floor(ty*sy))%2===0?1:0; break;
                 case 'dots': {
@@ -4888,6 +5014,10 @@
         function freshLayerParams() {
             return { seamless:false, scale:10, scaleX:10, scaleY:10, lockScale:true, layerScale:1, contrast:1, brightness:1, angle:0, perspectiveV:0, perspectiveH:0, blur:0, blurType:'gaussian', blurClampEdge:false,
                 dotSize: 0.25, dotSoftness: 0.05, dotGrid: 'square', dotShape: 'circle',
+                pixelGap: 0.0, pixelGapValue: 0.0, pixelGapSoftness: 0.0,
+                pixelGridType: 'standard', pixelShape: 'square', pixelCornerRadius: 0.1,
+                pixelDistribution: 'uniform', pixelThreshold: 0.5, pixelSteps: 4,
+                pixelBevel: 0.0, pixelBevelType: 'pyramid', pixelSeed: 0,
                 offsetX:0, offsetY:0, invert:false, warps:[], warpOrder: 'transform_first',
                 useThreshold:false, thresholdVal:50, useLevels:false, levelMin:0, levelMax:100,
                 usePosterize:false, posterizeLevels:4, useFindEdges:false,
@@ -5141,6 +5271,24 @@
                 let shapes = ['circle', 'square', 'diamond'];
                 p.dotGrid = grids[Math.floor(Math.random() * grids.length)];
                 p.dotShape = shapes[Math.floor(Math.random() * shapes.length)];
+            }
+            if (lay.generatorType === 'pixel_noise') {
+                p.pixelGap = parseFloat((Math.random() * 0.25).toFixed(2));
+                p.pixelGapValue = parseFloat(Math.random().toFixed(2));
+                p.pixelGapSoftness = parseFloat((Math.random() * 0.3).toFixed(2));
+                let gridTypes = ['standard', 'staggered_h', 'staggered_v'];
+                let shapes = ['square', 'round', 'circle', 'diamond'];
+                let distributions = ['uniform', 'binary', 'stepped', 'gaussian', 'dither'];
+                let bevelTypes = ['pyramid', 'soft', 'inset'];
+                p.pixelGridType = gridTypes[Math.floor(Math.random() * gridTypes.length)];
+                p.pixelShape = shapes[Math.floor(Math.random() * shapes.length)];
+                p.pixelDistribution = distributions[Math.floor(Math.random() * distributions.length)];
+                p.pixelBevelType = bevelTypes[Math.floor(Math.random() * bevelTypes.length)];
+                p.pixelCornerRadius = parseFloat((0.05 + Math.random() * 0.2).toFixed(2));
+                p.pixelThreshold = parseFloat((0.2 + Math.random() * 0.6).toFixed(2));
+                p.pixelSteps = 2 + Math.floor(Math.random() * 8);
+                p.pixelBevel = parseFloat((Math.random() * 0.8).toFixed(2));
+                p.pixelSeed = Math.floor(Math.random() * 9999);
             }
 
             lay.isDirty = true;
@@ -6048,6 +6196,78 @@
                 </div>`;
                 algoSpecificHTML += createSlider("Розмір точок", "dotSize", 0.01, 0.5, 0.01, lp.dotSize !== undefined ? lp.dotSize : 0.25, false, 0.25);
                 algoSpecificHTML += createSlider("М'якість країв", "dotSoftness", 0, 1, 0.01, lp.dotSoftness !== undefined ? lp.dotSoftness : 0.05, false, 0.05);
+            }
+
+            if (lay.generatorType === 'pixel_noise') {
+                algoSpecificHTML += `<div class="section-title">Параметри піксельного шуму (Pixel Noise PRO)</div>`;
+                algoSpecificHTML += createSlider("Проміжок між пікселями (Gap)", "pixelGap", 0, 0.5, 0.01, lp.pixelGap !== undefined ? lp.pixelGap : 0.0, false, 0.0);
+                algoSpecificHTML += createSlider("Яскравість шва / проміжку", "pixelGapValue", 0, 1, 0.01, lp.pixelGapValue !== undefined ? lp.pixelGapValue : 0.0, false, 0.0);
+                algoSpecificHTML += createSlider("М'якість країв шва", "pixelGapSoftness", 0, 1, 0.01, lp.pixelGapSoftness !== undefined ? lp.pixelGapSoftness : 0.0, false, 0.0);
+
+                algoSpecificHTML += `<div class="property-group grid-2">
+                    <div>
+                        <label class="property-label">Тип сітки</label>
+                        <select class="form-control" onchange="upd('pixelGridType', this.value)">
+                            <option value="standard" ${(lp.pixelGridType||'standard')==='standard'?'selected':''}>Стандартна (Grid)</option>
+                            <option value="staggered_h" ${lp.pixelGridType==='staggered_h'?'selected':''}>Горизонтальний зсув (Brick H)</option>
+                            <option value="staggered_v" ${lp.pixelGridType==='staggered_v'?'selected':''}>Вертикальний зсув (Brick V)</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="property-label">Форма блоків</label>
+                        <select class="form-control" onchange="upd('pixelShape', this.value); renderProps();">
+                            <option value="square" ${(lp.pixelShape||'square')==='square'?'selected':''}>Квадрат (Square)</option>
+                            <option value="round" ${lp.pixelShape==='round'?'selected':''}>Скруглений (Round)</option>
+                            <option value="circle" ${lp.pixelShape==='circle'?'selected':''}>Коло (Circle)</option>
+                            <option value="diamond" ${lp.pixelShape==='diamond'?'selected':''}>Ромб (Diamond)</option>
+                        </select>
+                    </div>
+                </div>`;
+
+                if ((lp.pixelShape || 'square') === 'round') {
+                    algoSpecificHTML += createSlider("Радіус скруглення кутів", "pixelCornerRadius", 0.01, 0.5, 0.01, lp.pixelCornerRadius !== undefined ? lp.pixelCornerRadius : 0.1, false, 0.1);
+                }
+
+                algoSpecificHTML += `<div class="property-group grid-2">
+                    <div>
+                        <label class="property-label">Розподіл шуму</label>
+                        <select class="form-control" onchange="upd('pixelDistribution', this.value); renderProps();">
+                            <option value="uniform" ${(lp.pixelDistribution||'uniform')==='uniform'?'selected':''}>Випадковий (Uniform)</option>
+                            <option value="binary" ${lp.pixelDistribution==='binary'?'selected':''}>Бінарний (0 / 1)</option>
+                            <option value="stepped" ${lp.pixelDistribution==='stepped'?'selected':''}>Східчастий (Levels)</option>
+                            <option value="gaussian" ${lp.pixelDistribution==='gaussian'?'selected':''}>Гаусів (M'який)</option>
+                            <option value="dither" ${lp.pixelDistribution==='dither'?'selected':''}>Шаховий Dither</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="property-label">Псевдовипадковий Seed</label>
+                        <div style="display:flex; gap:4px;">
+                            <input type="number" class="form-control" min="0" max="9999" value="${lp.pixelSeed || 0}" onchange="upd('pixelSeed', parseInt(this.value)||0)" style="font-size:11px;">
+                            <button type="button" class="btn btn-secondary" style="padding:2px 8px; font-size:11px;" onclick="upd('pixelSeed', Math.floor(Math.random()*9999)); renderProps();" title="Випадковий seed">🎲</button>
+                        </div>
+                    </div>
+                </div>`;
+
+                if (lp.pixelDistribution === 'binary') {
+                    algoSpecificHTML += createSlider("Поріг бінарності (Threshold)", "pixelThreshold", 0, 1, 0.01, lp.pixelThreshold !== undefined ? lp.pixelThreshold : 0.5, false, 0.5);
+                } else if (lp.pixelDistribution === 'stepped') {
+                    algoSpecificHTML += createSlider("Кількість рівнів (Steps)", "pixelSteps", 2, 16, 1, lp.pixelSteps || 4, false, 4);
+                }
+
+                algoSpecificHTML += `<div class="property-group grid-2">
+                    <div>
+                        <label class="property-label">3D Фаска / Об'єм</label>
+                        <select class="form-control" onchange="upd('pixelBevelType', this.value)">
+                            <option value="pyramid" ${(lp.pixelBevelType||'pyramid')==='pyramid'?'selected':''}>Пірамідальна (Pyramid)</option>
+                            <option value="soft" ${lp.pixelBevelType==='soft'?'selected':''}>Купол (Dome)</option>
+                            <option value="inset" ${lp.pixelBevelType==='inset'?'selected':''}>Внутрішня тінь (Inset)</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="property-label">Інтенсивність 3D фаски</label>
+                        ${sliderRow(0, 1, 0.05, lp.pixelBevel !== undefined ? lp.pixelBevel : 0.0, 0.0, "upd('pixelBevel', parseFloat(this.value))")}
+                    </div>
+                </div>`;
             }
 
             if (lay.generatorType === 'gradient') {
