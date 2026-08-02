@@ -944,6 +944,86 @@
                 return { x: curX, y: curY };
             }
 
+            static applyZoomStretch(nx, ny, w) {
+                let zcx = w.centerX !== undefined ? Number(w.centerX) : 0.5;
+                let zcy = w.centerY !== undefined ? Number(w.centerY) : 0.5;
+                let zst = (w.strength !== undefined ? Number(w.strength) : 50) / 100;
+                let zrad = (w.radius !== undefined ? Number(w.radius) : 500) / 512;
+                let zinnerR = (w.innerRadius !== undefined ? Number(w.innerRadius) : 0) / 512;
+                let zpow = w.power !== undefined ? Number(w.power) : 1.0;
+                let ztw = (w.twist !== undefined ? Number(w.twist) : 0) * Math.PI / 180;
+                let zfalloff = w.falloff || 'zoom_rays';
+                let ztileWrap = w.tileWrap || 'none';
+
+                let zdx = nx - zcx;
+                let zdy = ny - zcy;
+                let zd = Math.sqrt(zdx * zdx + zdy * zdy);
+
+                if (zd <= zinnerR || zd <= 0.00001) return { nx, ny };
+
+                let effD = zd - zinnerR;
+                let effRad = Math.max(0.0001, zrad - zinnerR);
+                let normD = effD / effRad;
+                let weight = 1.0;
+
+                if (zfalloff === 'zoom_rays' || zfalloff === 'linear') {
+                    weight = normD;
+                } else if (zfalloff === 'full' || zfalloff === 'constant') {
+                    weight = 1.0;
+                } else if (zfalloff === 'smooth') {
+                    weight = Math.exp(-normD * normD * 0.5);
+                } else if (zfalloff === 'exponential') {
+                    weight = normD * normD;
+                } else if (zfalloff === 'spherical') {
+                    weight = Math.sqrt(Math.max(0.0001, normD));
+                }
+
+                if (zpow !== 1.0 && weight > 0) {
+                    weight = Math.pow(weight, zpow);
+                }
+
+                // Smooth radial spatial scale mapping - no tile cuts or grid segment artifacts
+                let zoomFactor = zst * weight;
+                let scale = 1.0;
+
+                if (zoomFactor >= 0) {
+                    scale = 1.0 / (1.0 + zoomFactor);
+                } else {
+                    scale = 1.0 - zoomFactor;
+                }
+
+                let rx = zdx * scale;
+                let ry = zdy * scale;
+
+                if (ztw !== 0) {
+                    let twistAngle = ztw * weight;
+                    let cosA = Math.cos(twistAngle);
+                    let sinA = Math.sin(twistAngle);
+                    let trx = rx * cosA - ry * sinA;
+                    let try_ = rx * sinA + ry * cosA;
+                    rx = trx;
+                    ry = try_;
+                }
+
+                let outX = zcx + rx;
+                let outY = zcy + ry;
+
+                if (ztileWrap === 'wrap') {
+                    outX = ((outX % 1) + 1) % 1;
+                    outY = ((outY % 1) + 1) % 1;
+                } else if (ztileWrap === 'clamp') {
+                    outX = Math.max(0, Math.min(1, outX));
+                    outY = Math.max(0, Math.min(1, outY));
+                } else if (ztileWrap === 'mirror') {
+                    let mx = Math.floor(outX);
+                    let my = Math.floor(outY);
+                    outX = (mx % 2 === 0) ? (outX - mx) : (1 - (outX - mx));
+                    outY = (my % 2 === 0) ? (outY - my) : (1 - (outY - my));
+                }
+
+                return { nx: outX, ny: outY };
+            }
+
             applyDeformationsToImageData(sourceImageData, targetImageData) {
                 const w = sourceImageData.width;
                 const h = sourceImageData.height;
@@ -1027,18 +1107,37 @@
                 if (hitFound || !warps) return;
                 for (let wIdx = 0; wIdx < warps.length; wIdx++) {
                     let w = warps[wIdx];
-                    if (w.type !== 'point_deformer' || w.visible === false || w.showHandles === false || !w.points) continue;
+                    if (w.visible === false || w.showHandles === false) continue;
 
-                    for (let pIdx = 0; pIdx < w.points.length; pIdx++) {
-                        let pt = w.points[pIdx];
-                        let dist = Math.hypot(canX - pt.x, canY - pt.y);
+                    if (w.type === 'point_deformer' && w.points) {
+                        for (let pIdx = 0; pIdx < w.points.length; pIdx++) {
+                            let pt = w.points[pIdx];
+                            let dist = Math.hypot(canX - pt.x, canY - pt.y);
+                            if (dist <= 18) {
+                                hitFound = true;
+                                deformerDragState.isDragging = true;
+                                deformerDragState.warpType = 'point_deformer';
+                                deformerDragState.isGlobal = isGlobal;
+                                deformerDragState.warpIndex = wIdx;
+                                deformerDragState.pointIndex = pIdx;
+                                w.activePointIndex = pIdx;
+
+                                if (isGlobal) renderGlobal();
+                                else renderProps();
+                                requestRender();
+                                return;
+                            }
+                        }
+                    } else if (w.type === 'zoom_stretch') {
+                        let cxPos = (w.centerX !== undefined ? w.centerX : 0.5) * 512;
+                        let cyPos = (w.centerY !== undefined ? w.centerY : 0.5) * 512;
+                        let dist = Math.hypot(canX - cxPos, canY - cyPos);
                         if (dist <= 18) {
                             hitFound = true;
                             deformerDragState.isDragging = true;
+                            deformerDragState.warpType = 'zoom_stretch';
                             deformerDragState.isGlobal = isGlobal;
                             deformerDragState.warpIndex = wIdx;
-                            deformerDragState.pointIndex = pIdx;
-                            w.activePointIndex = pIdx;
 
                             if (isGlobal) renderGlobal();
                             else renderProps();
@@ -1083,7 +1182,22 @@
             let pIdx = deformerDragState.pointIndex;
 
             let w = isGlobal ? (state.global.warps && state.global.warps[wIdx]) : (state.selectedLayerId && state.layers.find(l => l.id === state.selectedLayerId)?.params?.warps?.[wIdx]);
-            if (w && w.points && w.points[pIdx]) {
+            if (w && w.type === 'zoom_stretch') {
+                w.centerX = canX / 512;
+                w.centerY = canY / 512;
+
+                if (isGlobal) {
+                    invalidateCaches();
+                    renderGlobal();
+                } else {
+                    let lay = state.layers.find(l => l.id === state.selectedLayerId);
+                    if (lay) lay.isDirty = true;
+                    renderProps();
+                }
+
+                requestRender();
+                return true;
+            } else if (w && w.points && w.points[pIdx]) {
                 w.points[pIdx].x = canX;
                 w.points[pIdx].y = canY;
 
@@ -1232,9 +1346,10 @@
             let scaleFactor = w / 512;
 
             const drawWarpHandles = (warp, isGlobal) => {
-                if (!warp || warp.type !== 'point_deformer' || warp.visible === false || warp.showHandles === false || !warp.points) return;
+                if (!warp || warp.visible === false || warp.showHandles === false) return;
 
-                warp.points.forEach((pt, pIdx) => {
+                if (warp.type === 'point_deformer' && warp.points) {
+                    warp.points.forEach((pt, pIdx) => {
                     let px = (pt.x !== undefined ? pt.x : 256) * scaleFactor;
                     let py = (pt.y !== undefined ? pt.y : 256) * scaleFactor;
                     let radius = (pt.radius || 100) * scaleFactor;
@@ -1319,6 +1434,100 @@
 
                     cx.restore();
                 });
+            } else if (warp.type === 'zoom_stretch') {
+                let cxPos = (warp.centerX !== undefined ? warp.centerX : 0.5) * w;
+                let cyPos = (warp.centerY !== undefined ? warp.centerY : 0.5) * h;
+                let radius = (warp.radius !== undefined ? warp.radius : 250) * scaleFactor;
+                let innerRadius = (warp.innerRadius || 0) * scaleFactor;
+
+                cx.save();
+
+                // 1. Outer influence circle
+                cx.beginPath();
+                cx.arc(cxPos, cyPos, radius, 0, Math.PI * 2);
+                cx.strokeStyle = 'rgba(245, 158, 11, 0.85)';
+                cx.lineWidth = 1.8;
+                cx.setLineDash([6, 4]);
+                cx.stroke();
+                cx.setLineDash([]);
+                cx.fillStyle = 'rgba(245, 158, 11, 0.05)';
+                cx.fill();
+
+                // 2. Inner safe radius circle
+                if (innerRadius > 0) {
+                    cx.beginPath();
+                    cx.arc(cxPos, cyPos, innerRadius, 0, Math.PI * 2);
+                    cx.strokeStyle = 'rgba(239, 68, 68, 0.85)';
+                    cx.lineWidth = 1.5;
+                    cx.setLineDash([3, 3]);
+                    cx.stroke();
+                    cx.setLineDash([]);
+                }
+
+                // 3. Radial direction indicators / crosshair
+                let rayLen = Math.min(radius, 40 * scaleFactor);
+                cx.strokeStyle = '#f59e0b';
+                cx.lineWidth = 1.5;
+
+                cx.beginPath();
+                cx.moveTo(cxPos - rayLen, cyPos); cx.lineTo(cxPos + rayLen, cyPos);
+                cx.moveTo(cxPos, cyPos - rayLen); cx.lineTo(cxPos, cyPos + rayLen);
+                cx.stroke();
+
+                // Radial arrowheads
+                let st = warp.strength !== undefined ? warp.strength : 30;
+                let arrowOffset = rayLen * 0.7;
+                let directions = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+                let dirSign = st >= 0 ? 1 : -1;
+                let headSize = 5 * scaleFactor;
+
+                directions.forEach(([dxDir, dyDir]) => {
+                    let ax = cxPos + dxDir * arrowOffset;
+                    let ay = cyPos + dyDir * arrowOffset;
+                    let dirX = dxDir * dirSign;
+                    let dirY = dyDir * dirSign;
+
+                    cx.beginPath();
+                    cx.moveTo(ax + dirX * headSize, ay + dirY * headSize);
+                    cx.lineTo(ax - dirY * headSize, ay + dirX * headSize);
+                    cx.lineTo(ax + dirY * headSize, ay - dirX * headSize);
+                    cx.closePath();
+                    cx.fillStyle = '#f59e0b';
+                    cx.fill();
+                });
+
+                // 4. Center point target handle
+                cx.beginPath();
+                cx.arc(cxPos, cyPos, 8, 0, Math.PI * 2);
+                cx.fillStyle = '#f59e0b';
+                cx.shadowColor = 'rgba(0,0,0,0.6)';
+                cx.shadowBlur = 6;
+                cx.fill();
+                cx.shadowBlur = 0;
+
+                cx.beginPath();
+                cx.arc(cxPos, cyPos, 3, 0, Math.PI * 2);
+                cx.fillStyle = '#ffffff';
+                cx.fill();
+
+                // 5. Label badge
+                cx.font = 'bold 10px sans-serif';
+                let label = `💫 Zoom Stretch (${st > 0 ? '+' : ''}${Math.round(st)}%)`;
+                let textWidth = cx.measureText(label).width;
+
+                cx.fillStyle = 'rgba(15, 15, 17, 0.88)';
+                cx.fillRect(cxPos - textWidth / 2 - 5, cyPos - radius - 20, textWidth + 10, 16);
+                cx.strokeStyle = 'rgba(245, 158, 11, 0.7)';
+                cx.lineWidth = 1;
+                cx.strokeRect(cxPos - textWidth / 2 - 5, cyPos - radius - 20, textWidth + 10, 16);
+
+                cx.fillStyle = '#f59e0b';
+                cx.textAlign = 'center';
+                cx.textBaseline = 'middle';
+                cx.fillText(label, cxPos, cyPos - radius - 12);
+
+                cx.restore();
+            }
             };
 
             if (state.global && state.global.warps) {
@@ -1354,6 +1563,7 @@
             const typeNames = {
                 'none': 'Вимкнено',
                 'point_deformer': '🎯 Точковий',
+                'zoom_stretch': '💫 Zoom Stretch',
                 'displacement': 'Displacement',
                 'vortex': 'Vortex',
                 'twirl': 'Twirl',
@@ -1365,7 +1575,7 @@
                 'polar': 'Полярні'
             };
             let typeBadge = typeNames[w.type] || w.type || 'Немає';
-            let warpIcon = w.type === 'point_deformer' ? '🎯' : (w.type === 'none' ? '⚪' : '🌀');
+            let warpIcon = w.type === 'point_deformer' ? '🎯' : (w.type === 'zoom_stretch' ? '💫' : (w.type === 'none' ? '⚪' : '🌀'));
 
             if (w.type === 'point_deformer') {
                 if (!w.points || !Array.isArray(w.points) || w.points.length === 0) {
@@ -1449,6 +1659,7 @@
                             <select onchange="${updateFn}(${idx}, 'type', this.value)" class="form-control" style="margin-bottom:8px; margin-top:4px;">
                                 <option value="none" ${w.type==='none'?'selected':''}>Немає</option>
                                 <option value="point_deformer" selected>🎯 Точковий деформатор (Deformer Studio)</option>
+                                <option value="zoom_stretch" ${w.type==='zoom_stretch'?'selected':''}>💫 Радіальне Витягування (Radial Zoom Stretch)</option>
                                 <option value="displacement" ${w.type==='displacement'?'selected':''}>Displacement</option>
                                 <option value="vortex" ${w.type==='vortex'?'selected':''}>Vortex</option>
                                 <option value="twirl" ${w.type==='twirl'?'selected':''}>Twirl (Spiral Falloff)</option>
@@ -1495,6 +1706,7 @@
                         <select onchange="${updateFn}(${idx}, 'type', this.value)" class="form-control" style="margin-bottom:8px; margin-top:4px;">
                             <option value="none" ${w.type==='none'?'selected':''}>Немає</option>
                             <option value="point_deformer" ${w.type==='point_deformer'?'selected':''}>🎯 Точковий деформатор (Deformer Studio)</option>
+                            <option value="zoom_stretch" ${w.type==='zoom_stretch'?'selected':''}>💫 Радіальне Витягування (Radial Zoom Stretch)</option>
                             <option value="displacement" ${w.type==='displacement'?'selected':''}>Displacement</option>
                             <option value="vortex" ${w.type==='vortex'?'selected':''}>Vortex</option>
                             <option value="twirl" ${w.type==='twirl'?'selected':''}>Twirl (Spiral Falloff)</option>
@@ -1505,6 +1717,73 @@
                             <option value="distortion" ${w.type==='distortion'?'selected':''}>Дісторсія</option>
                             <option value="polar" ${w.type==='polar'?'selected':''}>Полярні координати</option>
                         </select>
+                        ${w.type === 'zoom_stretch' ? `
+                        <div style="background:rgba(255,255,255,0.02); padding:8px; border-radius:6px; margin-bottom:8px; border:1px solid rgba(255,255,255,0.08);">
+                            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; background:rgba(0,0,0,0.2); padding:4px 6px; border-radius:4px;">
+                                <span style="font-weight:700; font-size:10px; color:#f59e0b;">🎯 Центр та Параметри Zoom Stretch</span>
+                                <label class="checkbox-label" style="margin:0; font-size:10px;">
+                                    <input type="checkbox" ${w.showHandles!==false?'checked':''} onchange="toggleDeformerHandles(${isGlobal}, ${idx}, this.checked)">
+                                    Маркер на канвасі
+                                </label>
+                            </div>
+                            
+                            <div style="margin-bottom:6px;">
+                                <label class="property-label" style="font-size:10px; margin-bottom:2px;">Центр X (Position X px)</label>
+                                ${sliderRow(0, 512, 1, Math.round((w.centerX !== undefined ? w.centerX : 0.5) * 512), 256, `${updateFn}(${idx}, 'centerX', this.value / 512)`)}
+                            </div>
+
+                            <div style="margin-bottom:6px;">
+                                <label class="property-label" style="font-size:10px; margin-bottom:2px;">Центр Y (Position Y px)</label>
+                                ${sliderRow(0, 512, 1, Math.round((w.centerY !== undefined ? w.centerY : 0.5) * 512), 256, `${updateFn}(${idx}, 'centerY', this.value / 512)`)}
+                            </div>
+
+                            <div style="margin-bottom:6px;">
+                                <label class="property-label" style="font-size:10px; margin-bottom:2px;">Сила Zoom Stretch (% intensity)</label>
+                                ${sliderRow(-300, 300, 1, w.strength !== undefined ? w.strength : 50, 50, `${updateFn}(${idx}, 'strength', this.value)`)}
+                            </div>
+
+                            <div style="margin-bottom:6px;">
+                                <label class="property-label" style="font-size:10px; margin-bottom:2px;">Радіус впливу (Radius px)</label>
+                                ${sliderRow(10, 1000, 1, w.radius !== undefined ? w.radius : 500, 500, `${updateFn}(${idx}, 'radius', this.value)`)}
+                            </div>
+
+                            <div style="margin-bottom:6px;">
+                                <label class="property-label" style="font-size:10px; margin-bottom:2px;">Профіль загасання (Falloff Profile)</label>
+                                <select class="form-control" onchange="${updateFn}(${idx}, 'falloff', this.value)" style="font-size:11px;">
+                                    <option value="zoom_rays" ${(w.falloff || 'zoom_rays') === 'zoom_rays' || w.falloff === 'linear' ? 'selected' : ''}>💫 Photoshop Zoom Blur (Витягування від центру до країв)</option>
+                                    <option value="full" ${w.falloff === 'full' || w.falloff === 'constant' ? 'selected' : ''}>🌐 Повний Zoom (Рівномірний масштаб по всьому полотну)</option>
+                                    <option value="smooth" ${w.falloff === 'smooth' ? 'selected' : ''}>🌊 Плавний купол (Smoothstep)</option>
+                                    <option value="exponential" ${w.falloff === 'exponential' ? 'selected' : ''}>📈 Прискорений до країв (Exponential Rays)</option>
+                                    <option value="spherical" ${w.falloff === 'spherical' ? 'selected' : ''}>🔮 Сферичний лінзовий Zoom (Spherical)</option>
+                                </select>
+                            </div>
+
+                            <div style="margin-bottom:6px;">
+                                <label class="property-label" style="font-size:10px; margin-bottom:2px;">Ступінь / Експонента (Power Curve)</label>
+                                ${sliderRow(0.1, 5.0, 0.1, w.power !== undefined ? w.power : 1.0, 1.0, `${updateFn}(${idx}, 'power', this.value)`)}
+                            </div>
+
+                            <div style="margin-bottom:6px;">
+                                <label class="property-label" style="font-size:10px; margin-bottom:2px;">Скручування / Спіраль (Spiral Twist °)</label>
+                                ${sliderRow(-360, 360, 1, w.twist !== undefined ? w.twist : 0, 0, `${updateFn}(${idx}, 'twist', this.value)`)}
+                            </div>
+
+                            <div style="margin-bottom:6px;">
+                                <label class="property-label" style="font-size:10px; margin-bottom:2px;">Захисна внутрішня зона (Inner Safe Radius px)</label>
+                                ${sliderRow(0, 250, 1, w.innerRadius !== undefined ? w.innerRadius : 0, 0, `${updateFn}(${idx}, 'innerRadius', this.value)`)}
+                            </div>
+
+                            <div style="margin-bottom:6px;">
+                                <label class="property-label" style="font-size:10px; margin-bottom:2px;">Режим обробки меж (Edge Mode)</label>
+                                <select class="form-control" onchange="${updateFn}(${idx}, 'tileWrap', this.value)" style="font-size:11px;">
+                                    <option value="none" ${(w.tileWrap || 'none') === 'none' ? 'selected' : ''}>✨ Безперервне просторове (Continuous / Без швів та сегментів)</option>
+                                    <option value="wrap" ${w.tileWrap === 'wrap' ? 'selected' : ''}>🔄 Повторення плитки 1x1 (Tile Wrap)</option>
+                                    <option value="clamp" ${w.tileWrap === 'clamp' ? 'selected' : ''}>✂️ Обрізка за краями (Clamp)</option>
+                                    <option value="mirror" ${w.tileWrap === 'mirror' ? 'selected' : ''}>🪞 Дзеркальне (Mirror)</option>
+                                </select>
+                            </div>
+                        </div>
+                        ` : ''}
                         ${w.type === 'displacement' ? `
                         <div style="margin-bottom:6px;">
                             <label class="property-label" style="font-size:10px; margin-bottom:2px;">Режим Displacement</label>
@@ -1521,7 +1800,7 @@
                             ${sliderRow(0, 360, 1, w.angle !== undefined ? w.angle : 0, 0, `${updateFn}(${idx}, 'angle', this.value)`)}
                         </div>` : ''}
                         ` : ''}
-                        ${w.type !== 'none' ? `
+                        ${(w.type !== 'none' && w.type !== 'zoom_stretch') ? `
                         <div style="margin-bottom:4px;">
                             <label class="property-label" style="font-size:10px; margin-bottom:2px;">Сила (Strength)</label>
                             ${sliderRow(-100, 100, 1, w.strength !== undefined ? w.strength : 10, 10, `${updateFn}(${idx}, 'strength', this.value)`)}
@@ -3284,6 +3563,10 @@
                                                 ny = pRes.y / h;
                                             }
                                         }
+                                        else if (wModifier.type === 'zoom_stretch') {
+                                            let zRes = CanvasDeformerManager.applyZoomStretch(nx, ny, wModifier);
+                                            nx = zRes.nx; ny = zRes.ny;
+                                        }
                                     }
                                 }
                                 // 2. Global Transform
@@ -3447,6 +3730,10 @@
                                                 ny = pRes.y / h;
                                             }
                                         }
+                                        else if (wModifier.type === 'zoom_stretch') {
+                                            let zRes = CanvasDeformerManager.applyZoomStretch(nx, ny, wModifier);
+                                            nx = zRes.nx; ny = zRes.ny;
+                                        }
                                     }
                                 }
                             }
@@ -3546,6 +3833,10 @@
                                                 nx = pRes.x / w;
                                                 ny = pRes.y / h;
                                             }
+                                        }
+                                        else if (wModifier.type === 'zoom_stretch') {
+                                            let zRes = CanvasDeformerManager.applyZoomStretch(nx, ny, wModifier);
+                                            nx = zRes.nx; ny = zRes.ny;
                                         }
                                     }
                                 }
@@ -3685,6 +3976,10 @@
                                                 nx = pRes.x / w;
                                                 ny = pRes.y / h;
                                             }
+                                        }
+                                        else if (wModifier.type === 'zoom_stretch') {
+                                            let zRes = CanvasDeformerManager.applyZoomStretch(nx, ny, wModifier);
+                                            nx = zRes.nx; ny = zRes.ny;
                                         }
                                     }
                                 }
@@ -4695,7 +4990,7 @@
             let lay = state.layers.find(l=>l.id===state.selectedLayerId);
             if (!lay || !lay.params || !lay.params.warps || !lay.params.warps[idx]) return;
             triggerInteraction();
-            let isStrKey = (key === 'type' || key === 'dispMode');
+            let isStrKey = (key === 'type' || key === 'dispMode' || key === 'falloff' || key === 'tileWrap');
             lay.params.warps[idx][key] = isStrKey ? val : parseFloat(val);
             if (key === 'type' && val === 'point_deformer') {
                 if (!lay.params.warps[idx].points || lay.params.warps[idx].points.length === 0) {
@@ -4703,6 +4998,18 @@
                     lay.params.warps[idx].activePointIndex = 0;
                 }
                 if (lay.params.warps[idx].showHandles === undefined) lay.params.warps[idx].showHandles = true;
+            } else if (key === 'type' && val === 'zoom_stretch') {
+                let w = lay.params.warps[idx];
+                if (w.centerX === undefined) w.centerX = 0.5;
+                if (w.centerY === undefined) w.centerY = 0.5;
+                if (w.strength === undefined) w.strength = 50;
+                if (w.radius === undefined) w.radius = 500;
+                if (w.falloff === undefined) w.falloff = 'zoom_rays';
+                if (w.power === undefined) w.power = 1.0;
+                if (w.twist === undefined) w.twist = 0;
+                if (w.innerRadius === undefined) w.innerRadius = 0;
+                if (w.tileWrap === undefined) w.tileWrap = 'none';
+                if (w.showHandles === undefined) w.showHandles = true;
             }
             lay.isDirty = true;
             if (isStrKey) renderProps();
@@ -4761,7 +5068,7 @@
         window.updateGlobalWarp = function(idx, key, val) {
             if (!state.global || !state.global.warps || !state.global.warps[idx]) return;
             triggerInteraction();
-            let isStrKey = (key === 'type' || key === 'dispMode');
+            let isStrKey = (key === 'type' || key === 'dispMode' || key === 'falloff' || key === 'tileWrap');
             state.global.warps[idx][key] = isStrKey ? val : parseFloat(val);
             if (key === 'type' && val === 'point_deformer') {
                 if (!state.global.warps[idx].points || state.global.warps[idx].points.length === 0) {
@@ -4769,6 +5076,18 @@
                     state.global.warps[idx].activePointIndex = 0;
                 }
                 if (state.global.warps[idx].showHandles === undefined) state.global.warps[idx].showHandles = true;
+            } else if (key === 'type' && val === 'zoom_stretch') {
+                let w = state.global.warps[idx];
+                if (w.centerX === undefined) w.centerX = 0.5;
+                if (w.centerY === undefined) w.centerY = 0.5;
+                if (w.strength === undefined) w.strength = 50;
+                if (w.radius === undefined) w.radius = 500;
+                if (w.falloff === undefined) w.falloff = 'zoom_rays';
+                if (w.power === undefined) w.power = 1.0;
+                if (w.twist === undefined) w.twist = 0;
+                if (w.innerRadius === undefined) w.innerRadius = 0;
+                if (w.tileWrap === undefined) w.tileWrap = 'none';
+                if (w.showHandles === undefined) w.showHandles = true;
             }
             invalidateCaches();
             if (isStrKey) renderGlobal();
