@@ -175,7 +175,9 @@
                 "Контраст": "Контраст",
                 "Гамма": "Гамма",
                 "Перспектива вертикальна": "Перспектива вертикальна",
-                "Перспектива горизонтальна": "Перспектива горизонтальна"
+                "Перспектива горизонтальна": "Перспектива горизонтальна",
+                "Розмір точок": "Розмір точок",
+                "М'якість країв": "М'якість країв"
             },
             en: {
                 app_title: "Veil Studio — Procedural Texture Generator",
@@ -347,7 +349,9 @@
                 "Контраст": "Contrast",
                 "Гамма": "Gamma",
                 "Перспектива вертикальна": "Vertical Perspective",
-                "Перспектива горизонтальна": "Horizontal Perspective"
+                "Перспектива горизонтальна": "Horizontal Perspective",
+                "Розмір точок": "Dot Size",
+                "М'якість країв": "Edge Softness"
             }
         };
 
@@ -3294,7 +3298,56 @@
                 case 'pixel_noise': v=Voronoi.hash(Math.floor(tx*sx), Math.floor(ty*sy)); break;
                 case 'white_noise': v=Voronoi.hash(Math.floor(tx*sx*256)+(p.seed||0)*31, Math.floor(ty*sy*256)+(p.seed||0)*17); break;
                 case 'checkerboard': v=(Math.floor(tx*sx)+Math.floor(ty*sy))%2===0?1:0; break;
-                case 'dots': let rdx=(tx*sx)%1-0.5, rdy=(ty*sy)%1-0.5; v=Math.sqrt(rdx*rdx+rdy*rdy)<(p.dotSize??0.3)?1:0; break;
+                case 'dots': {
+                    let gx = tx * (sx || 10);
+                    let gy = ty * (sy || 10);
+
+                    let ix = Math.floor(gx);
+                    let iy = Math.floor(gy);
+
+                    let fx = gx - ix;
+                    let fy = gy - iy;
+
+                    if (p.dotGrid === 'staggered' || p.dotGrid === 'hex') {
+                        let isOdd = Math.abs(iy) % 2 === 1;
+                        if (isOdd) {
+                            fx += 0.5;
+                            if (fx >= 1) fx -= 1;
+                        }
+                    }
+
+                    let rdx = fx - 0.5;
+                    let rdy = fy - 0.5;
+
+                    let shape = p.dotShape || 'circle';
+                    let d = 0;
+                    if (shape === 'square') {
+                        d = Math.max(Math.abs(rdx), Math.abs(rdy));
+                    } else if (shape === 'diamond') {
+                        d = Math.abs(rdx) + Math.abs(rdy);
+                    } else {
+                        d = Math.sqrt(rdx * rdx + rdy * rdy);
+                    }
+
+                    let radius = p.dotSize !== undefined ? p.dotSize : 0.25;
+                    let softness = p.dotSoftness !== undefined ? p.dotSoftness : 0.05;
+
+                    if (softness <= 0.001) {
+                        v = d < radius ? 1 : 0;
+                    } else {
+                        let rOuter = radius;
+                        let rInner = Math.max(0, radius * (1 - softness));
+                        if (d <= rInner) {
+                            v = 1;
+                        } else if (d >= rOuter) {
+                            v = 0;
+                        } else {
+                            let t = (d - rInner) / (rOuter - rInner);
+                            v = 1 - (t * t * (3 - 2 * t));
+                        }
+                    }
+                    break;
+                }
                 case 'weave': let wx=Math.sin(tx*sx*Math.PI*2), wy=Math.sin(ty*sy*Math.PI*2); v=(wx*wy+1)/2; break;
                 case 'value_noise': 
                     let ix=Math.floor(tx*sx), iy=Math.floor(ty*sy), fx=(tx*sx)-ix, fy=(ty*sy)-iy;
@@ -4612,6 +4665,7 @@
         // самі, щойно з'являються на екрані для свого типу генератора.
         function freshLayerParams() {
             return { seamless:false, scale:10, scaleX:10, scaleY:10, lockScale:true, layerScale:1, contrast:1, brightness:1, angle:0, perspectiveV:0, perspectiveH:0, blur:0, blurType:'gaussian', blurClampEdge:false,
+                dotSize: 0.25, dotSoftness: 0.05, dotGrid: 'square', dotShape: 'circle',
                 offsetX:0, offsetY:0, invert:false, warps:[], warpOrder: 'transform_first',
                 useThreshold:false, thresholdVal:50, useLevels:false, levelMin:0, levelMax:100,
                 usePosterize:false, posterizeLevels:4, useFindEdges:false,
@@ -4857,6 +4911,14 @@
                 p.brushFalloff = parseFloat((0.2 + Math.random() * 2).toFixed(1));
                 p.brushAngle = Math.floor((Math.random() - 0.5) * 360);
                 p.brushSquash = parseFloat((0.2 + Math.random() * 0.8).toFixed(2));
+            }
+            if (lay.generatorType === 'dots') {
+                p.dotSize = parseFloat((0.05 + Math.random() * 0.4).toFixed(2));
+                p.dotSoftness = parseFloat((Math.random() * 0.3).toFixed(2));
+                let grids = ['square', 'staggered'];
+                let shapes = ['circle', 'square', 'diamond'];
+                p.dotGrid = grids[Math.floor(Math.random() * grids.length)];
+                p.dotShape = shapes[Math.floor(Math.random() * shapes.length)];
             }
 
             lay.isDirty = true;
@@ -5741,6 +5803,29 @@
                 algoSpecificHTML += createSlider("Хвиля кілець: Частота", "ringSineFreq", 1, 30, 1, lp.ringSineFreq !== undefined ? lp.ringSineFreq : 5, false, 5);
                 algoSpecificHTML += createSlider("Хвиля променів: Амплітуда", "radSineAmp", 0, 0.5, 0.01, lp.radSineAmp !== undefined ? lp.radSineAmp : 0, false, 0);
                 algoSpecificHTML += createSlider("Хвиля променів: Частота", "radSineFreq", 1, 30, 1, lp.radSineFreq !== undefined ? lp.radSineFreq : 10, false, 10);
+            }
+
+            if (lay.generatorType === 'dots') {
+                algoSpecificHTML += `<div class="section-title">Параметри точок (Dots Generator)</div>`;
+                algoSpecificHTML += `<div class="property-group grid-2">
+                    <div>
+                        <label class="property-label">Тип сітки</label>
+                        <select class="form-control" onchange="upd('dotGrid', this.value)">
+                            <option value="square" ${(lp.dotGrid||'square')==='square'?'selected':''}>Квадратна сітка</option>
+                            <option value="staggered" ${lp.dotGrid==='staggered'?'selected':''}>Шахматна (Зсув 50%)</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="property-label">Форма</label>
+                        <select class="form-control" onchange="upd('dotShape', this.value)">
+                            <option value="circle" ${(lp.dotShape||'circle')==='circle'?'selected':''}>Коло (Circle)</option>
+                            <option value="square" ${lp.dotShape==='square'?'selected':''}>Квадрат (Square)</option>
+                            <option value="diamond" ${lp.dotShape==='diamond'?'selected':''}>Ромб (Diamond)</option>
+                        </select>
+                    </div>
+                </div>`;
+                algoSpecificHTML += createSlider("Розмір точок", "dotSize", 0.01, 0.5, 0.01, lp.dotSize !== undefined ? lp.dotSize : 0.25, false, 0.25);
+                algoSpecificHTML += createSlider("М'якість країв", "dotSoftness", 0, 1, 0.01, lp.dotSoftness !== undefined ? lp.dotSoftness : 0.05, false, 0.05);
             }
 
             if (lay.generatorType === 'gradient') {
