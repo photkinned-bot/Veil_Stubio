@@ -66,9 +66,7 @@ export class SyncManager {
 
       // Default: Pull from primary composite canvas
       if (typeof window.renderProject === 'function') {
-        const res = (window.mapGeneratorTab && window.mapGeneratorTab.fastPreview && window.mapGeneratorTab.isInteractingWithSliders)
-      ? 256
-      : (window.mapGeneratorTab?.targetResolution || (window.state && window.state.resolution) || 1024);
+        const res = (window.mapGeneratorTab?.targetResolution || (window.state && window.state.resolution) || 512);
         const tempCanvas = document.createElement('canvas');
         tempCanvas.width = res;
         tempCanvas.height = res;

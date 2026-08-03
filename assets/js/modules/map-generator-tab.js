@@ -1410,7 +1410,6 @@ export class MapGeneratorTabComponent {
   getScaledSourceImageData() {
     if (!this.sourceImageData) return null;
     let targetDim = this.targetResolution || 512;
-    if (this.fastPreview && this.isInteractingWithSliders) targetDim = 256;
 
     if (this.sourceImageData.width === targetDim && this.sourceImageData.height === targetDim) {
       return this.sourceImageData;

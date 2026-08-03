@@ -1430,7 +1430,14 @@
 
         let currentTab = 'layer', canvas, ctx;
         let canvasResolution = parseInt(localStorage.getItem('veil_canvas_resolution')) || 512;
-        let lowResOnEdit = localStorage.getItem('veil_low_res_on_edit') === 'true';
+        let lowResOnEdit = (function() {
+            try {
+                let saved = localStorage.getItem('veil_low_res_on_edit');
+                return saved !== null ? saved === 'true' : true;
+            } catch(e) {
+                return true;
+            }
+        })();
         let showCanvasBorder = localStorage.getItem('veil_show_canvas_border') !== 'false';
         let canvasBorderIntensity = parseFloat(localStorage.getItem('veil_canvas_border_intensity'));
         if (isNaN(canvasBorderIntensity)) canvasBorderIntensity = 1.0;
@@ -4359,11 +4366,17 @@
         }
 
         function renderProject(tgtCanvas=null) {
-            let isExport = !!tgtCanvas, cv = tgtCanvas||canvas, cx = cv.getContext('2d');
-            let w = cv.width, h = cv.height, start = performance.now();
-            ensureBuffers(w,h);
+            let isExport = !!tgtCanvas, cv = tgtCanvas||canvas, cx = cv.getContext('2d', { willReadFrequently: true });
+            let fullW = cv.width, fullH = cv.height, start = performance.now();
             
-            let imgData = cx.createImageData(w,h), data = imgData.data;
+            // --- Швидкий превʼю (Draft mode при інтерактивному перетягуванні) ---
+            let isDraft = !isExport && isInteracting && lowResOnEdit && (fullW > 256 || fullH > 256);
+            let w = isDraft ? 256 : fullW;
+            let h = isDraft ? 256 : fullH;
+
+            ensureBuffers(w, h);
+            
+            let imgData = cx.createImageData(w, h), data = imgData.data;
 
             const blendBufferR = getGlobalFloatBuffer('blendBufferR', w * h);
             const blendBufferG = getGlobalFloatBuffer('blendBufferG', w * h);
@@ -4387,7 +4400,7 @@
 
             // --- Dynamic Resolution Metadata ---
             if ($('resolutionInfo')) {
-                $('resolutionInfo').textContent = isExport ? `${w} × ${h}` : `${w} × ${h}${w === 256 ? ' (Чернетка)' : ''}`;
+                $('resolutionInfo').textContent = isExport ? `${fullW} × ${fullH}` : (isDraft ? `${fullW} × ${fullH} (Чернетка ${w}×${h})` : `${fullW} × ${fullH}`);
             }
 
             // --- Глобальна трансформація (Zoom/Rotate/Offset) + глобальний тайлінг ---
@@ -4425,32 +4438,45 @@
                     ensureLayerPaintCanvas(lay);
                 }
 
-                // Per-layer Caching Mechanism (RGB)
+                // Per-layer Dual-Caching Mechanism (Draft vs Full Resolution)
                 let useLayerCache = !isExport && w <= 1024;
                 let needComputeLayer = true;
 
+                if (lay.isDirty) {
+                    lay.isDraftDirty = true;
+                    lay.isFullDirty = true;
+                    lay.isDirty = false;
+                }
+
+                let cacheRKey = isDraft ? 'draftBufferR' : 'fullBufferR';
+                let cacheGKey = isDraft ? 'draftBufferG' : 'fullBufferG';
+                let cacheBKey = isDraft ? 'draftBufferB' : 'fullBufferB';
+                let cacheWKey = isDraft ? 'draftW' : 'fullW';
+                let cacheHKey = isDraft ? 'draftH' : 'fullH';
+                let dirtyKey = isDraft ? 'isDraftDirty' : 'isFullDirty';
+
                 if (useLayerCache) {
-                    if (lay.cachedBufferR && !lay.isDirty && lay.cachedW === w && lay.cachedH === h) {
+                    if (lay[cacheRKey] && !lay[dirtyKey] && lay[cacheWKey] === w && lay[cacheHKey] === h) {
                         needComputeLayer = false;
-                        layerBufferR.set(lay.cachedBufferR);
-                        layerBufferG.set(lay.cachedBufferG);
-                        layerBufferB.set(lay.cachedBufferB);
+                        layerBufferR.set(lay[cacheRKey]);
+                        layerBufferG.set(lay[cacheGKey]);
+                        layerBufferB.set(lay[cacheBKey]);
                     } else {
-                        if (!lay.cachedBufferR || lay.cachedBufferR.length !== w * h) {
-                            lay.cachedBufferR = new Float32Array(w * h);
-                            lay.cachedBufferG = new Float32Array(w * h);
-                            lay.cachedBufferB = new Float32Array(w * h);
+                        if (!lay[cacheRKey] || lay[cacheRKey].length !== w * h) {
+                            lay[cacheRKey] = new Float32Array(w * h);
+                            lay[cacheGKey] = new Float32Array(w * h);
+                            lay[cacheBKey] = new Float32Array(w * h);
                         }
-                        lay.cachedW = w;
-                        lay.cachedH = h;
-                        lay.isDirty = false;
+                        lay[cacheWKey] = w;
+                        lay[cacheHKey] = h;
+                        lay[dirtyKey] = false;
                     }
                 }
 
                 if (needComputeLayer) {
-                    let targetBufR = useLayerCache ? lay.cachedBufferR : layerBufferR;
-                    let targetBufG = useLayerCache ? lay.cachedBufferG : layerBufferG;
-                    let targetBufB = useLayerCache ? lay.cachedBufferB : layerBufferB;
+                    let targetBufR = useLayerCache ? lay[cacheRKey] : layerBufferR;
+                    let targetBufG = useLayerCache ? lay[cacheGKey] : layerBufferG;
+                    let targetBufB = useLayerCache ? lay[cacheBKey] : layerBufferB;
 
                     let activeCymaticsSources = null;
                     if (lay.generatorType === 'cymatics') {
@@ -4461,11 +4487,19 @@
 
                     let isGlobalWarpFirst = (state.global.warpOrder === 'warp_first');
                     let hasGlobalTransform = (gZoom !== 1 || gScaleX !== 1 || gScaleY !== 1 || gRot || gOffX || gOffY || gTileMode !== 'off' || gPerspV || gPerspH);
-                    let hasGlobalWarps = (state.global.warps && state.global.warps.length > 0);
+                    let activeGlobalWarps = (state.global.warps || []).filter(w => w && w.type !== 'none' && w.visible !== false);
+                    let hasGlobalWarps = activeGlobalWarps.length > 0;
 
                     let isLayerWarpFirst = (p.warpOrder === 'warp_first');
                     let hasLayerTransform = (lScale !== 1 || p.angle || p.perspectiveV || p.perspectiveH || p.offsetX || p.offsetY);
-                    let hasLayerWarps = (p.warps && p.warps.length > 0);
+                    let activeLayerWarps = (p.warps || []).filter(w => w && w.type !== 'none' && w.visible !== false);
+                    let hasLayerWarps = activeLayerWarps.length > 0;
+
+                    let grRad = -gRot * Math.PI / 180;
+                    let cosGRot = gRot ? Math.cos(grRad) : 1, sinGRot = gRot ? Math.sin(grRad) : 0;
+
+                    let lrRad = -(p.angle || 0) * Math.PI / 180;
+                    let cosLRot = p.angle ? Math.cos(lrRad) : 1, sinLRot = p.angle ? Math.sin(lrRad) : 0;
 
                     for(let y=0; y<h; y++){
                         const baseY = y/h;
@@ -4476,9 +4510,8 @@
                             if (isGlobalWarpFirst) {
                                 // 1. Global Warps First
                                 if (hasGlobalWarps) {
-                                    for (let wIdx = 0; wIdx < state.global.warps.length; wIdx++) {
-                                        let wModifier = state.global.warps[wIdx];
-                                        if (wModifier.type === 'none' || wModifier.visible === false) continue;
+                                    for (let wIdx = 0; wIdx < activeGlobalWarps.length; wIdx++) {
+                                        let wModifier = activeGlobalWarps[wIdx];
                                         let st = Number(wModifier.strength) / 100;
                                         let fq = Math.max(0.1, Number(wModifier.freq) || 4);
                                         let cdx = nx - 0.5, cdy = ny - 0.5;
@@ -4582,9 +4615,8 @@
                                         ny /= (gZoom * gScaleY);
                                     }
                                     if (gRot) {
-                                        let gr = -gRot * Math.PI / 180;
-                                        let grx = nx * Math.cos(gr) - ny * Math.sin(gr);
-                                        let gry = nx * Math.sin(gr) + ny * Math.cos(gr);
+                                        let grx = nx * cosGRot - ny * sinGRot;
+                                        let gry = nx * sinGRot + ny * cosGRot;
                                         nx = grx; ny = gry;
                                     }
                                     if (gPerspV || gPerspH) {
@@ -4616,9 +4648,8 @@
                                         ny /= (gZoom * gScaleY);
                                     }
                                     if (gRot) {
-                                        let gr = -gRot * Math.PI / 180;
-                                        let grx = nx * Math.cos(gr) - ny * Math.sin(gr);
-                                        let gry = nx * Math.sin(gr) + ny * Math.cos(gr);
+                                        let grx = nx * cosGRot - ny * sinGRot;
+                                        let gry = nx * sinGRot + ny * cosGRot;
                                         nx = grx; ny = gry;
                                     }
                                     if (gPerspV || gPerspH) {
@@ -4643,9 +4674,8 @@
                                 }
                                 // 2. Global Warps Second
                                 if (hasGlobalWarps) {
-                                    for (let wIdx = 0; wIdx < state.global.warps.length; wIdx++) {
-                                        let wModifier = state.global.warps[wIdx];
-                                        if (wModifier.type === 'none' || wModifier.visible === false) continue;
+                                    for (let wIdx = 0; wIdx < activeGlobalWarps.length; wIdx++) {
+                                        let wModifier = activeGlobalWarps[wIdx];
                                         let st = Number(wModifier.strength) / 100;
                                         let fq = Math.max(0.1, Number(wModifier.freq) || 4);
                                         let cdx = nx - 0.5, cdy = ny - 0.5;
@@ -4747,9 +4777,8 @@
                             if (isLayerWarpFirst) {
                                 // 1. Local Warps First
                                 if (hasLayerWarps) {
-                                    for (let wIdx = 0; wIdx < p.warps.length; wIdx++) {
-                                        let wModifier = p.warps[wIdx];
-                                        if (wModifier.type === 'none' || wModifier.visible === false) continue;
+                                    for (let wIdx = 0; wIdx < activeLayerWarps.length; wIdx++) {
+                                        let wModifier = activeLayerWarps[wIdx];
                                         let st = Number(wModifier.strength) / 100;
                                         let fq = Math.max(0.1, Number(wModifier.freq) || 4);
                                         let cdx = nx - 0.5, cdy = ny - 0.5;
@@ -4850,9 +4879,8 @@
                                     nx -= 0.5; ny -= 0.5;
                                     nx /= lScale; ny /= lScale;
                                     if(p.angle) { 
-                                        let r = -p.angle * Math.PI / 180;
-                                        let rnx = nx * Math.cos(r) - ny * Math.sin(r); 
-                                        let rny = nx * Math.sin(r) + ny * Math.cos(r); 
+                                        let rnx = nx * cosLRot - ny * sinLRot; 
+                                        let rny = nx * sinLRot + ny * cosLRot; 
                                         nx = rnx; ny = rny;
                                     }
                                     if (p.perspectiveV || p.perspectiveH) {
@@ -4872,9 +4900,8 @@
                                     nx -= 0.5; ny -= 0.5;
                                     nx /= lScale; ny /= lScale;
                                     if(p.angle) { 
-                                        let r = -p.angle * Math.PI / 180;
-                                        let rnx = nx * Math.cos(r) - ny * Math.sin(r); 
-                                        let rny = nx * Math.sin(r) + ny * Math.cos(r); 
+                                        let rnx = nx * cosLRot - ny * sinLRot; 
+                                        let rny = nx * sinLRot + ny * cosLRot; 
                                         nx = rnx; ny = rny;
                                     }
                                     if (p.perspectiveV || p.perspectiveH) {
@@ -4890,9 +4917,8 @@
                                 }
                                 // 2. Local Warps Second
                                 if (hasLayerWarps) {
-                                    for (let wIdx = 0; wIdx < p.warps.length; wIdx++) {
-                                        let wModifier = p.warps[wIdx];
-                                        if (wModifier.type === 'none' || wModifier.visible === false) continue;
+                                    for (let wIdx = 0; wIdx < activeLayerWarps.length; wIdx++) {
+                                        let wModifier = activeLayerWarps[wIdx];
                                         let st = Number(wModifier.strength) / 100;
                                         let fq = Math.max(0.1, Number(wModifier.freq) || 4);
                                         let cdx = nx - 0.5, cdy = ny - 0.5;
@@ -5031,16 +5057,29 @@
                                 if (p.seamless || gForceSeamless) {
                                     let tx0 = tx % 1.0; if (tx0 < 0) tx0 += 1.0;
                                     let ty0 = ty % 1.0; if (ty0 < 0) ty0 += 1.0;
-                                    let v00 = evalGenerator(lay.generatorType, tx0, ty0, sx, sy, p, activeCymaticsSources, lay);
-                                    let v10 = evalGenerator(lay.generatorType, tx0 - 1, ty0, sx, sy, p, activeCymaticsSources, lay);
-                                    let v01 = evalGenerator(lay.generatorType, tx0, ty0 - 1, sx, sy, p, activeCymaticsSources, lay);
-                                    let v11 = evalGenerator(lay.generatorType, tx0 - 1, ty0 - 1, sx, sy, p, activeCymaticsSources, lay);
+                                    
                                     let softness = gForceSeamless ? Math.max(0, Math.min(1, gForceSoftness)) : Math.max(0, Math.min(1, p.seamlessSoftness ?? 1));
                                     let curveX = gBlendCurve === 'linear' ? tx0 : Perlin.fade(tx0);
                                     let curveY = gBlendCurve === 'linear' ? ty0 : Perlin.fade(ty0);
-                                    let u = Perlin.lerp(softness, tx0, curveX);
-                                    let v_blend = Perlin.lerp(softness, ty0, curveY);
-                                    v = Perlin.lerp(v_blend, Perlin.lerp(u, v00, v10), Perlin.lerp(u, v01, v11));
+                                    let wx = Perlin.lerp(softness, tx0, curveX);
+                                    let wy = Perlin.lerp(softness, ty0, curveY);
+
+                                    let v00 = evalGenerator(lay.generatorType, tx0, ty0, sx, sy, p, activeCymaticsSources, lay);
+                                    let totalV = v00 * (1 - wx) * (1 - wy);
+
+                                    if (wx > 0.0005) {
+                                        let v10 = evalGenerator(lay.generatorType, tx0 - 1, ty0, sx, sy, p, activeCymaticsSources, lay);
+                                        totalV += v10 * wx * (1 - wy);
+                                    }
+                                    if (wy > 0.0005) {
+                                        let v01 = evalGenerator(lay.generatorType, tx0, ty0 - 1, sx, sy, p, activeCymaticsSources, lay);
+                                        totalV += v01 * (1 - wx) * wy;
+                                    }
+                                    if (wx > 0.0005 && wy > 0.0005) {
+                                        let v11 = evalGenerator(lay.generatorType, tx0 - 1, ty0 - 1, sx, sy, p, activeCymaticsSources, lay);
+                                        totalV += v11 * wx * wy;
+                                    }
+                                    v = totalV;
                                 } else {
                                     v = evalGenerator(lay.generatorType, tx, ty, sx, sy, p, activeCymaticsSources, lay);
                                 }
@@ -5073,9 +5112,14 @@
                 }
 
                 if (useLayerCache) {
-                    layerBufferR.set(lay.cachedBufferR);
-                    layerBufferG.set(lay.cachedBufferG);
-                    layerBufferB.set(lay.cachedBufferB);
+                    let sourceCacheR = lay[cacheRKey];
+                    let sourceCacheG = lay[cacheGKey];
+                    let sourceCacheB = lay[cacheBKey];
+                    if (sourceCacheR && sourceCacheG && sourceCacheB) {
+                        layerBufferR.set(sourceCacheR);
+                        layerBufferG.set(sourceCacheG);
+                        layerBufferB.set(sourceCacheB);
+                    }
                 }
 
                 if (p.useFindEdges) {
@@ -5099,7 +5143,6 @@
                 }
 
                 let useBlendIf = !!p.useBlendIf;
-                let bIfChan = p.blendIfChannel || 'gray';
                 let tb1 = (p.blendIfThisBlack1 !== undefined ? p.blendIfThisBlack1 : 0);
                 let tb2 = (p.blendIfThisBlack2 !== undefined ? p.blendIfThisBlack2 : 0);
                 let tw1 = (p.blendIfThisWhite1 !== undefined ? p.blendIfThisWhite1 : 100);
@@ -5109,6 +5152,16 @@
                 let ub2 = (p.blendIfUnderBlack2 !== undefined ? p.blendIfUnderBlack2 : 0);
                 let uw1 = (p.blendIfUnderWhite1 !== undefined ? p.blendIfUnderWhite1 : 100);
                 let uw2 = (p.blendIfUnderWhite2 !== undefined ? p.blendIfUnderWhite2 : 100);
+
+                if (useBlendIf && tb1 <= 0 && tb2 <= 0 && tw1 >= 100 && tw2 >= 100 && ub1 <= 0 && ub2 <= 0 && uw1 >= 100 && uw2 >= 100) {
+                    useBlendIf = false;
+                }
+
+                let bIfChan = p.blendIfChannel || 'gray';
+                let invTb = (tb2 > tb1) ? 1.0 / (tb2 - tb1) : 0;
+                let invTw = (tw2 > tw1) ? 1.0 / (tw2 - tw1) : 0;
+                let invUb = (ub2 > ub1) ? 1.0 / (ub2 - ub1) : 0;
+                let invUw = (uw2 > uw1) ? 1.0 / (uw2 - uw1) : 0;
 
                 const getBIfVal = (r, g, b, chan) => {
                     if (chan === 'red') return r * 100;
@@ -5187,12 +5240,18 @@
                     if (firstBlend) {
                         if (useBlendIf) {
                             for(let i=0; i<w*h; i++) {
-                                let sVal = getBIfVal(layerBufferR[i], layerBufferG[i], layerBufferB[i], bIfChan);
-                                let uVal = getBIfVal(blendBufferR[i], blendBufferG[i], blendBufferB[i], bIfChan);
-                                let bifA = calcBIfRampAlpha(sVal, tb1, tb2, tw1, tw2) * calcBIfRampAlpha(uVal, ub1, ub2, uw1, uw2);
-                                blendBufferR[i] = layerBufferR[i] * bifA;
-                                blendBufferG[i] = layerBufferG[i] * bifA;
-                                blendBufferB[i] = layerBufferB[i] * bifA;
+                                let sr = layerBufferR[i], sg = layerBufferG[i], sb = layerBufferB[i];
+                                let sVal = (bIfChan === 'red') ? sr * 100 : ((bIfChan === 'green') ? sg * 100 : ((bIfChan === 'blue') ? sb * 100 : (0.299 * sr + 0.587 * sg + 0.114 * sb) * 100));
+                                let sA = 1.0;
+                                if (sVal < tb1) sA = 0;
+                                else if (sVal < tb2) sA = (sVal - tb1) * invTb;
+                                else if (sVal > tw2) sA = 0;
+                                else if (sVal > tw1) sA = 1.0 - (sVal - tw1) * invTw;
+
+                                let bifA = sA;
+                                blendBufferR[i] = sr * bifA;
+                                blendBufferG[i] = sg * bifA;
+                                blendBufferB[i] = sb * bifA;
                             }
                         } else {
                             blendBufferR.set(layerBufferR);
@@ -5205,41 +5264,96 @@
                         blendBufferG.set(layerBufferG);
                         blendBufferB.set(layerBufferB);
                     } else {
-                        if (bFn.isColorMode) {
-                            if (useBlendIf) {
-                                for(let i=0; i<w*h; i++) {
-                                    let sVal = getBIfVal(layerBufferR[i], layerBufferG[i], layerBufferB[i], bIfChan);
-                                    let uVal = getBIfVal(blendBufferR[i], blendBufferG[i], blendBufferB[i], bIfChan);
-                                    let bifA = calcBIfRampAlpha(sVal, tb1, tb2, tw1, tw2) * calcBIfRampAlpha(uVal, ub1, ub2, uw1, uw2);
-                                    let effOp = op * bifA;
-                                    let res = bFn(blendBufferR[i], blendBufferG[i], blendBufferB[i], layerBufferR[i], layerBufferG[i], layerBufferB[i]);
-                                    blendBufferR[i] = blendBufferR[i] * (1 - effOp) + res[0] * effOp;
-                                    blendBufferG[i] = blendBufferG[i] * (1 - effOp) + res[1] * effOp;
-                                    blendBufferB[i] = blendBufferB[i] * (1 - effOp) + res[2] * effOp;
+                        let totalPix = w * h;
+                        if (useBlendIf) {
+                            for(let i=0; i<totalPix; i++) {
+                                let sr = layerBufferR[i], sg = layerBufferG[i], sb = layerBufferB[i];
+                                let sVal = (bIfChan === 'red') ? sr * 100 : ((bIfChan === 'green') ? sg * 100 : ((bIfChan === 'blue') ? sb * 100 : (0.299 * sr + 0.587 * sg + 0.114 * sb) * 100));
+                                let sA = 1.0;
+                                if (sVal < tb1) sA = 0;
+                                else if (sVal < tb2) sA = (sVal - tb1) * invTb;
+                                else if (sVal > tw2) sA = 0;
+                                else if (sVal > tw1) sA = 1.0 - (sVal - tw1) * invTw;
+
+                                if (sA <= 0) continue;
+
+                                let br = blendBufferR[i], bg = blendBufferG[i], bb = blendBufferB[i];
+                                let uVal = (bIfChan === 'red') ? br * 100 : ((bIfChan === 'green') ? bg * 100 : ((bIfChan === 'blue') ? bb * 100 : (0.299 * br + 0.587 * bg + 0.114 * bb) * 100));
+                                let uA = 1.0;
+                                if (uVal < ub1) uA = 0;
+                                else if (uVal < ub2) uA = (uVal - ub1) * invUb;
+                                else if (uVal > uw2) uA = 0;
+                                else if (uVal > uw1) uA = 1.0 - (uVal - uw1) * invUw;
+
+                                let bifA = sA * uA;
+                                if (bifA <= 0) continue;
+
+                                let effOp = op * bifA;
+                                if (effOp >= 1.0 && bFn === Blend.normal) {
+                                    blendBufferR[i] = sr; blendBufferG[i] = sg; blendBufferB[i] = sb;
+                                } else if (bFn === Blend.normal) {
+                                    blendBufferR[i] = br * (1 - effOp) + sr * effOp;
+                                    blendBufferG[i] = bg * (1 - effOp) + sg * effOp;
+                                    blendBufferB[i] = bb * (1 - effOp) + sb * effOp;
+                                } else if (bFn === Blend.multiply) {
+                                    blendBufferR[i] = br * (1 - effOp) + (br * sr) * effOp;
+                                    blendBufferG[i] = bg * (1 - effOp) + (bg * sg) * effOp;
+                                    blendBufferB[i] = bb * (1 - effOp) + (bb * sb) * effOp;
+                                } else if (bFn === Blend.screen) {
+                                    blendBufferR[i] = br * (1 - effOp) + (1 - (1 - br) * (1 - sr)) * effOp;
+                                    blendBufferG[i] = bg * (1 - effOp) + (1 - (1 - bg) * (1 - sg)) * effOp;
+                                    blendBufferB[i] = bb * (1 - effOp) + (1 - (1 - bb) * (1 - sb)) * effOp;
+                                } else if (bFn === Blend.overlay) {
+                                    let ovR = br < 0.5 ? 2 * br * sr : 1 - 2 * (1 - br) * (1 - sr);
+                                    let ovG = bg < 0.5 ? 2 * bg * sg : 1 - 2 * (1 - bg) * (1 - sg);
+                                    let ovB = bb < 0.5 ? 2 * bb * sb : 1 - 2 * (1 - bb) * (1 - sb);
+                                    blendBufferR[i] = br * (1 - effOp) + ovR * effOp;
+                                    blendBufferG[i] = bg * (1 - effOp) + ovG * effOp;
+                                    blendBufferB[i] = bb * (1 - effOp) + ovB * effOp;
+                                } else if (bFn === Blend.add || bFn === Blend.lineardodge) {
+                                    blendBufferR[i] = br * (1 - effOp) + Math.min(1, br + sr) * effOp;
+                                    blendBufferG[i] = bg * (1 - effOp) + Math.min(1, bg + sg) * effOp;
+                                    blendBufferB[i] = bb * (1 - effOp) + Math.min(1, bb + sb) * effOp;
+                                } else if (bFn.isColorMode) {
+                                    let res = bFn(br, bg, bb, sr, sg, sb);
+                                    blendBufferR[i] = br * (1 - effOp) + res[0] * effOp;
+                                    blendBufferG[i] = bg * (1 - effOp) + res[1] * effOp;
+                                    blendBufferB[i] = bb * (1 - effOp) + res[2] * effOp;
+                                } else {
+                                    blendBufferR[i] = br * (1 - effOp) + bFn(br, sr) * effOp;
+                                    blendBufferG[i] = bg * (1 - effOp) + bFn(bg, sg) * effOp;
+                                    blendBufferB[i] = bb * (1 - effOp) + bFn(bb, sb) * effOp;
                                 }
-                            } else {
-                                let oneMinusOp = 1 - op;
-                                for(let i=0; i<w*h; i++) {
+                            }
+                        } else {
+                            let oneMinusOp = 1 - op;
+                            if (bFn === Blend.normal) {
+                                for(let i=0; i<totalPix; i++) {
+                                    blendBufferR[i] = blendBufferR[i] * oneMinusOp + layerBufferR[i] * op;
+                                    blendBufferG[i] = blendBufferG[i] * oneMinusOp + layerBufferG[i] * op;
+                                    blendBufferB[i] = blendBufferB[i] * oneMinusOp + layerBufferB[i] * op;
+                                }
+                            } else if (bFn === Blend.multiply) {
+                                for(let i=0; i<totalPix; i++) {
+                                    blendBufferR[i] = blendBufferR[i] * oneMinusOp + (blendBufferR[i] * layerBufferR[i]) * op;
+                                    blendBufferG[i] = blendBufferG[i] * oneMinusOp + (blendBufferG[i] * layerBufferG[i]) * op;
+                                    blendBufferB[i] = blendBufferB[i] * oneMinusOp + (blendBufferB[i] * layerBufferB[i]) * op;
+                                }
+                            } else if (bFn === Blend.screen) {
+                                for(let i=0; i<totalPix; i++) {
+                                    blendBufferR[i] = blendBufferR[i] * oneMinusOp + (1 - (1 - blendBufferR[i]) * (1 - layerBufferR[i])) * op;
+                                    blendBufferG[i] = blendBufferG[i] * oneMinusOp + (1 - (1 - blendBufferG[i]) * (1 - layerBufferG[i])) * op;
+                                    blendBufferB[i] = blendBufferB[i] * oneMinusOp + (1 - (1 - blendBufferB[i]) * (1 - layerBufferB[i])) * op;
+                                }
+                            } else if (bFn.isColorMode) {
+                                for(let i=0; i<totalPix; i++) {
                                     let res = bFn(blendBufferR[i], blendBufferG[i], blendBufferB[i], layerBufferR[i], layerBufferG[i], layerBufferB[i]);
                                     blendBufferR[i] = blendBufferR[i] * oneMinusOp + res[0] * op;
                                     blendBufferG[i] = blendBufferG[i] * oneMinusOp + res[1] * op;
                                     blendBufferB[i] = blendBufferB[i] * oneMinusOp + res[2] * op;
                                 }
-                            }
-                        } else {
-                            if (useBlendIf) {
-                                for(let i=0; i<w*h; i++) {
-                                    let sVal = getBIfVal(layerBufferR[i], layerBufferG[i], layerBufferB[i], bIfChan);
-                                    let uVal = getBIfVal(blendBufferR[i], blendBufferG[i], blendBufferB[i], bIfChan);
-                                    let bifA = calcBIfRampAlpha(sVal, tb1, tb2, tw1, tw2) * calcBIfRampAlpha(uVal, ub1, ub2, uw1, uw2);
-                                    let effOp = op * bifA;
-                                    blendBufferR[i] = blendBufferR[i] * (1 - effOp) + bFn(blendBufferR[i], layerBufferR[i]) * effOp;
-                                    blendBufferG[i] = blendBufferG[i] * (1 - effOp) + bFn(blendBufferG[i], layerBufferG[i]) * effOp;
-                                    blendBufferB[i] = blendBufferB[i] * (1 - effOp) + bFn(blendBufferB[i], layerBufferB[i]) * effOp;
-                                }
                             } else {
-                                let oneMinusOp = 1 - op;
-                                for(let i=0; i<w*h; i++) {
+                                for(let i=0; i<totalPix; i++) {
                                     blendBufferR[i] = blendBufferR[i] * oneMinusOp + bFn(blendBufferR[i], layerBufferR[i]) * op;
                                     blendBufferG[i] = blendBufferG[i] * oneMinusOp + bFn(blendBufferG[i], layerBufferG[i]) * op;
                                     blendBufferB[i] = blendBufferB[i] * oneMinusOp + bFn(blendBufferB[i], layerBufferB[i]) * op;
@@ -5382,7 +5496,20 @@
                 }
             }
 
-            cx.putImageData(imgData,0,0);
+            if (isDraft) {
+                if (!window.draftCanvas256) {
+                    window.draftCanvas256 = document.createElement('canvas');
+                    window.draftCanvas256.width = 256;
+                    window.draftCanvas256.height = 256;
+                }
+                let dCtx = window.draftCanvas256.getContext('2d');
+                dCtx.putImageData(imgData, 0, 0);
+
+                cx.imageSmoothingEnabled = true;
+                cx.drawImage(window.draftCanvas256, 0, 0, fullW, fullH);
+            } else {
+                cx.putImageData(imgData, 0, 0);
+            }
 
             let shouldProcessTiling = tilingState.enabled || (typeof currentTab !== 'undefined' && currentTab === 'tiling');
             if (shouldProcessTiling) {
@@ -6487,8 +6614,6 @@
             if (checked && lay.params.blendIfExpanded === undefined) {
                 lay.params.blendIfExpanded = true;
             }
-            lay.isDirty = true;
-            invalidateCaches();
             if (!suppressRender) requestRender();
             renderProps();
             scheduleHistorySnapshot();
@@ -6530,8 +6655,6 @@
 
             updateBlendIfRampInDOM(k1);
 
-            lay.isDirty = true;
-            invalidateCaches();
             if (!suppressRender) requestRender();
         };
 
@@ -9785,6 +9908,8 @@
         function invalidateCaches() {
             for (let i = 0; i < state.layers.length; i++) {
                 state.layers[i].isDirty = true;
+                state.layers[i].isDraftDirty = true;
+                state.layers[i].isFullDirty = true;
             }
         }
 
@@ -9794,8 +9919,10 @@
             requestAnimationFrame(() => {
                 renderRequested = false;
                 if (!suppressRender) {
-                    let targetRes = (isInteracting && lowResOnEdit) ? 256 : canvasResolution;
-                    setCanvasRes(targetRes, true);
+                    let cv = canvas || $('canvas');
+                    if (cv && (cv.width !== canvasResolution || cv.height !== canvasResolution)) {
+                        setCanvasRes(canvasResolution, false);
+                    }
                 }
                 renderProject();
             });
@@ -9807,7 +9934,7 @@
             interactionTimer = setTimeout(() => {
                 isInteracting = false;
                 requestRender();
-            }, 60);
+            }, 350);
         }
 
         function upd(k, v, isGlobal = false) {
@@ -9833,15 +9960,14 @@
                     state.global.vignetteAmount = -parsedVal * 100;
                 }
 
-                const COORD_PARAMS = ['globalZoom', 'globalScaleX', 'globalScaleY', 'globalRotation', 'globalOffsetX', 'globalOffsetY', 'globalPerspectiveV', 'globalPerspectiveH', 'tileRepeatX', 'tileRepeatY', 'tileSeamOffsetX', 'tileSeamOffsetY', 'forceSeamlessSoftness', 'blur', 'blurClampEdge', 'blurType', 'globalHueShift', 'globalSaturation', 'globalVibrance', 'globalColorTemp', 'globalColorTint', 'globalColorOverlayOpacity', 'globalColorOverlay', 'contrast', 'gamma', 'grain', 'invert'];
-                if (COORD_PARAMS.includes(k) || k.startsWith('global') || k.startsWith('tile')) {
+                const COORD_PARAMS = ['globalZoom', 'globalScaleX', 'globalScaleY', 'globalRotation', 'globalOffsetX', 'globalOffsetY', 'globalPerspectiveV', 'globalPerspectiveH', 'tileRepeatX', 'tileRepeatY', 'tileSeamOffsetX', 'tileSeamOffsetY', 'forceSeamlessSoftness', 'blur', 'blurClampEdge', 'blurType'];
+                if (COORD_PARAMS.includes(k) || k.startsWith('tile')) {
                     invalidateCaches();
                 }
                 if (['blurType', 'tileMode', 'blendCurve', 'forceSeamless'].includes(k)) {
                     renderGlobal();
                 }
                 if (!suppressRender) requestRender();
-                scheduleHistorySnapshot();
                 return;
             }
 
@@ -9861,7 +9987,8 @@
                         renderStickyHeader(); 
                     }
                     if (['opacity', 'blendMode'].includes(k)) { 
-                        renderLayers(); 
+                        let metaEl = document.querySelector(`.layer-card[data-layer-id="${lay.id}"] .layer-meta`);
+                        if (metaEl) metaEl.innerHTML = `<span>${lay.generatorType.toUpperCase()}</span><span>${lay.blendMode.toUpperCase()} | ${lay.opacity}%</span>`;
                         renderStickyHeader(); 
                     }
                 } else {
@@ -9873,7 +10000,6 @@
                     if (String(k).startsWith('brush')) updateBrushPreview();
                 }
                 if (!suppressRender) requestRender();
-                scheduleHistorySnapshot();
             }
         }
 
@@ -10184,10 +10310,10 @@
         function updateAutosaveUI(statusText, dotColor = '#10b981', title = '') {
             let elText = $('autosaveStatusText');
             let elDot = $('autosaveDot');
-            if (elText) elText.textContent = statusText;
-            if (elDot) elDot.style.background = dotColor;
+            if (elText && elText.textContent !== statusText) elText.textContent = statusText;
+            if (elDot && elDot.style.background !== dotColor) elDot.style.background = dotColor;
             let meta = $('autosaveMeta');
-            if (meta && title) meta.title = title;
+            if (meta && title && meta.title !== title) meta.title = title;
         }
 
         function scheduleAutoSave() {
@@ -11014,6 +11140,23 @@
             ctx=canvas.getContext('2d'); 
             initCanvasControlsUI();
             initDragAndDrop();
+
+            // Global slider interaction optimization listeners
+            document.addEventListener('pointerdown', (e) => {
+                if (e.target && e.target.tagName === 'INPUT' && e.target.type === 'range') {
+                    isInteracting = true;
+                }
+            }, { passive: true });
+
+            const endSliderInteraction = () => {
+                if (isInteracting) {
+                    clearTimeout(interactionTimer);
+                    isInteracting = false;
+                    requestRender();
+                }
+            };
+            window.addEventListener('pointerup', endSliderInteraction, { passive: true });
+            window.addEventListener('pointercancel', endSliderInteraction, { passive: true });
 
             // Register pointer events for painting
             let wrapper = $('canvasWrapper');

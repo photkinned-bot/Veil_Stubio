@@ -200,9 +200,9 @@ export class CanvasProcessingEngine {
         ny /= len;
         nz /= len;
 
-        const r = Math.round((nx * 0.5 + 0.5) * 255);
-        const g = Math.round((ny * 0.5 + 0.5) * 255);
-        const b = Math.round((nz * 0.5 + 0.5) * 255);
+        const r = ((nx * 0.5 + 0.5) * 255 + 0.5) | 0;
+        const g = ((ny * 0.5 + 0.5) * 255 + 0.5) | 0;
+        const b = ((nz * 0.5 + 0.5) * 255 + 0.5) | 0;
 
         const idx = (y * width + x) * 4;
         out[idx] = r;
@@ -296,7 +296,7 @@ export class CanvasProcessingEngine {
         for (let dy = -radius; dy <= radius; dy += sampleStep) {
           for (let dx = -radius; dx <= radius; dx += sampleStep) {
             if (dx === 0 && dy === 0) continue;
-            const dist = Math.hypot(dx, dy);
+            const dist = Math.sqrt(dx * dx + dy * dy);
             if (dist > radius) continue;
 
             const ny = (y + dy + height) % height;
@@ -390,7 +390,7 @@ export class CanvasProcessingEngine {
 
         const dx = right - left;
         const dy = bottom - top;
-        const edgeMag = Math.hypot(dx, dy);
+        const edgeMag = Math.sqrt(dx * dx + dy * dy);
 
         let rawSpec = (center * 0.6 + edgeMag * 0.4) * strength * level;
         let specVal = (rawSpec - (mean * 0.5)) * range + (mean * 0.2);
