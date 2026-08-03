@@ -599,21 +599,424 @@
             }
         }; Perlin.init(1337);
 
-        const Simplex = {
-            F2: 0.5*(Math.sqrt(3)-1), G2: (3-Math.sqrt(3))/6,
-            grad: Perlin.grad,
-            noise(x,y){
-                let s=(x+y)*this.F2, i=Math.floor(x+s), j=Math.floor(y+s), t=(i+j)*this.G2;
-                let x0=x-(i-t), y0=y-(j-t), i1=x0>y0?1:0, j1=x0>y0?0:1;
-                let x1=x0-i1+this.G2, y1=y0-j1+this.G2, x2=x0-1+2*this.G2, y2=y0-1+2*this.G2;
-                let ii=i&255, jj=j&255;
-                let g0=Perlin.p[ii+Perlin.p[jj]]%12, g1=Perlin.p[ii+i1+Perlin.p[jj+j1]]%12, g2=Perlin.p[ii+1+Perlin.p[jj+1]]%12;
-                let t0=0.5-x0*x0-y0*y0, n0=t0<0?0:t0*t0*t0*t0*this.grad(g0,x0,y0);
-                let t1=0.5-x1*x1-y1*y1, n1=t1<0?0:t1*t1*t1*t1*this.grad(g1,x1,y1);
-                let t2=0.5-x2*x2-y2*y2, n2=t2<0?0:t2*t2*t2*t2*this.grad(g2,x2,y2);
-                return 70*(n0+n1+n2);
+        const Simplex = (function() {
+            const F2 = 0.5 * (Math.sqrt(3.0) - 1.0);
+            const G2 = (3.0 - Math.sqrt(3.0)) / 6.0;
+            const F3 = 1.0 / 3.0;
+            const G3 = 1.0 / 6.0;
+            const F4 = (Math.sqrt(5.0) - 1.0) / 4.0;
+            const G4 = (5.0 - Math.sqrt(5.0)) / 20.0;
+
+            const grad2 = [
+                [1,1], [-1,1], [1,-1], [-1,-1],
+                [1,0], [-1,0], [0,1], [0,-1],
+                [1,1], [-1,1], [1,-1], [-1,-1]
+            ];
+
+            const grad3 = [
+                [1,1,0],[-1,1,0],[1,-1,0],[-1,-1,0],
+                [1,0,1],[-1,0,1],[1,0,-1],[-1,0,-1],
+                [0,1,1],[0,-1,1],[0,1,-1],[0,-1,-1]
+            ];
+
+            const grad4 = [
+                [0,1,1,1], [0,1,1,-1], [0,1,-1,1], [0,1,-1,-1],
+                [0,-1,1,1], [0,-1,1,-1], [0,-1,-1,1], [0,-1,-1,-1],
+                [1,0,1,1], [1,0,1,-1], [1,0,-1,1], [1,0,-1,-1],
+                [-1,0,1,1], [-1,0,1,-1], [-1,0,-1,1], [-1,0,-1,-1],
+                [1,1,0,1], [1,1,0,-1], [1,-1,0,1], [1,-1,0,-1],
+                [-1,1,0,1], [-1,1,0,-1], [-1,-1,0,1], [-1,-1,0,-1],
+                [1,1,1,0], [1,1,-1,0], [1,-1,1,0], [1,-1,-1,0],
+                [-1,1,1,0], [-1,1,-1,0], [-1,-1,1,0], [-1,-1,-1,0]
+            ];
+
+            const simplex4D = [
+                [0,1,2,3],[0,1,3,2],[0,0,0,0],[0,2,3,1],[0,0,0,0],[0,0,0,0],[0,0,0,0],[1,2,3,0],
+                [0,2,1,3],[0,0,0,0],[0,3,1,2],[0,3,2,1],[0,0,0,0],[0,0,0,0],[0,0,0,0],[1,3,2,0],
+                [0,0,0,0],[0,0,0,0],[0,0,0,0],[0,0,0,0],[0,0,0,0],[0,0,0,0],[0,0,0,0],[0,0,0,0],
+                [1,2,0,3],[0,0,0,0],[1,3,0,2],[0,0,0,0],[0,0,0,0],[0,0,0,0],[2,3,0,1],[2,3,1,0],
+                [2,1,0,3],[2,1,3,0],[0,0,0,0],[0,0,0,0],[0,0,0,0],[3,1,2,0],[2,0,1,3],[0,0,0,0],
+                [0,0,0,0],[0,0,0,0],[3,1,0,2],[3,2,0,1],[3,0,1,2],[0,0,0,0],[3,0,2,1],[3,2,1,0]
+            ];
+
+            const permCache = new Map();
+
+            function getPerm(seed = 0) {
+                let s = (seed | 0) & 0x7fffffff;
+                if (permCache.has(s)) return permCache.get(s);
+
+                let rng = mulberry32(s || 1337);
+                let p = new Uint8Array(256);
+                for (let i = 0; i < 256; i++) p[i] = i;
+                for (let i = 255; i > 0; i--) {
+                    let j = Math.floor(rng() * (i + 1));
+                    let temp = p[i]; p[i] = p[j]; p[j] = temp;
+                }
+
+                let perm = new Uint8Array(512);
+                let permMod12 = new Uint8Array(512);
+                let permMod32 = new Uint8Array(512);
+                for (let i = 0; i < 512; i++) {
+                    let v = p[i & 255];
+                    perm[i] = v;
+                    permMod12[i] = v % 12;
+                    permMod32[i] = v % 32;
+                }
+
+                let res = { perm, permMod12, permMod32 };
+                if (permCache.size > 64) {
+                    let firstKey = permCache.keys().next().value;
+                    permCache.delete(firstKey);
+                }
+                permCache.set(s, res);
+                return res;
             }
-        };
+
+            function noise2D(xin, yin, seed = 0) {
+                let { perm, permMod12 } = getPerm(seed);
+                let s = (xin + yin) * F2;
+                let i = Math.floor(xin + s);
+                let j = Math.floor(yin + s);
+                let t = (i + j) * G2;
+                let X0 = i - t;
+                let Y0 = j - t;
+                let x0 = xin - X0;
+                let y0 = yin - Y0;
+
+                let i1, j1;
+                if (x0 > y0) { i1 = 1; j1 = 0; }
+                else { i1 = 0; j1 = 1; }
+
+                let x1 = x0 - i1 + G2;
+                let y1 = y0 - j1 + G2;
+                let x2 = x0 - 1.0 + 2.0 * G2;
+                let y2 = y0 - 1.0 + 2.0 * G2;
+
+                let ii = i & 255;
+                let jj = j & 255;
+
+                let gi0 = permMod12[ii + perm[jj]];
+                let gi1 = permMod12[ii + i1 + perm[jj + j1]];
+                let gi2 = permMod12[ii + 1 + perm[jj + 1]];
+
+                let n0 = 0, n1 = 0, n2 = 0;
+
+                let t0 = 0.5 - x0 * x0 - y0 * y0;
+                if (t0 > 0) {
+                    t0 *= t0;
+                    let g = grad2[gi0];
+                    n0 = t0 * t0 * (g[0] * x0 + g[1] * y0);
+                }
+
+                let t1 = 0.5 - x1 * x1 - y1 * y1;
+                if (t1 > 0) {
+                    t1 *= t1;
+                    let g = grad2[gi1];
+                    n1 = t1 * t1 * (g[0] * x1 + g[1] * y1);
+                }
+
+                let t2 = 0.5 - x2 * x2 - y2 * y2;
+                if (t2 > 0) {
+                    t2 *= t2;
+                    let g = grad2[gi2];
+                    n2 = t2 * t2 * (g[0] * x2 + g[1] * y2);
+                }
+
+                return 70.0 * (n0 + n1 + n2);
+            }
+
+            function noise3D(xin, yin, zin, seed = 0) {
+                let { perm, permMod12 } = getPerm(seed);
+                let s = (xin + yin + zin) * F3;
+                let i = Math.floor(xin + s);
+                let j = Math.floor(yin + s);
+                let k = Math.floor(zin + s);
+                let t = (i + j + k) * G3;
+                let X0 = i - t;
+                let Y0 = j - t;
+                let Z0 = k - t;
+                let x0 = xin - X0;
+                let y0 = yin - Y0;
+                let z0 = zin - Z0;
+
+                let i1, j1, k1;
+                let i2, j2, k2;
+
+                if (x0 >= y0) {
+                    if (y0 >= z0) { i1=1; j1=0; k1=0; i2=1; j2=1; k2=0; }
+                    else if (x0 >= z0) { i1=1; j1=0; k1=0; i2=1; j2=0; k2=1; }
+                    else { i1=0; j1=0; k1=1; i2=1; j2=0; k2=1; }
+                } else {
+                    if (y0 < z0) { i1=0; j1=0; k1=1; i2=0; j2=1; k2=1; }
+                    else if (x0 < z0) { i1=0; j1=1; k1=0; i2=0; j2=1; k2=1; }
+                    else { i1=0; j1=1; k1=0; i2=1; j2=1; k2=0; }
+                }
+
+                let x1 = x0 - i1 + G3;
+                let y1 = y0 - j1 + G3;
+                let z1 = z0 - k1 + G3;
+                let x2 = x0 - i2 + 2.0 * G3;
+                let y2 = y0 - j2 + 2.0 * G3;
+                let z2 = z0 - k2 + 2.0 * G3;
+                let x3 = x0 - 1.0 + 3.0 * G3;
+                let y3 = y0 - 1.0 + 3.0 * G3;
+                let z3 = z0 - 1.0 + 3.0 * G3;
+
+                let ii = i & 255;
+                let jj = j & 255;
+                let kk = k & 255;
+
+                let gi0 = permMod12[ii + perm[jj + perm[kk]]];
+                let gi1 = permMod12[ii + i1 + perm[jj + j1 + perm[kk + k1]]];
+                let gi2 = permMod12[ii + i2 + perm[jj + j2 + perm[kk + k2]]];
+                let gi3 = permMod12[ii + 1 + perm[jj + 1 + perm[kk + 1]]];
+
+                let n0 = 0, n1 = 0, n2 = 0, n3 = 0;
+
+                let t0 = 0.6 - x0*x0 - y0*y0 - z0*z0;
+                if (t0 > 0) {
+                    t0 *= t0;
+                    let g = grad3[gi0];
+                    n0 = t0 * t0 * (g[0]*x0 + g[1]*y0 + g[2]*z0);
+                }
+                let t1 = 0.6 - x1*x1 - y1*y1 - z1*z1;
+                if (t1 > 0) {
+                    t1 *= t1;
+                    let g = grad3[gi1];
+                    n1 = t1 * t1 * (g[0]*x1 + g[1]*y1 + g[2]*z1);
+                }
+                let t2 = 0.6 - x2*x2 - y2*y2 - z2*z2;
+                if (t2 > 0) {
+                    t2 *= t2;
+                    let g = grad3[gi2];
+                    n2 = t2 * t2 * (g[0]*x2 + g[1]*y2 + g[2]*z2);
+                }
+                let t3 = 0.6 - x3*x3 - y3*y3 - z3*z3;
+                if (t3 > 0) {
+                    t3 *= t3;
+                    let g = grad3[gi3];
+                    n3 = t3 * t3 * (g[0]*x3 + g[1]*y3 + g[2]*z3);
+                }
+
+                return 32.0 * (n0 + n1 + n2 + n3);
+            }
+
+            function noise4D(x, y, z, w, seed = 0) {
+                let { perm, permMod32 } = getPerm(seed);
+                let s = (x + y + z + w) * F4;
+                let i = Math.floor(x + s);
+                let j = Math.floor(y + s);
+                let k = Math.floor(z + s);
+                let l = Math.floor(w + s);
+                let t = (i + j + k + l) * G4;
+                let X0 = i - t;
+                let Y0 = j - t;
+                let Z0 = k - t;
+                let W0 = l - t;
+                let x0 = x - X0;
+                let y0 = y - Y0;
+                let z0 = z - Z0;
+                let w0 = w - W0;
+
+                let c1 = (x0 > y0) ? 32 : 0;
+                let c2 = (x0 > z0) ? 16 : 0;
+                let c3 = (y0 > z0) ? 8 : 0;
+                let c4 = (x0 > w0) ? 4 : 0;
+                let c5 = (y0 > w0) ? 2 : 0;
+                let c6 = (z0 > w0) ? 1 : 0;
+                let c = c1 + c2 + c3 + c4 + c5 + c6;
+
+                let i1 = simplex4D[c][0] >= 3 ? 1 : 0;
+                let j1 = simplex4D[c][1] >= 3 ? 1 : 0;
+                let k1 = simplex4D[c][2] >= 3 ? 1 : 0;
+                let l1 = simplex4D[c][3] >= 3 ? 1 : 0;
+
+                let i2 = simplex4D[c][0] >= 2 ? 1 : 0;
+                let j2 = simplex4D[c][1] >= 2 ? 1 : 0;
+                let k2 = simplex4D[c][2] >= 2 ? 1 : 0;
+                let l2 = simplex4D[c][3] >= 2 ? 1 : 0;
+
+                let i3 = simplex4D[c][0] >= 1 ? 1 : 0;
+                let j3 = simplex4D[c][1] >= 1 ? 1 : 0;
+                let k3 = simplex4D[c][2] >= 1 ? 1 : 0;
+                let l3 = simplex4D[c][3] >= 1 ? 1 : 0;
+
+                let x1 = x0 - i1 + G4;
+                let y1 = y0 - j1 + G4;
+                let z1 = z0 - k1 + G4;
+                let w1 = w0 - l1 + G4;
+
+                let x2 = x0 - i2 + 2.0 * G4;
+                let y2 = y0 - j2 + 2.0 * G4;
+                let z2 = z0 - k2 + 2.0 * G4;
+                let w2 = w0 - l2 + 2.0 * G4;
+
+                let x3 = x0 - i3 + 3.0 * G4;
+                let y3 = y0 - j3 + 3.0 * G4;
+                let z3 = z0 - k3 + 3.0 * G4;
+                let w3 = w0 - l3 + 3.0 * G4;
+
+                let x4 = x0 - 1.0 + 4.0 * G4;
+                let y4 = y0 - 1.0 + 4.0 * G4;
+                let z4 = z0 - 1.0 + 4.0 * G4;
+                let w4 = w0 - 1.0 + 4.0 * G4;
+
+                let ii = i & 255;
+                let jj = j & 255;
+                let kk = k & 255;
+                let ll = l & 255;
+
+                let gi0 = permMod32[ii + perm[jj + perm[kk + perm[ll]]]];
+                let gi1 = permMod32[ii + i1 + perm[jj + j1 + perm[kk + k1 + perm[ll + l1]]]];
+                let gi2 = permMod32[ii + i2 + perm[jj + j2 + perm[kk + k2 + perm[ll + l2]]]];
+                let gi3 = permMod32[ii + i3 + perm[jj + j3 + perm[kk + k3 + perm[ll + l3]]]];
+                let gi4 = permMod32[ii + 1 + perm[jj + 1 + perm[kk + 1 + perm[ll + 1]]]];
+
+                let n0 = 0, n1 = 0, n2 = 0, n3 = 0, n4 = 0;
+
+                let t0 = 0.6 - x0*x0 - y0*y0 - z0*z0 - w0*w0;
+                if (t0 > 0) {
+                    t0 *= t0;
+                    let g = grad4[gi0];
+                    n0 = t0 * t0 * (g[0]*x0 + g[1]*y0 + g[2]*z0 + g[3]*w0);
+                }
+                let t1 = 0.6 - x1*x1 - y1*y1 - z1*z1 - w1*w1;
+                if (t1 > 0) {
+                    t1 *= t1;
+                    let g = grad4[gi1];
+                    n1 = t1 * t1 * (g[0]*x1 + g[1]*y1 + g[2]*z1 + g[3]*w1);
+                }
+                let t2 = 0.6 - x2*x2 - y2*y2 - z2*z2 - w2*w2;
+                if (t2 > 0) {
+                    t2 *= t2;
+                    let g = grad4[gi2];
+                    n2 = t2 * t2 * (g[0]*x2 + g[1]*y2 + g[2]*z2 + g[3]*w2);
+                }
+                let t3 = 0.6 - x3*x3 - y3*y3 - z3*z3 - w3*w3;
+                if (t3 > 0) {
+                    t3 *= t3;
+                    let g = grad4[gi3];
+                    n3 = t3 * t3 * (g[0]*x3 + g[1]*y3 + g[2]*z3 + g[3]*w3);
+                }
+                let t4 = 0.6 - x4*x4 - y4*y4 - z4*z4 - w4*w4;
+                if (t4 > 0) {
+                    t4 *= t4;
+                    let g = grad4[gi4];
+                    n4 = t4 * t4 * (g[0]*x4 + g[1]*y4 + g[2]*z4 + g[3]*w4);
+                }
+
+                return 27.0 * (n0 + n1 + n2 + n3 + n4);
+            }
+
+            function evalLayer(tx, ty, sx, sy, p = {}) {
+                let seed = p.pixelSeed || p.seed || 0;
+                let mode = p.simplexMode || 'standard';
+                let octaves = Math.max(1, Math.min(10, p.octaves || 4));
+                let lacunarity = p.lacunarity !== undefined ? p.lacunarity : 2.0;
+                let gain = p.gain !== undefined ? p.gain : 0.5;
+                let warpStr = p.warpStrength || 0;
+                let warpFreq = p.warpFreq || 1.0;
+                let ridgePower = p.ridgePower !== undefined ? p.ridgePower : 2.0;
+                let isSeamless = p.seamless === true;
+
+                let scaleFactorX = (sx || 10) / 10;
+                let scaleFactorY = (sy || 10) / 10;
+
+                let x = tx * scaleFactorX;
+                let y = ty * scaleFactorY;
+
+                if (warpStr > 0) {
+                    let wx = noise2D(x * warpFreq, y * warpFreq, seed + 101);
+                    let wy = noise2D(x * warpFreq + 5.2, y * warpFreq + 1.3, seed + 202);
+                    x += wx * warpStr;
+                    y += wy * warpStr;
+                }
+
+                const sampleSample = (qx, qy, curSeed) => {
+                    if (isSeamless) {
+                        let u = (qx % 1 + 1) % 1;
+                        let v = (qy % 1 + 1) % 1;
+                        let r1 = scaleFactorX / (2 * Math.PI);
+                        let r2 = scaleFactorY / (2 * Math.PI);
+                        let nx = Math.cos(u * 2 * Math.PI) * r1;
+                        let ny = Math.sin(u * 2 * Math.PI) * r1;
+                        let nz = Math.cos(v * 2 * Math.PI) * r2;
+                        let nw = Math.sin(v * 2 * Math.PI) * r2;
+                        return noise4D(nx, ny, nz, nw, curSeed);
+                    } else {
+                        return noise2D(qx, qy, curSeed);
+                    }
+                };
+
+                if (mode === 'ridged') {
+                    let val = 0, amp = 1, freq = 1, maxAmp = 0, weight = 1;
+                    for (let i = 0; i < octaves; i++) {
+                        let n = sampleSample(x * freq, y * freq, seed + i * 37);
+                        n = 1.0 - Math.abs(n);
+                        n = Math.pow(n, ridgePower);
+                        n *= weight;
+                        weight = Math.max(0, Math.min(1, n * 2));
+                        val += n * amp;
+                        maxAmp += amp;
+                        amp *= gain;
+                        freq *= lacunarity;
+                    }
+                    return Math.max(0, Math.min(1, val / maxAmp));
+                } else if (mode === 'billow') {
+                    let val = 0, amp = 1, freq = 1, maxAmp = 0;
+                    for (let i = 0; i < octaves; i++) {
+                        let n = Math.abs(sampleSample(x * freq, y * freq, seed + i * 37)) * 2 - 1;
+                        val += n * amp;
+                        maxAmp += amp;
+                        amp *= gain;
+                        freq *= lacunarity;
+                    }
+                    return Math.max(0, Math.min(1, (val / maxAmp + 1) * 0.5));
+                } else if (mode === 'turbulence') {
+                    let val = 0, amp = 1, freq = 1, maxAmp = 0;
+                    for (let i = 0; i < octaves; i++) {
+                        let n = Math.abs(sampleSample(x * freq, y * freq, seed + i * 37));
+                        val += n * amp;
+                        maxAmp += amp;
+                        amp *= gain;
+                        freq *= lacunarity;
+                    }
+                    return Math.max(0, Math.min(1, val / maxAmp));
+                } else if (mode === 'swiss') {
+                    let val = 0, amp = 1, freq = 1, maxAmp = 0;
+                    let warpSumX = 0, warpSumY = 0;
+                    for (let i = 0; i < octaves; i++) {
+                        let n = sampleSample((x + warpSumX) * freq, (y + warpSumY) * freq, seed + i * 37);
+                        n = 1.0 - Math.abs(n);
+                        val += n * amp;
+                        maxAmp += amp;
+                        amp *= gain;
+                        freq *= lacunarity;
+                        warpSumX += n * amp * 0.5;
+                        warpSumY += n * amp * 0.5;
+                    }
+                    return Math.max(0, Math.min(1, val / maxAmp));
+                } else {
+                    let val = 0, amp = 1, freq = 1, maxAmp = 0;
+                    for (let i = 0; i < octaves; i++) {
+                        let n = sampleSample(x * freq, y * freq, seed + i * 37);
+                        val += n * amp;
+                        maxAmp += amp;
+                        amp *= gain;
+                        freq *= lacunarity;
+                    }
+                    return Math.max(0, Math.min(1, (val / maxAmp + 1) * 0.5));
+                }
+            }
+
+            return {
+                noise: noise2D,
+                noise2D,
+                noise3D,
+                noise4D,
+                eval: evalLayer
+            };
+        })();
 
         const NoiseCache = {
             init() {},
@@ -3707,7 +4110,7 @@
                 }
                 case 'gradient': v = ProceduralGradient.eval(tx, ty, p, sx, sy); break;
                 case 'cymatics': v = Cymatics.noise(tx, ty, p, cymaticsSources, sx, sy); break;
-                case 'simplex': v=(Simplex.noise(tx*sx,ty*sy)+1)/2; break;
+                case 'simplex': v = Simplex.eval(tx, ty, sx, sy, p); break;
                 case 'perlin': v=(Perlin.noise(tx*sx,ty*sy)+1)/2; break;
                 case 'voronoi': v=Voronoi.noise(tx*sx,ty*sy,p.mode||'f1',p.metric||'euclidean',p.distExp||2); break;
                 case 'fbm': v=fbm(tx*sx,ty*sy,p.octaves||3,p.lacunarity??2,p.gain??0.5,'simplex'); break;
@@ -5443,6 +5846,17 @@
             p.angle = Math.floor((Math.random() - 0.5) * 360);
             p.layerScale = parseFloat((0.5 + Math.random() * 2).toFixed(1));
 
+            if (lay.generatorType === 'simplex') {
+                let modes = ['standard', 'ridged', 'billow', 'turbulence', 'swiss'];
+                p.simplexMode = modes[Math.floor(Math.random() * modes.length)];
+                p.octaves = 2 + Math.floor(Math.random() * 6);
+                p.lacunarity = parseFloat((1.5 + Math.random() * 1.5).toFixed(1));
+                p.gain = parseFloat((0.3 + Math.random() * 0.4).toFixed(2));
+                p.warpStrength = Math.random() < 0.4 ? parseFloat((Math.random() * 1.2).toFixed(2)) : 0;
+                p.warpFreq = parseFloat((0.5 + Math.random() * 2.0).toFixed(1));
+                p.ridgePower = parseFloat((1.0 + Math.random() * 2.0).toFixed(1));
+                p.seamless = Math.random() < 0.3;
+            }
             if (['perlin', 'fbm', 'spiral'].includes(lay.generatorType)) {
                 p.octaves = 1 + Math.floor(Math.random() * 8);
             }
@@ -6597,6 +7011,55 @@
                     ${stopsHTML}
                 </div>
                 `;
+            }
+
+            if (lay.generatorType === 'simplex') {
+                let mode = lp.simplexMode || 'standard';
+                let octaves = lp.octaves || 4;
+                let lacunarity = lp.lacunarity !== undefined ? lp.lacunarity : 2.0;
+                let gain = lp.gain !== undefined ? lp.gain : 0.5;
+                let warpStr = lp.warpStrength || 0;
+                let warpFreq = lp.warpFreq || 1.0;
+                let ridgePower = lp.ridgePower !== undefined ? lp.ridgePower : 2.0;
+                let seamless = lp.seamless === true;
+
+                algoSpecificHTML += `
+                <div class="section-title" style="margin-top:12px; font-weight:700; color:var(--primary-color, #3b82f6);">⚡ Simplex Noise Pro</div>
+
+                <div class="property-group">
+                    <label class="property-label">Режим шуму (Simplex Variant)</label>
+                    <div class="gen-grid" style="grid-template-columns:repeat(2,1fr);">
+                        <button type="button" onclick="upd('simplexMode','standard'); renderProps();" class="gen-btn ${mode === 'standard' ? 'active' : ''}">🌊 Стандартний (fBM)</button>
+                        <button type="button" onclick="upd('simplexMode','ridged'); renderProps();" class="gen-btn ${mode === 'ridged' ? 'active' : ''}">⛰️ Хребти (Ridged)</button>
+                        <button type="button" onclick="upd('simplexMode','billow'); renderProps();" class="gen-btn ${mode === 'billow' ? 'active' : ''}">☁️ Хмароподібний (Billow)</button>
+                        <button type="button" onclick="upd('simplexMode','turbulence'); renderProps();" class="gen-btn ${mode === 'turbulence' ? 'active' : ''}">🌪️ Турбулентність</button>
+                        <button type="button" onclick="upd('simplexMode','swiss'); renderProps();" class="gen-btn ${mode === 'swiss' ? 'active' : ''}">🧀 Швейцарський (Swiss)</button>
+                    </div>
+                </div>
+
+                <div class="property-group" style="margin-bottom:8px;">
+                    <label style="font-size:11px; cursor:pointer; display:flex; align-items:center; gap:6px;">
+                        <input type="checkbox" ${seamless ? 'checked' : ''} onchange="upd('seamless', this.checked); renderProps();">
+                        <span><strong>3D/4D Безшовне плиточне покриття (Seamless 4D)</strong></span>
+                    </label>
+                    <div style="font-size:10px; color:var(--text-muted, #a1a1aa); margin-top:2px; line-height:1.3;">
+                        Створює 100% безшовну повторювану текстуру без швів через проекцію 4D гіпер-тора.
+                    </div>
+                </div>
+                `;
+
+                algoSpecificHTML += createSlider("Октави (Octaves)", "octaves", 1, 10, 1, octaves, false, 4);
+                algoSpecificHTML += createSlider("Лакунарність (Lacunarity)", "lacunarity", 1.0, 4.0, 0.1, lacunarity, false, 2.0);
+                algoSpecificHTML += createSlider("Загасання / Амплітуда (Gain)", "gain", 0.1, 0.9, 0.05, gain, false, 0.5);
+
+                if (mode === 'ridged' || mode === 'swiss') {
+                    algoSpecificHTML += createSlider("Загострення хребтів (Ridge Power)", "ridgePower", 0.5, 4.0, 0.1, ridgePower, false, 2.0);
+                }
+
+                algoSpecificHTML += createSlider("Деформація домену (Domain Warping)", "warpStrength", 0.0, 2.0, 0.05, warpStr, false, 0);
+                if (warpStr > 0) {
+                    algoSpecificHTML += createSlider("Частота деформації (Warp Freq)", "warpFreq", 0.1, 5.0, 0.1, warpFreq, false, 1.0);
+                }
             }
 
             if (['perlin', 'spiral'].includes(lay.generatorType)) {
