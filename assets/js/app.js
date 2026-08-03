@@ -2865,16 +2865,6 @@
             return window._globalFloatBuffers[name];
         }
 
-        function freeHighResGlobalBuffers() {
-            if (window._globalFloatBuffers) {
-                for (let k in window._globalFloatBuffers) {
-                    window._globalFloatBuffers[k] = null;
-                    delete window._globalFloatBuffers[k];
-                }
-                window._globalFloatBuffers = {};
-            }
-        }
-        window.freeHighResGlobalBuffers = freeHighResGlobalBuffers;
 
         const PALETTE_PRESETS = {
             custom: null,
@@ -9903,6 +9893,7 @@
 
         let renderRequested = false;
         let isInteracting = false;
+        let isPointerDownOnSlider = false;
         let interactionTimer = null;
 
         function invalidateCaches() {
@@ -9931,10 +9922,12 @@
         function triggerInteraction() {
             isInteracting = true;
             clearTimeout(interactionTimer);
-            interactionTimer = setTimeout(() => {
-                isInteracting = false;
-                requestRender();
-            }, 350);
+            if (!isPointerDownOnSlider) {
+                interactionTimer = setTimeout(() => {
+                    isInteracting = false;
+                    requestRender();
+                }, 300);
+            }
         }
 
         function upd(k, v, isGlobal = false) {
@@ -11144,19 +11137,29 @@
             // Global slider interaction optimization listeners
             document.addEventListener('pointerdown', (e) => {
                 if (e.target && e.target.tagName === 'INPUT' && e.target.type === 'range') {
+                    isPointerDownOnSlider = true;
                     isInteracting = true;
+                    clearTimeout(interactionTimer);
                 }
             }, { passive: true });
 
             const endSliderInteraction = () => {
-                if (isInteracting) {
+                if (isPointerDownOnSlider || isInteracting) {
+                    isPointerDownOnSlider = false;
                     clearTimeout(interactionTimer);
-                    isInteracting = false;
-                    requestRender();
+                    interactionTimer = setTimeout(() => {
+                        isInteracting = false;
+                        requestRender();
+                    }, 50);
                 }
             };
             window.addEventListener('pointerup', endSliderInteraction, { passive: true });
             window.addEventListener('pointercancel', endSliderInteraction, { passive: true });
+            document.addEventListener('change', (e) => {
+                if (e.target && e.target.tagName === 'INPUT' && e.target.type === 'range') {
+                    endSliderInteraction();
+                }
+            }, { passive: true });
 
             // Register pointer events for painting
             let wrapper = $('canvasWrapper');
