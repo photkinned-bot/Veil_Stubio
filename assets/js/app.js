@@ -1417,6 +1417,185 @@
             }
         };
 
+        const HeartbeatGenerator = {
+            hashLine(i, seed) {
+                let n = Math.sin(i * 12.9898 + (seed || 0) * 78.233) * 43758.5453;
+                return n - Math.floor(n);
+            },
+
+            evalPulseShape(t, pulseType, pulseWidth) {
+                let u = t - Math.floor(t);
+                if (u < 0) u += 1.0;
+
+                let w = Math.max(0.01, pulseWidth || 0.2);
+                let x = (u - 0.5) / w;
+
+                if (Math.abs(x) > 2.5) return 0.0;
+
+                switch (pulseType) {
+                    case 'ecg': {
+                        let pWave = 0.18 * Math.exp(-Math.pow(x + 1.1, 2) * 10);
+                        let qWave = -0.22 * Math.exp(-Math.pow(x + 0.35, 2) * 45);
+                        let rWave = 1.0 * Math.exp(-Math.pow(x, 2) * 80);
+                        let sWave = -0.35 * Math.exp(-Math.pow(x - 0.35, 2) * 45);
+                        let tWave = 0.28 * Math.exp(-Math.pow(x - 1.1, 2) * 12);
+                        let uWave = 0.08 * Math.exp(-Math.pow(x - 1.8, 2) * 20);
+                        return pWave + qWave + rWave + sWave + tWave + uWave;
+                    }
+                    case 'pulse': {
+                        return 1.0 / (1.0 + Math.pow(x * 6, 2));
+                    }
+                    case 'sine_burst': {
+                        return Math.sin(x * 12.57) * Math.exp(-Math.pow(x, 2) * 2.5);
+                    }
+                    case 'triangle': {
+                        let absX = Math.abs(x);
+                        return absX <= 1.0 ? (1.0 - absX) : 0.0;
+                    }
+                    case 'square': {
+                        return Math.abs(x) <= 0.8 ? 1.0 : 0.0;
+                    }
+                    case 'noise_glitch': {
+                        let stepX = Math.floor(x * 8) / 8;
+                        let h = Math.sin(stepX * 17.3 + 3.1) * 0.5 + 0.5;
+                        return Math.abs(x) <= 1.2 ? h * (1.0 - Math.abs(x) / 1.2) : 0.0;
+                    }
+                    default:
+                        return 1.0 * Math.exp(-Math.pow(x, 2) * 50);
+                }
+            },
+
+            eval(tx, ty, sx, sy, p) {
+                let orientation = p.hbOrientation || 'horizontal';
+                let lineCount = p.hbLineCount !== undefined ? p.hbLineCount : 5;
+                let lineThickness = p.hbThickness !== undefined ? p.hbThickness : 0.02;
+                let lineStyle = p.hbLineStyle || 'smooth';
+                let pixelSize = p.hbPixelSize !== undefined ? p.hbPixelSize : 8;
+                let waveType = p.hbWaveType || 'ecg';
+                let amplitude = p.hbAmplitude !== undefined ? p.hbAmplitude : 0.35;
+                let beatsFreq = p.hbBeatsFreq !== undefined ? p.hbBeatsFreq : 4.0;
+                let pulseWidth = p.hbPulseWidth !== undefined ? p.hbPulseWidth : 0.2;
+                let distortFreq = p.hbDistortFreq !== undefined ? p.hbDistortFreq : 3.0;
+                let distortAmp = p.hbDistortAmp !== undefined ? p.hbDistortAmp : 0.08;
+                let layersCount = p.hbLayers !== undefined ? p.hbLayers : 2;
+                let jitter = p.hbJitter !== undefined ? p.hbJitter : 0.15;
+                let softness = p.hbSoftness !== undefined ? p.hbSoftness : 0.005;
+                let bipolar = p.hbBipolar || 'unipolar';
+                let angleDeg = p.hbAngle || 0;
+                let seed = p.seed || 0;
+
+                let cx = p.centerX !== undefined ? p.centerX : 0.5;
+                let cy = p.centerY !== undefined ? p.centerY : 0.5;
+                let scaleFactorX = (sx !== undefined ? sx : 10) / 10;
+                let scaleFactorY = (sy !== undefined ? sy : 10) / 10;
+
+                let dx = (tx - cx) * scaleFactorX;
+                let dy = (ty - cy) * scaleFactorY;
+
+                let u = dx + cx;
+                let v = dy + cy;
+
+                if (orientation === 'vertical') {
+                    u = dy + cy;
+                    v = dx + cx;
+                } else if (orientation === 'angled') {
+                    let rad = (angleDeg * Math.PI) / 180;
+                    let cosA = Math.cos(rad);
+                    let sinA = Math.sin(rad);
+                    let rx = dx * cosA - dy * sinA;
+                    let ry = dx * sinA + dy * cosA;
+                    u = rx + cx;
+                    v = ry + cy;
+                }
+
+                if (lineStyle === 'pixelated' && pixelSize > 1) {
+                    let pGrid = pixelSize * 32;
+                    u = Math.floor(u * pGrid) / pGrid;
+                    v = Math.floor(v * pGrid) / pGrid;
+                }
+
+                const calcPass = (uCoord, vCoord) => {
+                    let passVal = 0.0;
+                    for (let i = 0; i < lineCount; i++) {
+                        let h0 = this.hashLine(i, seed);
+                        let h1 = this.hashLine(i + 100, seed);
+                        let h2 = this.hashLine(i + 200, seed);
+                        let h3 = this.hashLine(i + 300, seed);
+
+                        let spacing = 1.0 / (lineCount + 1);
+                        let baseLinePos = (i + 1) * spacing + (h0 - 0.5) * spacing * jitter;
+
+                        let lineBeatFreq = beatsFreq * Math.max(0.05, 1.0 + (h1 - 0.5) * jitter * 0.5);
+                        let phaseOffset = h2 * 10.0 * (1.0 + jitter * 0.5);
+
+                        let noiseVal = 0;
+                        if (distortAmp > 0.001) {
+                            if (typeof Simplex !== 'undefined' && Simplex.noise2D) {
+                                noiseVal = Simplex.noise2D(uCoord * distortFreq * scaleFactorX + i * 3.7, seed * 0.1) * distortAmp;
+                            } else {
+                                noiseVal = Math.sin(uCoord * distortFreq * Math.PI * 2 + i) * distortAmp;
+                            }
+                        }
+
+                        let curveDisplacement = 0;
+                        for (let l = 0; l < layersCount; l++) {
+                            let layerWeight = 1.0 / Math.pow(1.5, l);
+                            let layerFreqMult = Math.pow(1.618, l);
+                            let layerPhase = phaseOffset + l * 1.337;
+
+                            let posInBeat = uCoord * lineBeatFreq * layerFreqMult + layerPhase;
+                            let pVal = this.evalPulseShape(posInBeat, waveType, pulseWidth / Math.sqrt(l + 1));
+
+                            if (bipolar === 'bipolar' && (l % 2 === 1)) {
+                                pVal = -pVal;
+                            }
+
+                            curveDisplacement += pVal * amplitude * layerWeight;
+                        }
+
+                        if (bipolar === 'absolute') {
+                            curveDisplacement = Math.abs(curveDisplacement);
+                        }
+
+                        let Y_curve = baseLinePos + curveDisplacement + noiseVal;
+                        let distToCurve = Math.abs(vCoord - Y_curve);
+
+                        let lineIntensity = 0.0;
+                        let lineThickMult = jitter > 0 ? Math.max(0.1, 1.0 + (h3 - 0.5) * Math.min(2.0, jitter * 0.5)) : 1.0;
+                        let thick = lineThickness * lineThickMult * 0.5;
+
+                        if (lineStyle === 'pixelated') {
+                            lineIntensity = distToCurve <= thick ? 1.0 : 0.0;
+                        } else if (lineStyle === 'dots') {
+                            let dotPattern = (Math.sin(uCoord * lineBeatFreq * Math.PI * 8) > 0.0) ? 1.0 : 0.0;
+                            let smoothEdge = 1.0 - smoothstep(thick - softness, thick + softness, distToCurve);
+                            lineIntensity = smoothEdge * dotPattern;
+                        } else if (lineStyle === 'glow') {
+                            let core = 1.0 - smoothstep(thick - softness, thick, distToCurve);
+                            let halo = Math.exp(-distToCurve / (thick * 4.0 + 0.0001));
+                            lineIntensity = Math.max(core, halo * 0.7);
+                        } else {
+                            lineIntensity = 1.0 - smoothstep(thick - softness, thick + softness, distToCurve);
+                        }
+
+                        passVal = Math.max(passVal, lineIntensity);
+                    }
+                    return passVal;
+                };
+
+                let totalValue = 0.0;
+                if (orientation === 'cross') {
+                    let passH = calcPass(u, v);
+                    let passV = calcPass(v, u);
+                    totalValue = Math.max(passH, passV);
+                } else {
+                    totalValue = calcPass(u, v);
+                }
+
+                return Math.max(0, Math.min(1, totalValue));
+            }
+        };
+
         const smoothstep = (edge0, edge1, x) => {
             let t = Math.max(0, Math.min(1, (x - edge0) / (edge1 - edge0)));
             return t * t * (3 - 2 * t);
@@ -4116,6 +4295,7 @@
                 case 'fbm': v=fbm(tx*sx,ty*sy,p.octaves||3,p.lacunarity??2,p.gain??0.5,'simplex'); break;
                 case 'ridged': v=ridged(tx*sx,ty*sy,p.octaves||3,p.lacunarity??2,p.gain??0.5,p); break;
                 case 'sine': v = SinusoidGenerator.eval(tx, ty, sx, sy, p); break;
+                case 'heartbeat': v = HeartbeatGenerator.eval(tx, ty, sx, sy, p); break;
                 case 'radial': {
                     let cx = p.centerX ?? 0.5, cy = p.centerY ?? 0.5;
                     let rdx = (tx - cx) * sx, rdy = (ty - cy) * sy;
@@ -5946,7 +6126,7 @@
         }
 
         // --- Рандомізація алгоритму ---
-        const GENERATOR_TYPES = ['gradient','simplex','perlin','voronoi','fbm','ridged','sine','radial','spiral','hexagon','pixel_noise','white_noise','checkerboard','dots','weave','value_noise','cellular','spider_web','cymatics', 'paint'];
+        const GENERATOR_TYPES = ['gradient','simplex','perlin','voronoi','fbm','ridged','sine','radial','spiral','hexagon','pixel_noise','white_noise','checkerboard','dots','weave','value_noise','cellular','spider_web','cymatics', 'heartbeat', 'paint'];
 
         // Рандомізує ВИКЛЮЧНО параметри алгоритму вибраного шару (сід, масштаб, зсув, кут, частоту тощо)
         // Свідомо НЕ торкається ефектів (threshold, levels, posterize, findEdges, invert, brightness, contrast, blur),
@@ -6035,6 +6215,21 @@
                 p.ringSineFreq = 1 + Math.floor(Math.random() * 20);
                 p.radSineAmp = parseFloat((Math.random() * 0.3).toFixed(2));
                 p.radSineFreq = 1 + Math.floor(Math.random() * 20);
+            }
+            if (lay.generatorType === 'heartbeat') {
+                p.hbLineCount = Math.floor(1 + Math.random() * 15);
+                p.hbThickness = parseFloat((0.005 + Math.random() * 0.05).toFixed(3));
+                p.hbAmplitude = parseFloat((0.1 + Math.random() * 0.6).toFixed(2));
+                p.hbBeatsFreq = parseFloat((1 + Math.random() * 12).toFixed(1));
+                p.hbPulseWidth = parseFloat((0.05 + Math.random() * 0.4).toFixed(2));
+                p.hbDistortFreq = parseFloat((1 + Math.random() * 10).toFixed(1));
+                p.hbDistortAmp = parseFloat((Math.random() * 0.2).toFixed(3));
+                p.hbLayers = Math.floor(1 + Math.random() * 4);
+                p.hbJitter = parseFloat((Math.random() * 0.4).toFixed(2));
+                p.hbLineStyle = ['smooth', 'pixelated', 'dots', 'glow'][Math.floor(Math.random() * 4)];
+                p.hbWaveType = ['ecg', 'pulse', 'sine_burst', 'triangle', 'noise_glitch'][Math.floor(Math.random() * 5)];
+                p.hbOrientation = ['horizontal', 'vertical', 'angled', 'cross'][Math.floor(Math.random() * 4)];
+                p.hbAngle = Math.floor(Math.random() * 180);
             }
             if (lay.generatorType === 'gradient') {
                 let gradTypes = ['linear', 'radial', 'elliptical', 'conical', 'reflected', 'diamond'];
@@ -6942,6 +7137,72 @@
                 algoSpecificHTML += createSlider("Товщина лінії", "isolineWidth", 0, 1, 0.01, lp.isolineWidth, false, 0.5);
             }
 
+            if (lay.generatorType === 'heartbeat') {
+                algoSpecificHTML += `<div class="section-title">Серцебиття та ЕКГ (Heartbeat Lines Generator)</div>`;
+
+                algoSpecificHTML += `<div class="property-group grid-2">
+                    <div>
+                        <label class="property-label">Орієнтація / Напрямок</label>
+                        <select class="form-control" onchange="upd('hbOrientation', this.value); renderProps();">
+                            <option value="horizontal" ${(lp.hbOrientation||'horizontal')==='horizontal'?'selected':''}>Горизонтальні лінії</option>
+                            <option value="vertical" ${lp.hbOrientation==='vertical'?'selected':''}>Вертикальні лінії</option>
+                            <option value="angled" ${lp.hbOrientation==='angled'?'selected':''}>Під кутом (Angled)</option>
+                            <option value="cross" ${lp.hbOrientation==='cross'?'selected':''}>Перехресна сітка (Cross Grid)</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="property-label">Форма імпульсу (Wave Shape)</label>
+                        <select class="form-control" onchange="upd('hbWaveType', this.value)">
+                            <option value="ecg" ${(lp.hbWaveType||'ecg')==='ecg'?'selected':''}>💓 Кардіограма (ECG PQRST)</option>
+                            <option value="pulse" ${lp.hbWaveType==='pulse'?'selected':''}>⚡ Гострий імпульс (Pulse Spike)</option>
+                            <option value="sine_burst" ${lp.hbWaveType==='sine_burst'?'selected':''}>🌊 Синусоїдальний спалах (Sine Burst)</option>
+                            <option value="triangle" ${lp.hbWaveType==='triangle'?'selected':''}>📐 Трикутні піки (Triangle)</option>
+                            <option value="square" ${lp.hbWaveType==='square'?'selected':''}>🔲 Прямокутні меандри (Square)</option>
+                            <option value="noise_glitch" ${lp.hbWaveType==='noise_glitch'?'selected':''}>🤖 Кібер-глітч (Cyber Glitch)</option>
+                        </select>
+                    </div>
+                </div>`;
+
+                if ((lp.hbOrientation || 'horizontal') === 'angled') {
+                    algoSpecificHTML += createSlider("Кут нахилу (°)", "hbAngle", 0, 360, 1, lp.hbAngle !== undefined ? lp.hbAngle : 0, false, 0);
+                }
+
+                algoSpecificHTML += `<div class="property-group grid-2">
+                    <div>
+                        <label class="property-label">Стиль лінії (Line Rendering)</label>
+                        <select class="form-control" onchange="upd('hbLineStyle', this.value); renderProps();">
+                            <option value="smooth" ${(lp.hbLineStyle||'smooth')==='smooth'?'selected':''}>✨ Плавна гладка (Smooth)</option>
+                            <option value="pixelated" ${lp.hbLineStyle==='pixelated'?'selected':''}>👾 Піксельна / 8-Bit (Pixelated)</option>
+                            <option value="dots" ${lp.hbLineStyle==='dots'?'selected':''}>🔘 Точкова / Пунктир (Dotted)</option>
+                            <option value="glow" ${lp.hbLineStyle==='glow'?'selected':''}>🌟 Неонове світіння (Glow/Neon)</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="property-label">Полярність піків</label>
+                        <select class="form-control" onchange="upd('hbBipolar', this.value)">
+                            <option value="unipolar" ${(lp.hbBipolar||'unipolar')==='unipolar'?'selected':''}>Одностороння (Unipolar)</option>
+                            <option value="bipolar" ${lp.hbBipolar==='bipolar'?'selected':''}>Двостороння (Bipolar / Up & Down)</option>
+                            <option value="absolute" ${lp.hbBipolar==='absolute'?'selected':''}>Абсолютна (Positive Only)</option>
+                        </select>
+                    </div>
+                </div>`;
+
+                if ((lp.hbLineStyle || 'smooth') === 'pixelated') {
+                    algoSpecificHTML += createSlider("Розмір пікселя (Pixel Grid)", "hbPixelSize", 1, 32, 1, lp.hbPixelSize !== undefined ? lp.hbPixelSize : 8, false, 8);
+                }
+
+                algoSpecificHTML += createSlider("Кількість ліній", "hbLineCount", 1, 100, 1, lp.hbLineCount !== undefined ? lp.hbLineCount : 5, false, 5);
+                algoSpecificHTML += createSlider("Товщина ліній", "hbThickness", 0.001, 0.15, 0.001, lp.hbThickness !== undefined ? lp.hbThickness : 0.02, false, 0.02);
+                algoSpecificHTML += createSlider("Амплітуда спалахів (Spike Height)", "hbAmplitude", 0.0, 2.0, 0.01, lp.hbAmplitude !== undefined ? lp.hbAmplitude : 0.35, false, 0.35);
+                algoSpecificHTML += createSlider("Частота удару / Серцебиття (Beats Rate)", "hbBeatsFreq", 0.5, 50.0, 0.5, lp.hbBeatsFreq !== undefined ? lp.hbBeatsFreq : 4.0, false, 4.0);
+                algoSpecificHTML += createSlider("Ширина / Гострота імпульсу (Pulse Width)", "hbPulseWidth", 0.01, 1.0, 0.01, lp.hbPulseWidth !== undefined ? lp.hbPulseWidth : 0.2, false, 0.2);
+                algoSpecificHTML += createSlider("Нашарування хвилин / Шари (Harmonic Layers)", "hbLayers", 1, 8, 1, lp.hbLayers !== undefined ? lp.hbLayers : 2, false, 2);
+                algoSpecificHTML += createSlider("Частота викривлення (Distortion Freq)", "hbDistortFreq", 0.0, 20.0, 0.1, lp.hbDistortFreq !== undefined ? lp.hbDistortFreq : 3.0, false, 3.0);
+                algoSpecificHTML += createSlider("Амплітуда деформації шумів (Distortion Amp)", "hbDistortAmp", 0.0, 0.5, 0.005, lp.hbDistortAmp !== undefined ? lp.hbDistortAmp : 0.08, false, 0.08);
+                algoSpecificHTML += createSlider("Розкид та хаотичність (Jitter)", "hbJitter", 0.0, 10.0, 0.05, lp.hbJitter !== undefined ? lp.hbJitter : 0.15, false, 0.15);
+                algoSpecificHTML += createSlider("М'якість країв (Edge Softness)", "hbSoftness", 0.001, 0.05, 0.001, lp.hbSoftness !== undefined ? lp.hbSoftness : 0.005, false, 0.005);
+            }
+
             if (lay.generatorType === 'spider_web') {
                 algoSpecificHTML += `<div class="section-title">Spider Web (Павутина)</div>`;
                 algoSpecificHTML += `<div class="property-group grid-2">
@@ -7310,7 +7571,8 @@
                 'value_noise': 'Value Noise',
                 'cellular': 'Клітинний шум (Cellular)',
                 'spider_web': 'Павутина (Spider Web)',
-                'cymatics': 'Кіматика (Cymatics)'
+                'cymatics': 'Кіматика (Cymatics)',
+                'heartbeat': '💓 Серцебиття та ЕКГ (Heartbeat Lines)'
             };
 
             const algoOptions = Object.keys(algoLabels).map(t => 

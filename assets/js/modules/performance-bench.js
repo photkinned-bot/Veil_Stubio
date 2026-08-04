@@ -127,7 +127,7 @@ export class StressTestRunner {
             // Test 2: Heavy Multi-layer Load (5, 10, 20 procedural layers)
             updateStatus(2, 40, "Тестування під високим навантаженням (5, 10, 20 шарів)...");
             const originalLayers = this.state.layers.slice();
-            const testLayerTypes = ['voronoi', 'spider_web', 'fbm', 'ridged', 'cymatics', 'simplex', 'hexagon', 'gradient'];
+            const testLayerTypes = ['voronoi', 'spider_web', 'fbm', 'ridged', 'cymatics', 'simplex', 'hexagon', 'gradient', 'heartbeat'];
 
             const counts = [5, 10, 20];
             for (let count of counts) {
