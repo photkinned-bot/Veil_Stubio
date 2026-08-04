@@ -79,6 +79,44 @@ export class CanvasProcessingEngine {
   }
 
   /**
+   * Helper: Directional Blur on Float32Array
+   */
+  static directionalBlurFloatBuffer(buffer, width, height, radius, angle = 0) {
+    if (!radius || radius < 1) return buffer;
+    const r = Math.floor(radius);
+    const size = width * height;
+    const out = new Float32Array(size);
+    const radAngle = (angle || 0) * Math.PI / 180;
+    const dirX = Math.cos(radAngle);
+    const dirY = Math.sin(radAngle);
+    const stepCount = r * 2 + 1;
+    const invSteps = 1 / stepCount;
+
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        let sum = 0;
+        for (let s = -r; s <= r; s++) {
+          let sx = x + s * dirX;
+          let sy = y + s * dirY;
+          let x0 = (Math.floor(sx) % width + width) % width;
+          let y0 = (Math.floor(sy) % height + height) % height;
+          let x1 = (x0 + 1) % width;
+          let y1 = (y0 + 1) % height;
+          let fx = sx - Math.floor(sx);
+          let fy = sy - Math.floor(sy);
+          let v00 = buffer[y0 * width + x0];
+          let v10 = buffer[y0 * width + x1];
+          let v01 = buffer[y1 * width + x0];
+          let v11 = buffer[y1 * width + x1];
+          sum += (1 - fx) * (1 - fy) * v00 + fx * (1 - fy) * v10 + (1 - fx) * fy * v01 + fx * fy * v11;
+        }
+        out[y * width + x] = sum * invSteps;
+      }
+    }
+    return out;
+  }
+
+  /**
    * Helper: Sharpen kernel filter on Float32Array
    */
   static sharpenFloatBuffer(buffer, width, height, amount) {

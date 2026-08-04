@@ -3468,6 +3468,63 @@
             }
         }
 
+        function applyDirectionalBlur(buf, tmp, w, h, rad, angle = 0, mode = 'wrap') {
+            if (!rad || rad <= 0) return;
+            let scaledRad = Math.max(1, Math.round(rad * (w / 512)));
+            let effectiveMode = mode;
+            if (typeof mode === 'boolean') {
+                effectiveMode = mode ? 'clamp' : 'wrap';
+            }
+
+            let radAngle = (angle || 0) * Math.PI / 180;
+            let dirX = Math.cos(radAngle);
+            let dirY = Math.sin(radAngle);
+
+            let kSize = scaledRad;
+            let stepCount = kSize * 2 + 1;
+            let invSteps = 1 / stepCount;
+
+            for (let y = 0; y < h; y++) {
+                let rowOffset = y * w;
+                for (let x = 0; x < w; x++) {
+                    let sum = 0;
+                    for (let s = -kSize; s <= kSize; s++) {
+                        let sx = x + s * dirX;
+                        let sy = y + s * dirY;
+
+                        let x0 = Math.floor(sx), y0 = Math.floor(sy);
+                        let x1 = x0 + 1, y1 = y0 + 1;
+                        let fx = sx - x0, fy = sy - y0;
+
+                        if (effectiveMode === 'clamp') {
+                            x0 = Math.max(0, Math.min(w - 1, x0));
+                            x1 = Math.max(0, Math.min(w - 1, x1));
+                            y0 = Math.max(0, Math.min(h - 1, y0));
+                            y1 = Math.max(0, Math.min(h - 1, y1));
+                        } else {
+                            x0 = (x0 % w + w) % w;
+                            x1 = (x1 % w + w) % w;
+                            y0 = (y0 % h + h) % h;
+                            y1 = (y1 % h + h) % h;
+                        }
+
+                        let v00 = buf[y0 * w + x0];
+                        let v10 = buf[y0 * w + x1];
+                        let v01 = buf[y1 * w + x0];
+                        let v11 = buf[y1 * w + x1];
+
+                        let val = (1 - fx) * (1 - fy) * v00 + fx * (1 - fy) * v10 + (1 - fx) * fy * v01 + fx * fy * v11;
+                        sum += val;
+                    }
+                    tmp[rowOffset + x] = sum * invSteps;
+                }
+            }
+
+            for (let i = 0; i < w * h; i++) {
+                buf[i] = tmp[i];
+            }
+        }
+
         function applyEdgeDetection(buf, tmp, w, h) {
             let step = Math.max(1, Math.round(w / 512));
             for(let i=0;i<w*h;i++) tmp[i]=buf[i];
@@ -5743,7 +5800,11 @@
                     let isTiled = (state.global.tileMode && state.global.tileMode !== 'off') || !!p.seamless;
                     let blurMode = isTiled ? 'wrap' : (p.blurClampEdge ? 'clamp' : 'wrap');
                     let bType = p.blurType || 'gaussian';
-                    if (bType === 'box') {
+                    if (bType === 'directional') {
+                        applyDirectionalBlur(layerBufferR, blurTempR, w, h, parseInt(p.blur), p.blurAngle || 0, blurMode);
+                        applyDirectionalBlur(layerBufferG, blurTempG, w, h, parseInt(p.blur), p.blurAngle || 0, blurMode);
+                        applyDirectionalBlur(layerBufferB, blurTempB, w, h, parseInt(p.blur), p.blurAngle || 0, blurMode);
+                    } else if (bType === 'box') {
                         applyBoxBlur(layerBufferR, blurTempR, w, h, parseInt(p.blur), blurMode);
                         applyBoxBlur(layerBufferG, blurTempG, w, h, parseInt(p.blur), blurMode);
                         applyBoxBlur(layerBufferB, blurTempB, w, h, parseInt(p.blur), blurMode);
@@ -5980,7 +6041,11 @@
                 let isGlobalTiled = (state.global.tileMode && state.global.tileMode !== 'off');
                 let globalBlurMode = isGlobalTiled ? 'wrap' : (state.global.blurClampEdge ? 'clamp' : 'wrap');
                 let gBType = state.global.blurType || 'gaussian';
-                if (gBType === 'box') {
+                if (gBType === 'directional') {
+                    applyDirectionalBlur(blendBufferR, blurTempR, w, h, parseInt(state.global.blur), state.global.blurAngle || 0, globalBlurMode);
+                    applyDirectionalBlur(blendBufferG, blurTempG, w, h, parseInt(state.global.blur), state.global.blurAngle || 0, globalBlurMode);
+                    applyDirectionalBlur(blendBufferB, blurTempB, w, h, parseInt(state.global.blur), state.global.blurAngle || 0, globalBlurMode);
+                } else if (gBType === 'box') {
                     applyBoxBlur(blendBufferR, blurTempR, w, h, parseInt(state.global.blur), globalBlurMode);
                     applyBoxBlur(blendBufferG, blurTempG, w, h, parseInt(state.global.blur), globalBlurMode);
                     applyBoxBlur(blendBufferB, blurTempB, w, h, parseInt(state.global.blur), globalBlurMode);
@@ -6388,7 +6453,7 @@
         // значення за замовчуванням через || / ?? у renderProps()/evalGenerator()
         // самі, щойно з'являються на екрані для свого типу генератора.
         function freshLayerParams() {
-            return { seamless:false, scale:10, scaleX:10, scaleY:10, lockScale:true, layerScale:1, contrast:1, brightness:1, angle:0, perspectiveV:0, perspectiveH:0, blur:0, blurType:'gaussian', blurClampEdge:false,
+            return { seamless:false, scale:10, scaleX:10, scaleY:10, lockScale:true, layerScale:1, contrast:1, brightness:1, angle:0, perspectiveV:0, perspectiveH:0, blur:0, blurType:'gaussian', blurAngle:0, blurClampEdge:false,
                 dotSize: 0.25, dotSoftness: 0.05, dotGrid: 'square', dotShape: 'circle',
                 pixelGap: 0.0, pixelGapValue: 0.0, pixelGapSoftness: 0.0,
                 pixelGridType: 'standard', pixelShape: 'square', pixelCornerRadius: 0.1,
@@ -6414,7 +6479,7 @@
                 vignetteHighlights: 0,
                 vignetteCenterX: 0.5,
                 vignetteCenterY: 0.5,
-                grain:10, blur:0, blurType:'gaussian', blurClampEdge:false,
+                grain:10, blur:0, blurType:'gaussian', blurAngle:0, blurClampEdge:false,
                 globalZoom:1, globalScaleX:1, globalScaleY:1, globalRotation:0, globalOffsetX:0, globalOffsetY:0,
                 globalPerspectiveV:0, globalPerspectiveH:0,
                 tileMode:'off', tileRepeatX:2, tileRepeatY:2, tileMirrorX:true, tileMirrorY:true,
@@ -8231,11 +8296,13 @@
                 ${createSlider("Розмиття (px)", "blur", 0, 100, 1, lp.blur||0, false, 0)}
                 <div class="property-group" style="margin-top:-6px;">
                     <label class="property-label" style="font-size:11px; margin-bottom:4px;">Тип розмиття</label>
-                    <div class="gen-grid" style="grid-template-columns:repeat(2,1fr);">
-                        <button onclick="upd('blurType','gaussian')" class="gen-btn ${(lp.blurType||'gaussian')==='gaussian'?'active':''}">Гаус (Gaussian)</button>
-                        <button onclick="upd('blurType','box')" class="gen-btn ${lp.blurType==='box'?'active':''}">Бокс (Box)</button>
+                    <div class="gen-grid" style="grid-template-columns:repeat(3,1fr);">
+                        <button onclick="upd('blurType','gaussian'); renderProps();" class="gen-btn ${(lp.blurType||'gaussian')==='gaussian'?'active':''}">Гаус (Gaussian)</button>
+                        <button onclick="upd('blurType','box'); renderProps();" class="gen-btn ${lp.blurType==='box'?'active':''}">Бокс (Box)</button>
+                        <button onclick="upd('blurType','directional'); renderProps();" class="gen-btn ${lp.blurType==='directional'?'active':''}">За напрямком</button>
                     </div>
                 </div>
+                ${(lp.blurType === 'directional') ? createSlider("Кут розмиття (°)", "blurAngle", -180, 180, 1, lp.blurAngle||0, false, 0) : ''}
                 <div class="property-group" style="margin-top:-6px;">
                     <label class="checkbox-label" style="font-size:11px; display:flex; align-items:center; gap:6px;">
                         <input type="checkbox" ${lp.blurClampEdge ? 'checked' : ''} onchange="upd('blurClampEdge', this.checked)">
@@ -8492,11 +8559,13 @@
                 ${createSlider("Глобальне розмиття", "blur", 0, 100, 1, g.blur||0, true, 0)}
                 <div class="property-group" style="margin-top:-6px;">
                     <label class="property-label" style="font-size:11px; margin-bottom:4px;">Тип розмиття</label>
-                    <div class="gen-grid" style="grid-template-columns:repeat(2,1fr);">
-                        <button onclick="upd('blurType','gaussian',true)" class="gen-btn ${(g.blurType||'gaussian')==='gaussian'?'active':''}">Гаус (Gaussian)</button>
-                        <button onclick="upd('blurType','box',true)" class="gen-btn ${g.blurType==='box'?'active':''}">Бокс (Box)</button>
+                    <div class="gen-grid" style="grid-template-columns:repeat(3,1fr);">
+                        <button onclick="upd('blurType','gaussian',true); renderGlobal();" class="gen-btn ${(g.blurType||'gaussian')==='gaussian'?'active':''}">Гаус (Gaussian)</button>
+                        <button onclick="upd('blurType','box',true); renderGlobal();" class="gen-btn ${g.blurType==='box'?'active':''}">Бокс (Box)</button>
+                        <button onclick="upd('blurType','directional',true); renderGlobal();" class="gen-btn ${g.blurType==='directional'?'active':''}">За напрямком</button>
                     </div>
                 </div>
+                ${(g.blurType === 'directional') ? createSlider("Кут розмиття (°)", "blurAngle", -180, 180, 1, g.blurAngle||0, true, 0) : ''}
                 <div class="property-group" style="margin-top:-6px;">
                     <label class="checkbox-label" style="font-size:11px; display:flex; align-items:center; gap:6px;">
                         <input type="checkbox" ${g.blurClampEdge ? 'checked' : ''} onchange="state.global.blurClampEdge=this.checked; invalidateCaches(); requestRender(); commitHistorySnapshot();">
