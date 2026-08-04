@@ -1596,6 +1596,266 @@
             }
         };
 
+        const MatrixDigitGenerator = {
+            BITMAPS: {
+                '0': [14, 17, 19, 21, 25, 17, 14],
+                '1': [4, 12, 4, 4, 4, 4, 14],
+                '2': [14, 17, 1, 2, 4, 8, 31],
+                '3': [31, 2, 4, 2, 1, 17, 14],
+                '4': [2, 6, 10, 18, 31, 2, 2],
+                '5': [31, 16, 30, 1, 1, 17, 14],
+                '6': [14, 17, 16, 30, 17, 17, 14],
+                '7': [31, 1, 2, 4, 8, 8, 8],
+                '8': [14, 17, 17, 14, 17, 17, 14],
+                '9': [14, 17, 17, 15, 1, 17, 14],
+                'A': [14, 17, 17, 31, 17, 17, 17],
+                'B': [30, 17, 17, 30, 17, 17, 30],
+                'C': [14, 17, 16, 16, 16, 17, 14],
+                'D': [28, 18, 17, 17, 17, 18, 28],
+                'E': [31, 16, 16, 30, 16, 16, 31],
+                'F': [31, 16, 16, 30, 16, 16, 16],
+                '+': [0, 4, 4, 31, 4, 4, 0],
+                '-': [0, 0, 0, 31, 0, 0, 0],
+                '*': [0, 17, 10, 4, 10, 17, 0],
+                '=': [0, 0, 31, 0, 31, 0, 0],
+                '?': [14, 17, 1, 2, 4, 0, 4],
+                '!': [4, 4, 4, 4, 4, 0, 4],
+                '#': [10, 10, 31, 10, 31, 10, 10]
+            },
+
+            eval7Segment(cx, cy, digit, glow) {
+                const segMap = {
+                    '0': [1,1,1,1,1,1,0],
+                    '1': [0,1,1,0,0,0,0],
+                    '2': [1,1,0,1,1,0,1],
+                    '3': [1,1,1,1,0,0,1],
+                    '4': [0,1,1,0,0,1,1],
+                    '5': [1,0,1,1,0,1,1],
+                    '6': [1,0,1,1,1,1,1],
+                    '7': [1,1,1,0,0,0,0],
+                    '8': [1,1,1,1,1,1,1],
+                    '9': [1,1,1,1,0,1,1],
+                    'A': [1,1,1,0,1,1,1],
+                    'B': [0,0,1,1,1,1,1],
+                    'C': [1,0,0,1,1,1,0],
+                    'D': [0,1,1,1,1,0,1],
+                    'E': [1,0,0,1,1,1,1],
+                    'F': [1,0,0,0,1,1,1]
+                };
+                let active = segMap[digit] || segMap['8'];
+                let thickness = 0.08;
+                let len = 0.35;
+
+                let segs = [
+                    {x: 0.5, y: 0.15, w: len, h: thickness, act: active[0]},
+                    {x: 0.82, y: 0.325, w: thickness, h: len, act: active[1]},
+                    {x: 0.82, y: 0.675, w: thickness, h: len, act: active[2]},
+                    {x: 0.5, y: 0.85, w: len, h: thickness, act: active[3]},
+                    {x: 0.18, y: 0.675, w: thickness, h: len, act: active[4]},
+                    {x: 0.18, y: 0.325, w: thickness, h: len, act: active[5]},
+                    {x: 0.5, y: 0.5, w: len, h: thickness, act: active[6]}
+                ];
+
+                let isInsideAny = false;
+                let minDist = 999;
+                for (let i = 0; i < 7; i++) {
+                    let s = segs[i];
+                    if (!s.act) continue;
+                    let dx = Math.max(0, Math.abs(cx - s.x) - s.w * 0.5);
+                    let dy = Math.max(0, Math.abs(cy - s.y) - s.h * 0.5);
+                    let dist = Math.sqrt(dx * dx + dy * dy);
+                    if (dist < minDist) minDist = dist;
+
+                    if (Math.abs(cx - s.x) < s.w * 0.5 && Math.abs(cy - s.y) < s.h * 0.5) {
+                        isInsideAny = true;
+                    }
+                }
+
+                if (isInsideAny) return 1.0;
+                if (glow > 0.001) {
+                    let sigma = 0.02 + 0.06 * Math.min(2.5, glow);
+                    let gaussianGlow = Math.exp(-(minDist * minDist) / (2.0 * sigma * sigma));
+                    let val = gaussianGlow * Math.min(1.2, glow * 0.75);
+                    return val > 0.005 ? val : 0.0;
+                }
+                return 0.0;
+            },
+
+            eval(tx, ty, sx, sy, p) {
+                let charSet = p.matrixCharSet || 'binary';
+                let customChars = (p.matrixCustomChars !== undefined && p.matrixCustomChars !== '') ? p.matrixCustomChars : '01';
+                let density = p.matrixDensity !== undefined ? p.matrixDensity : 0.75;
+                let cloudNoise = p.matrixCloudNoise !== undefined ? p.matrixCloudNoise : 0.5;
+                let cloudFreq = p.matrixCloudFreq !== undefined ? p.matrixCloudFreq : 3.0;
+                let digitScale = p.matrixDigitScale !== undefined ? p.matrixDigitScale : 1.0;
+                let spacing = p.matrixSpacing !== undefined ? p.matrixSpacing : 0.0;
+                let digitStyle = p.matrixDigitStyle || 'pixel_5x7';
+                let glow = p.matrixGlow !== undefined ? p.matrixGlow : 0.2;
+                let headGlow = p.matrixHeadGlow !== undefined ? p.matrixHeadGlow : 0.3;
+                let jitter = p.matrixJitter !== undefined ? p.matrixJitter : 0.15;
+                let seed = p.matrixSeed || 0;
+                let rainSpeed = p.matrixRainSpeed !== undefined ? p.matrixRainSpeed : 0.0;
+                let gridType = p.matrixGridType || 'standard';
+
+                let scaleX = sx || 20;
+                let scaleY = sy || 20;
+
+                let gx = tx * scaleX;
+                let gy = ty * scaleY;
+
+                let ixRaw = Math.floor(gx);
+                let iyRaw = Math.floor(gy);
+
+                let colOffset = 0;
+                let rainTrailMod = 1.0;
+                if (rainSpeed > 0) {
+                    let speedFactor = rainSpeed * 10.0;
+                    colOffset = Math.floor(Voronoi.hash(ixRaw * 17 + seed * 31, 101) * speedFactor);
+                    let trailLength = Math.max(4, Math.floor(30.0 / Math.max(0.1, rainSpeed)));
+                    let trailPos = Math.abs((iyRaw + colOffset) % trailLength) / trailLength;
+                    rainTrailMod = 0.2 + 0.8 * (1.0 - trailPos);
+                }
+
+                if (gridType === 'staggered_h' && Math.abs(iyRaw) % 2 === 1) {
+                    gx += 0.5;
+                } else if (gridType === 'staggered_v' && Math.abs(ixRaw) % 2 === 1) {
+                    gy += 0.5;
+                }
+
+                let ix = Math.floor(gx);
+                let iy = Math.floor(gy) + colOffset;
+
+                let fx = gx - Math.floor(gx);
+                let fy = gy - Math.floor(gy);
+
+                if (spacing > 0.001) {
+                    let halfGap = spacing * 0.5;
+                    if (fx < halfGap || fx > (1 - halfGap) || fy < halfGap || fy > (1 - halfGap)) {
+                        return 0.0;
+                    }
+                    fx = (fx - halfGap) / (1 - spacing);
+                    fy = (fy - halfGap) / (1 - spacing);
+                }
+
+                let cellHash = Voronoi.hash(ix * 1013 + seed * 17, iy * 31337 + seed * 53);
+                let cloudVal = 1.0;
+                if (cloudNoise > 0.001) {
+                    let n = (Simplex.noise(ix * 0.05 * cloudFreq + seed * 10, iy * 0.05 * cloudFreq + seed * 20) + 1.0) * 0.5;
+                    cloudVal = n;
+                }
+
+                let finalThreshold = (1.0 - cloudNoise) * density + cloudNoise * cloudVal * density;
+                if (cellHash > finalThreshold) {
+                    return 0.0;
+                }
+
+                let availableChars = ['0', '1'];
+                if (charSet === 'digits') {
+                    availableChars = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'];
+                } else if (charSet === 'hex') {
+                    availableChars = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'A', 'B', 'C', 'D', 'E', 'F'];
+                } else if (charSet === 'matrix_kanji') {
+                    availableChars = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'A', 'B', 'C', 'D', 'E', 'F', '+', '-', '*', '=', '?', '!'];
+                } else if (charSet === 'custom') {
+                    availableChars = customChars.split('');
+                    if (availableChars.length === 0) availableChars = ['0', '1'];
+                }
+
+                let charHash = Voronoi.hash(ix * 307 + seed * 991, iy * 409 + seed * 733);
+                let charIdx = Math.floor(charHash * availableChars.length) % availableChars.length;
+                let ch = availableChars[charIdx];
+
+                let cx = fx;
+                let cy = fy;
+                let maxGlowMargin = glow > 0 ? 0.25 : 0.0;
+                if (digitScale !== 1.0 && digitScale > 0.01) {
+                    cx = (fx - 0.5) / digitScale + 0.5;
+                    cy = (fy - 0.5) / digitScale + 0.5;
+                    if (cx < -maxGlowMargin || cx > 1 + maxGlowMargin || cy < -maxGlowMargin || cy > 1 + maxGlowMargin) {
+                        return 0.0;
+                    }
+                }
+
+                let val = 0.0;
+                if (digitStyle === 'digital_7seg') {
+                    val = this.eval7Segment(cx, cy, ch, glow);
+                } else {
+                    let rows = this.BITMAPS[ch] || this.BITMAPS['0'];
+                    let gridW = 5;
+                    let gridH = 7;
+                    if (digitStyle === 'pixel_3x5') {
+                        gridW = 3;
+                        gridH = 5;
+                    }
+
+                    let px = Math.floor(cx * gridW);
+                    let py = Math.floor(cy * gridH);
+
+                    let isOn = false;
+                    if (px >= 0 && px < gridW && py >= 0 && py < gridH) {
+                        let rowBitmask = rows[Math.min(rows.length - 1, Math.floor((py / gridH) * rows.length))];
+                        let bitIndex = 4 - Math.min(4, Math.floor((px / gridW) * 5));
+                        if ((rowBitmask & (1 << bitIndex)) !== 0) {
+                            isOn = true;
+                        }
+                    }
+
+                    if (isOn) {
+                        val = 1.0;
+                    } else if (glow > 0.001) {
+                        let minDist = 999;
+                        for (let by = 0; by < gridH; by++) {
+                            let rowBitmask = rows[Math.min(rows.length - 1, Math.floor((by / gridH) * rows.length))];
+                            for (let bx = 0; bx < gridW; bx++) {
+                                let bitIndex = 4 - Math.min(4, Math.floor((bx / gridW) * 5));
+                                if ((rowBitmask & (1 << bitIndex)) !== 0) {
+                                    let bitMinX = bx / gridW;
+                                    let bitMaxX = (bx + 1) / gridW;
+                                    let bitMinY = by / gridH;
+                                    let bitMaxY = (by + 1) / gridH;
+
+                                    let dx = 0;
+                                    if (cx < bitMinX) dx = bitMinX - cx;
+                                    else if (cx > bitMaxX) dx = cx - bitMaxX;
+
+                                    let dy = 0;
+                                    if (cy < bitMinY) dy = bitMinY - cy;
+                                    else if (cy > bitMaxY) dy = cy - bitMaxY;
+
+                                    let d = Math.sqrt(dx * dx + dy * dy);
+                                    if (d < minDist) minDist = d;
+                                }
+                            }
+                        }
+
+                        if (minDist < 900) {
+                            let sigma = 0.02 + 0.05 * Math.min(2.5, glow);
+                            let gaussianGlow = Math.exp(-(minDist * minDist) / (2.0 * sigma * sigma));
+                            val = gaussianGlow * Math.min(1.2, glow * 0.75);
+                            if (val < 0.005) val = 0.0;
+                        }
+                    }
+                }
+
+                let brightnessMod = rainTrailMod;
+                let headHash = Voronoi.hash(ix * 83 + seed * 991, iy * 97 + seed * 733);
+                if (headGlow > 0) {
+                    let headProb = Math.min(0.5, headGlow * 0.2);
+                    if (headHash < headProb) {
+                        brightnessMod += (1.0 + (1.0 - headHash / headProb) * headGlow * 2.5);
+                    }
+                }
+
+                if (jitter > 0) {
+                    let jHash = Voronoi.hash(ix * 133 + seed * 19, iy * 199 + seed * 23);
+                    brightnessMod *= Math.max(0.05, 1.0 + (jHash - 0.5) * jitter * 2.0);
+                }
+
+                val *= brightnessMod;
+                return Math.max(0, Math.min(3.0, val));
+            }
+        };
+
         const smoothstep = (edge0, edge1, x) => {
             let t = Math.max(0, Math.min(1, (x - edge0) / (edge1 - edge0)));
             return t * t * (3 - 2 * t);
@@ -4296,6 +4556,7 @@
                 case 'ridged': v=ridged(tx*sx,ty*sy,p.octaves||3,p.lacunarity??2,p.gain??0.5,p); break;
                 case 'sine': v = SinusoidGenerator.eval(tx, ty, sx, sy, p); break;
                 case 'heartbeat': v = HeartbeatGenerator.eval(tx, ty, sx, sy, p); break;
+                case 'matrix_digits': v = MatrixDigitGenerator.eval(tx, ty, sx, sy, p); break;
                 case 'radial': {
                     let cx = p.centerX ?? 0.5, cy = p.centerY ?? 0.5;
                     let rdx = (tx - cx) * sx, rdy = (ty - cy) * sy;
@@ -6126,7 +6387,7 @@
         }
 
         // --- Рандомізація алгоритму ---
-        const GENERATOR_TYPES = ['gradient','simplex','perlin','voronoi','fbm','ridged','sine','radial','spiral','hexagon','pixel_noise','white_noise','checkerboard','dots','weave','value_noise','cellular','spider_web','cymatics', 'heartbeat', 'paint'];
+        const GENERATOR_TYPES = ['gradient','simplex','perlin','voronoi','fbm','ridged','sine','radial','spiral','hexagon','pixel_noise','white_noise','checkerboard','dots','weave','value_noise','cellular','spider_web','cymatics', 'heartbeat', 'matrix_digits', 'paint'];
 
         // Рандомізує ВИКЛЮЧНО параметри алгоритму вибраного шару (сід, масштаб, зсув, кут, частоту тощо)
         // Свідомо НЕ торкається ефектів (threshold, levels, posterize, findEdges, invert, brightness, contrast, blur),
@@ -6230,6 +6491,20 @@
                 p.hbWaveType = ['ecg', 'pulse', 'sine_burst', 'triangle', 'noise_glitch'][Math.floor(Math.random() * 5)];
                 p.hbOrientation = ['horizontal', 'vertical', 'angled', 'cross'][Math.floor(Math.random() * 4)];
                 p.hbAngle = Math.floor(Math.random() * 180);
+            }
+            if (lay.generatorType === 'matrix_digits') {
+                let charSets = ['binary', 'digits', 'hex', 'matrix_kanji'];
+                let fontStyles = ['pixel_5x7', 'pixel_3x5', 'digital_7seg'];
+                p.matrixCharSet = charSets[Math.floor(Math.random() * charSets.length)];
+                p.matrixDigitStyle = fontStyles[Math.floor(Math.random() * fontStyles.length)];
+                p.matrixDensity = parseFloat((0.3 + Math.random() * 0.6).toFixed(2));
+                p.matrixCloudNoise = parseFloat((Math.random() * 0.8).toFixed(2));
+                p.matrixCloudFreq = parseFloat((1.0 + Math.random() * 6.0).toFixed(1));
+                p.matrixDigitScale = parseFloat((0.7 + Math.random() * 0.5).toFixed(2));
+                p.matrixGlow = parseFloat((Math.random() * 0.5).toFixed(2));
+                p.matrixHeadGlow = parseFloat((Math.random() * 0.5).toFixed(2));
+                p.matrixJitter = parseFloat((Math.random() * 0.4).toFixed(2));
+                p.matrixSeed = Math.floor(Math.random() * 9999);
             }
             if (lay.generatorType === 'gradient') {
                 let gradTypes = ['linear', 'radial', 'elliptical', 'conical', 'reflected', 'diamond'];
@@ -7551,6 +7826,69 @@
                 }
             }
 
+            if (lay.generatorType === 'matrix_digits') {
+                algoSpecificHTML += `
+                <div class="section-title">📟 Матриця цифр (Matrix Rain & Digits Cloud)</div>
+                <div class="property-group grid-2">
+                    <div>
+                        <label class="property-label">Набір символів</label>
+                        <select class="form-control" onchange="upd('matrixCharSet', this.value); renderProps();">
+                            <option value="binary" ${(lp.matrixCharSet||'binary')==='binary'?'selected':''}>0 та 1 (Бінарний / Binary)</option>
+                            <option value="digits" ${lp.matrixCharSet==='digits'?'selected':''}>0 - 9 (Десятичні цифри)</option>
+                            <option value="hex" ${lp.matrixCharSet==='hex'?'selected':''}>0 - F (16-річні Hex)</option>
+                            <option value="matrix_kanji" ${lp.matrixCharSet==='matrix_kanji'?'selected':''}>Цифри та Символи (*+#=?!)</option>
+                            <option value="custom" ${lp.matrixCharSet==='custom'?'selected':''}>Власний рядок (Custom)</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="property-label">Стиль шрифту</label>
+                        <select class="form-control" onchange="upd('matrixDigitStyle', this.value)">
+                            <option value="pixel_5x7" ${(lp.matrixDigitStyle||'pixel_5x7')==='pixel_5x7'?'selected':''}>👾 Піксельний 5x7</option>
+                            <option value="pixel_3x5" ${lp.matrixDigitStyle==='pixel_3x5'?'selected':''}>🕹️ Міні-піксель 3x5</option>
+                            <option value="digital_7seg" ${lp.matrixDigitStyle==='digital_7seg'?'selected':''}>⏰ 7-Сегментний LED</option>
+                        </select>
+                    </div>
+                </div>`;
+
+                if (lp.matrixCharSet === 'custom') {
+                    algoSpecificHTML += `<div class="property-group">
+                        <label class="property-label">Власні символи (наприклад: 010101 / ABC)</label>
+                        <input type="text" class="form-control" value="${lp.matrixCustomChars !== undefined ? lp.matrixCustomChars : '01'}" oninput="upd('matrixCustomChars', this.value)" style="font-size:12px; padding:4px 8px;">
+                    </div>`;
+                }
+
+                algoSpecificHTML += createSlider("Густота / Заповнення (Density)", "matrixDensity", 0.05, 1.0, 0.01, lp.matrixDensity !== undefined ? lp.matrixDensity : 0.75, false, 0.75);
+                algoSpecificHTML += createSlider("Шум хмарності (Cloud Noise Mask)", "matrixCloudNoise", 0.0, 1.0, 0.05, lp.matrixCloudNoise !== undefined ? lp.matrixCloudNoise : 0.5, false, 0.5);
+                if ((lp.matrixCloudNoise || 0) > 0) {
+                    algoSpecificHTML += createSlider("Масштаб хмар цифр (Cloud Scale)", "matrixCloudFreq", 0.5, 15.0, 0.5, lp.matrixCloudFreq !== undefined ? lp.matrixCloudFreq : 3.0, false, 3.0);
+                }
+
+                algoSpecificHTML += `<div class="property-group grid-2">
+                    <div>
+                        <label class="property-label">Тип сітки (Grid Layout)</label>
+                        <select class="form-control" onchange="upd('matrixGridType', this.value)">
+                            <option value="standard" ${(lp.matrixGridType||'standard')==='standard'?'selected':''}>Стандартна сітка</option>
+                            <option value="staggered_h" ${lp.matrixGridType==='staggered_h'?'selected':''}>Шахматна H (Brick)</option>
+                            <option value="staggered_v" ${lp.matrixGridType==='staggered_v'?'selected':''}>Шахматна V</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="property-label">Псевдовипадковий Seed</label>
+                        <div style="display:flex; gap:4px;">
+                            <input type="number" class="form-control" min="0" max="9999" value="${lp.matrixSeed || 0}" onchange="upd('matrixSeed', parseInt(this.value)||0)" style="font-size:11px;">
+                            <button type="button" class="btn btn-secondary" style="padding:2px 8px; font-size:11px;" onclick="upd('matrixSeed', Math.floor(Math.random()*9999)); renderProps();" title="Випадковий seed">🎲</button>
+                        </div>
+                    </div>
+                </div>`;
+
+                algoSpecificHTML += createSlider("Масштаб цифр у комірці", "matrixDigitScale", 0.1, 3.0, 0.05, lp.matrixDigitScale !== undefined ? lp.matrixDigitScale : 1.0, false, 1.0);
+                algoSpecificHTML += createSlider("Проміжок між цифрами (Spacing)", "matrixSpacing", 0.0, 0.8, 0.01, lp.matrixSpacing !== undefined ? lp.matrixSpacing : 0.0, false, 0.0);
+                algoSpecificHTML += createSlider("Світіння та німб (Glow Halo)", "matrixGlow", 0.0, 3.0, 0.05, lp.matrixGlow !== undefined ? lp.matrixGlow : 0.2, false, 0.2);
+                algoSpecificHTML += createSlider("Спалахи головних цифр (Head Glow)", "matrixHeadGlow", 0.0, 3.0, 0.05, lp.matrixHeadGlow !== undefined ? lp.matrixHeadGlow : 0.3, false, 0.3);
+                algoSpecificHTML += createSlider("Хаотичність яскравості (Jitter)", "matrixJitter", 0.0, 3.0, 0.05, lp.matrixJitter !== undefined ? lp.matrixJitter : 0.15, false, 0.15);
+                algoSpecificHTML += createSlider("Зсув дощу / Колонок (Rain Speed)", "matrixRainSpeed", 0.0, 10.0, 0.1, lp.matrixRainSpeed !== undefined ? lp.matrixRainSpeed : 0.0, false, 0.0);
+            }
+
             const algoLabels = {
                 'gradient': 'Градієнт (Gradient)',
                 'paint': 'Малювання (Paint Canvas)',
@@ -7572,7 +7910,8 @@
                 'cellular': 'Клітинний шум (Cellular)',
                 'spider_web': 'Павутина (Spider Web)',
                 'cymatics': 'Кіматика (Cymatics)',
-                'heartbeat': '💓 Серцебиття та ЕКГ (Heartbeat Lines)'
+                'heartbeat': '💓 Серцебиття та ЕКГ (Heartbeat Lines)',
+                'matrix_digits': '📟 Матриця цифр (Matrix Rain & Digits Cloud)'
             };
 
             const algoOptions = Object.keys(algoLabels).map(t => 
