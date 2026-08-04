@@ -1620,6 +1620,26 @@
                 'D': [28, 18, 17, 17, 17, 18, 28],
                 'E': [31, 16, 16, 30, 16, 16, 31],
                 'F': [31, 16, 16, 30, 16, 16, 16],
+                'G': [14, 17, 16, 23, 17, 17, 14],
+                'H': [17, 17, 17, 31, 17, 17, 17],
+                'I': [14, 4, 4, 4, 4, 4, 14],
+                'J': [7, 2, 2, 2, 2, 18, 12],
+                'K': [17, 18, 20, 24, 20, 18, 17],
+                'L': [16, 16, 16, 16, 16, 16, 31],
+                'M': [17, 27, 21, 21, 17, 17, 17],
+                'N': [17, 25, 25, 21, 19, 19, 17],
+                'O': [14, 17, 17, 17, 17, 17, 14],
+                'P': [30, 17, 17, 30, 16, 16, 16],
+                'Q': [14, 17, 17, 17, 21, 18, 13],
+                'R': [30, 17, 17, 30, 20, 18, 17],
+                'S': [14, 17, 16, 14, 1, 17, 14],
+                'T': [31, 4, 4, 4, 4, 4, 4],
+                'U': [17, 17, 17, 17, 17, 17, 14],
+                'V': [17, 17, 17, 17, 17, 10, 4],
+                'W': [17, 17, 17, 21, 21, 27, 17],
+                'X': [17, 17, 10, 4, 10, 17, 17],
+                'Y': [17, 17, 17, 10, 4, 4, 4],
+                'Z': [31, 1, 2, 4, 8, 16, 31],
                 '+': [0, 4, 4, 31, 4, 4, 0],
                 '-': [0, 0, 0, 31, 0, 0, 0],
                 '*': [0, 17, 10, 4, 10, 17, 0],
@@ -1650,32 +1670,38 @@
                     return this.BITMAPS[upper];
                 }
 
-                // Dynamic 5x7 bitmap generator for custom characters (Latin, Cyrillic, Symbols)
+                // High-precision normalized 10x14 -> 5x7 bitmap generator for any custom character
                 try {
                     let offCanvas = document.createElement('canvas');
-                    offCanvas.width = 5;
-                    offCanvas.height = 7;
+                    offCanvas.width = 10;
+                    offCanvas.height = 14;
                     let ctx = offCanvas.getContext('2d', { willReadFrequently: true });
                     if (ctx) {
                         ctx.fillStyle = '#000000';
-                        ctx.fillRect(0, 0, 5, 7);
+                        ctx.fillRect(0, 0, 10, 14);
                         ctx.fillStyle = '#ffffff';
-                        ctx.font = 'bold 6px sans-serif, monospace';
+                        ctx.font = 'bold 11px monospace, sans-serif';
                         ctx.textAlign = 'center';
                         ctx.textBaseline = 'middle';
-                        ctx.fillText(ch, 2.5, 3.5);
+                        ctx.fillText(ch, 5, 7);
 
-                        let imgData = ctx.getImageData(0, 0, 5, 7);
+                        let imgData = ctx.getImageData(0, 0, 10, 14);
                         let data = imgData.data;
                         let rows = new Array(7).fill(0);
 
                         for (let y = 0; y < 7; y++) {
                             let rowMask = 0;
                             for (let x = 0; x < 5; x++) {
-                                let idx = (y * 5 + x) * 4;
-                                let alpha = data[idx + 3];
-                                let r = data[idx];
-                                if (alpha > 80 && r > 80) {
+                                let srcX = x * 2;
+                                let srcY = y * 2;
+                                let sum = 0;
+                                for (let dy = 0; dy < 2; dy++) {
+                                    for (let dx = 0; dx < 2; dx++) {
+                                        let idx = ((srcY + dy) * 10 + (srcX + dx)) * 4;
+                                        sum += data[idx];
+                                    }
+                                }
+                                if (sum > 140) {
                                     rowMask |= (1 << (4 - x));
                                 }
                             }
@@ -1779,23 +1805,26 @@
                 let gx = tx * effScaleX;
                 let gy = ty * effScaleY;
 
-                let ixRaw = Math.floor(gx);
-                let iyRaw = Math.floor(gy);
+                let rawRow = Math.floor(gy);
+                let rawCol = Math.floor(gx);
 
-                let colOffset = 0;
-                if (rainSpeed > 0) {
-                    let speedFactor = rainSpeed * 10.0;
-                    colOffset = Math.floor(Voronoi.hash(ixRaw * 17 + seed * 31, 101) * speedFactor);
-                }
-
-                if (gridType === 'staggered_h' && Math.abs(iyRaw) % 2 === 1) {
+                // Grid staggering math:
+                if (gridType === 'staggered_h' && Math.abs(rawRow) % 2 === 1) {
                     gx += 0.5;
-                } else if (gridType === 'staggered_v' && Math.abs(ixRaw) % 2 === 1) {
+                } else if (gridType === 'staggered_v' && Math.abs(rawCol) % 2 === 1) {
                     gy += 0.5;
                 }
 
                 let ix = Math.floor(gx);
-                let iy = Math.floor(gy) + colOffset;
+                let iyBase = Math.floor(gy);
+
+                let colOffset = 0;
+                if (rainSpeed > 0) {
+                    let speedFactor = rainSpeed * 10.0;
+                    colOffset = Math.floor(Voronoi.hash(ix * 17 + seed * 31, 101) * speedFactor);
+                }
+
+                let iy = iyBase + colOffset;
 
                 let fx = gx - Math.floor(gx);
                 let fy = gy - Math.floor(gy);
@@ -1810,7 +1839,7 @@
                     fy = (fy - halfGap) / (1.0 - spacing * 0.9);
                 }
 
-                let cellHash = Voronoi.hash(ix * 1013 + seed * 17, iy * 31337 + seed * 53);
+                // Cloud noise & density calculation
                 let cloudVal = 1.0;
                 if (cloudNoise > 0.001) {
                     let n = (Simplex.noise(ix * 0.05 * cloudFreq + seed * 10, iy * 0.05 * cloudFreq + seed * 20) + 1.0) * 0.5;
@@ -1819,32 +1848,31 @@
 
                 let finalThreshold = (1.0 - cloudNoise) * density + cloudNoise * cloudVal * density;
 
+                // Cell presence check (directly controlled by Density & Cloud Noise)
+                let cellHash = Voronoi.hash(ix * 1013 + seed * 17, iy * 31337 + seed * 53);
+                if (cellHash > finalThreshold) {
+                    return 0.0;
+                }
+
                 // Cascade & Tone Falloff calculation
                 let cascadeMod = 1.0;
                 let isHead = false;
 
                 if (cascadeLen > 0) {
                     let colStreamSeed = Voronoi.hash(ix * 73 + seed * 991, 313);
-                    let streamLen = Math.max(cascadeLen + 4, Math.floor(15 + colStreamSeed * 25));
+                    let streamLen = Math.max(cascadeLen + 4, Math.floor(12 + colStreamSeed * 20));
                     let headOffset = Math.floor(colStreamSeed * 1000 + colOffset);
                     let streamPos = ((iy - headOffset) % streamLen + streamLen) % streamLen;
 
                     if (streamPos === 0) {
                         isHead = true;
-                        cascadeMod = 1.0 + headGlow * 1.5;
+                        cascadeMod = 1.0 + headGlow * 2.0;
                     } else if (streamPos <= cascadeLen) {
                         let tailFraction = streamPos / cascadeLen;
                         let fade = Math.pow(1.0 - tailFraction, cascadeFade);
-                        cascadeMod = 0.1 + 0.9 * fade;
+                        cascadeMod = 0.05 + 0.95 * fade;
                     } else {
-                        if (cellHash > finalThreshold * 0.3) {
-                            return 0.0;
-                        }
-                        cascadeMod = 0.08;
-                    }
-                } else {
-                    if (cellHash > finalThreshold) {
-                        return 0.0;
+                        cascadeMod = 0.03;
                     }
                 }
 
@@ -1937,7 +1965,7 @@
 
                 let brightnessMod = cascadeMod;
                 if (isHead && headGlow > 0) {
-                    brightnessMod += headGlow * 1.5;
+                    brightnessMod = 1.5 + headGlow * 3.0;
                 }
 
                 if (jitter > 0) {
@@ -1946,6 +1974,12 @@
                 }
 
                 val *= brightnessMod;
+
+                if (isHead && headGlow > 0) {
+                    let headCore = Math.exp(-((fx - 0.5) * (fx - 0.5) + (fy - 0.5) * (fy - 0.5)) * 8.0);
+                    val = Math.max(val, headCore * headGlow * 0.8);
+                }
+
                 return Math.max(0, Math.min(3.0, val));
             }
         };
