@@ -197,7 +197,9 @@
                 "Частота викривлення": "Частота викривлення",
                 "Каскадність / Довжина хвоста (Cascade Length)": "Каскадність / Довжина хвоста (Cascade Length)",
                 "Розтяжка тону / Спад (Tone Gradient Falloff)": "Розтяжка тону / Спад (Tone Gradient Falloff)",
-                "Масштаб цифр та клітинки (Digit & Grid Scale)": "Масштаб цифр та клітинки (Digit & Grid Scale)"
+                "Масштаб цифр та клітинки (Digit & Grid Scale)": "Масштаб цифр та клітинки (Digit & Grid Scale)",
+                "Обертання символів (Char Rotation)": "Обертання символів (Char Rotation)",
+                "Випадковий розкид кута (Rotation Randomness)": "Випадковий розкид кута (Rotation Randomness)"
             },
             en: {
                 app_title: "Veil Studio — Procedural Texture Generator",
@@ -391,7 +393,9 @@
                 "Частота викривлення": "Distortion Frequency",
                 "Каскадність / Довжина хвоста (Cascade Length)": "Cascade / Tail Length",
                 "Розтяжка тону / Спад (Tone Gradient Falloff)": "Tone Gradient Falloff",
-                "Масштаб цифр та клітинки (Digit & Grid Scale)": "Digit & Grid Scale"
+                "Масштаб цифр та клітинки (Digit & Grid Scale)": "Digit & Grid Scale",
+                "Обертання символів (Char Rotation)": "Char Base Rotation",
+                "Випадковий розкид кута (Rotation Randomness)": "Char Rotation Randomness"
             }
         };
 
@@ -1795,6 +1799,7 @@
                 let gridType = p.matrixGridType || 'standard';
                 let direction = p.matrixDirection || 'top_down';
                 let charAngle = p.matrixCharAngle !== undefined ? p.matrixCharAngle : 0;
+                let charAngleJitter = p.matrixCharAngleJitter !== undefined ? p.matrixCharAngleJitter : 0;
 
                 // Cascade controls:
                 let cascadeLen = p.matrixCascade !== undefined ? p.matrixCascade : 12;
@@ -1851,9 +1856,16 @@
                 let fx = gx - Math.floor(gx);
                 let fy = gy - Math.floor(gy);
 
-                // Rotate character inside cell if matrixCharAngle is set
-                if (charAngle !== 0) {
-                    let rad = (charAngle * Math.PI) / 180;
+                // Rotate character inside cell with optional random rotation jitter
+                let effAngle = charAngle;
+                if (charAngleJitter > 0) {
+                    let rotHash = Voronoi.hash(ix * 509 + seed * 991, iy * 701 + seed * 43);
+                    let randOffset = (rotHash * 2.0 - 1.0) * charAngleJitter;
+                    effAngle += randOffset;
+                }
+
+                if (effAngle !== 0) {
+                    let rad = (effAngle * Math.PI) / 180;
                     let cosA = Math.cos(rad);
                     let sinA = Math.sin(rad);
                     let dx = fx - 0.5;
@@ -1932,7 +1944,6 @@
                 let ch = '0';
                 if (charSet === 'custom' && wordMode === 'sequence') {
                     let seqCoord = (direction === 'left_right' || direction === 'right_left') ? ix : iy;
-                    if (direction === 'bottom_up' || direction === 'right_left') seqCoord = -seqCoord;
                     let charIdx = ((seqCoord) % availableChars.length + availableChars.length) % availableChars.length;
                     ch = availableChars[charIdx];
                 } else {
@@ -8079,6 +8090,7 @@
                 </div>`;
 
                 algoSpecificHTML += createSlider("Обертання символів (Char Rotation)", "matrixCharAngle", -180, 180, 5, lp.matrixCharAngle || 0, false, 0);
+                algoSpecificHTML += createSlider("Випадковий розкид кута (Rotation Randomness)", "matrixCharAngleJitter", 0, 180, 5, lp.matrixCharAngleJitter || 0, false, 0);
 
                 algoSpecificHTML += createSlider("Масштаб цифр та клітинки (Digit & Grid Scale)", "matrixDigitScale", 0.1, 4.0, 0.05, lp.matrixDigitScale !== undefined ? lp.matrixDigitScale : 1.0, false, 1.0);
                 algoSpecificHTML += createSlider("Проміжок між цифрами (Spacing)", "matrixSpacing", 0.0, 0.8, 0.01, lp.matrixSpacing !== undefined ? lp.matrixSpacing : 0.0, false, 0.0);
