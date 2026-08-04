@@ -194,7 +194,10 @@
                 "Гармоніки / Октави": "Гармоніки / Октави",
                 "Спад гармонік (Gain)": "Спад гармонік (Gain)",
                 "Викривлення / Wobble": "Викривлення / Wobble",
-                "Частота викривлення": "Частота викривлення"
+                "Частота викривлення": "Частота викривлення",
+                "Каскадність / Довжина хвоста (Cascade Length)": "Каскадність / Довжина хвоста (Cascade Length)",
+                "Розтяжка тону / Спад (Tone Gradient Falloff)": "Розтяжка тону / Спад (Tone Gradient Falloff)",
+                "Масштаб цифр та клітинки (Digit & Grid Scale)": "Масштаб цифр та клітинки (Digit & Grid Scale)"
             },
             en: {
                 app_title: "Veil Studio — Procedural Texture Generator",
@@ -385,7 +388,10 @@
                 "Гармоніки / Октави": "Harmonics / Octaves",
                 "Спад гармонік (Gain)": "Harmonics Falloff (Gain)",
                 "Викривлення / Wobble": "Noise Distortion / Wobble",
-                "Частота викривлення": "Distortion Frequency"
+                "Частота викривлення": "Distortion Frequency",
+                "Каскадність / Довжина хвоста (Cascade Length)": "Cascade / Tail Length",
+                "Розтяжка тону / Спад (Tone Gradient Falloff)": "Tone Gradient Falloff",
+                "Масштаб цифр та клітинки (Digit & Grid Scale)": "Digit & Grid Scale"
             }
         };
 
@@ -1623,6 +1629,70 @@
                 '#': [10, 10, 31, 10, 31, 10, 10]
             },
 
+            DYNAMIC_BITMAPS: new Map(),
+
+            getCharBitmap(ch) {
+                if (!ch) ch = '0';
+                if (ch === ' ') {
+                    return [0, 0, 0, 0, 0, 0, 0];
+                }
+                if (this.DYNAMIC_BITMAPS.has(ch)) {
+                    return this.DYNAMIC_BITMAPS.get(ch);
+                }
+
+                let upper = ch.toUpperCase();
+                if (this.BITMAPS[ch]) {
+                    this.DYNAMIC_BITMAPS.set(ch, this.BITMAPS[ch]);
+                    return this.BITMAPS[ch];
+                }
+                if (this.BITMAPS[upper]) {
+                    this.DYNAMIC_BITMAPS.set(ch, this.BITMAPS[upper]);
+                    return this.BITMAPS[upper];
+                }
+
+                // Dynamic 5x7 bitmap generator for custom characters (Latin, Cyrillic, Symbols)
+                try {
+                    let offCanvas = document.createElement('canvas');
+                    offCanvas.width = 5;
+                    offCanvas.height = 7;
+                    let ctx = offCanvas.getContext('2d', { willReadFrequently: true });
+                    if (ctx) {
+                        ctx.fillStyle = '#000000';
+                        ctx.fillRect(0, 0, 5, 7);
+                        ctx.fillStyle = '#ffffff';
+                        ctx.font = 'bold 6px sans-serif, monospace';
+                        ctx.textAlign = 'center';
+                        ctx.textBaseline = 'middle';
+                        ctx.fillText(ch, 2.5, 3.5);
+
+                        let imgData = ctx.getImageData(0, 0, 5, 7);
+                        let data = imgData.data;
+                        let rows = new Array(7).fill(0);
+
+                        for (let y = 0; y < 7; y++) {
+                            let rowMask = 0;
+                            for (let x = 0; x < 5; x++) {
+                                let idx = (y * 5 + x) * 4;
+                                let alpha = data[idx + 3];
+                                let r = data[idx];
+                                if (alpha > 80 && r > 80) {
+                                    rowMask |= (1 << (4 - x));
+                                }
+                            }
+                            rows[y] = rowMask;
+                        }
+                        this.DYNAMIC_BITMAPS.set(ch, rows);
+                        return rows;
+                    }
+                } catch (e) {
+                    console.warn('Error generating dynamic char bitmap for:', ch, e);
+                }
+
+                let fallback = this.BITMAPS['0'];
+                this.DYNAMIC_BITMAPS.set(ch, fallback);
+                return fallback;
+            },
+
             eval7Segment(cx, cy, digit, glow) {
                 const segMap = {
                     '0': [1,1,1,1,1,1,0],
@@ -1683,7 +1753,8 @@
 
             eval(tx, ty, sx, sy, p) {
                 let charSet = p.matrixCharSet || 'binary';
-                let customChars = (p.matrixCustomChars !== undefined && p.matrixCustomChars !== '') ? p.matrixCustomChars : '01';
+                let customChars = (p.matrixCustomChars !== undefined && p.matrixCustomChars !== '') ? p.matrixCustomChars : 'love';
+                let wordMode = p.matrixWordMode || 'sequence';
                 let density = p.matrixDensity !== undefined ? p.matrixDensity : 0.75;
                 let cloudNoise = p.matrixCloudNoise !== undefined ? p.matrixCloudNoise : 0.5;
                 let cloudFreq = p.matrixCloudFreq !== undefined ? p.matrixCloudFreq : 3.0;
@@ -1697,23 +1768,24 @@
                 let rainSpeed = p.matrixRainSpeed !== undefined ? p.matrixRainSpeed : 0.0;
                 let gridType = p.matrixGridType || 'standard';
 
-                let scaleX = sx || 20;
-                let scaleY = sy || 20;
+                // Cascade controls:
+                let cascadeLen = p.matrixCascade !== undefined ? p.matrixCascade : 12;
+                let cascadeFade = p.matrixCascadeFade !== undefined ? p.matrixCascadeFade : 1.0;
 
-                let gx = tx * scaleX;
-                let gy = ty * scaleY;
+                // Correlated Scale & Grid Cell size
+                let effScaleX = (sx || 20) / Math.max(0.1, digitScale);
+                let effScaleY = (sy || 20) / Math.max(0.1, digitScale);
+
+                let gx = tx * effScaleX;
+                let gy = ty * effScaleY;
 
                 let ixRaw = Math.floor(gx);
                 let iyRaw = Math.floor(gy);
 
                 let colOffset = 0;
-                let rainTrailMod = 1.0;
                 if (rainSpeed > 0) {
                     let speedFactor = rainSpeed * 10.0;
                     colOffset = Math.floor(Voronoi.hash(ixRaw * 17 + seed * 31, 101) * speedFactor);
-                    let trailLength = Math.max(4, Math.floor(30.0 / Math.max(0.1, rainSpeed)));
-                    let trailPos = Math.abs((iyRaw + colOffset) % trailLength) / trailLength;
-                    rainTrailMod = 0.2 + 0.8 * (1.0 - trailPos);
                 }
 
                 if (gridType === 'staggered_h' && Math.abs(iyRaw) % 2 === 1) {
@@ -1728,13 +1800,14 @@
                 let fx = gx - Math.floor(gx);
                 let fy = gy - Math.floor(gy);
 
+                // Correlated Spacing / Cell padding
                 if (spacing > 0.001) {
-                    let halfGap = spacing * 0.5;
-                    if (fx < halfGap || fx > (1 - halfGap) || fy < halfGap || fy > (1 - halfGap)) {
+                    let halfGap = spacing * 0.45;
+                    if (fx < halfGap || fx > (1.0 - halfGap) || fy < halfGap || fy > (1.0 - halfGap)) {
                         return 0.0;
                     }
-                    fx = (fx - halfGap) / (1 - spacing);
-                    fy = (fy - halfGap) / (1 - spacing);
+                    fx = (fx - halfGap) / (1.0 - spacing * 0.9);
+                    fy = (fy - halfGap) / (1.0 - spacing * 0.9);
                 }
 
                 let cellHash = Voronoi.hash(ix * 1013 + seed * 17, iy * 31337 + seed * 53);
@@ -1745,42 +1818,67 @@
                 }
 
                 let finalThreshold = (1.0 - cloudNoise) * density + cloudNoise * cloudVal * density;
-                if (cellHash > finalThreshold) {
-                    return 0.0;
+
+                // Cascade & Tone Falloff calculation
+                let cascadeMod = 1.0;
+                let isHead = false;
+
+                if (cascadeLen > 0) {
+                    let colStreamSeed = Voronoi.hash(ix * 73 + seed * 991, 313);
+                    let streamLen = Math.max(cascadeLen + 4, Math.floor(15 + colStreamSeed * 25));
+                    let headOffset = Math.floor(colStreamSeed * 1000 + colOffset);
+                    let streamPos = ((iy - headOffset) % streamLen + streamLen) % streamLen;
+
+                    if (streamPos === 0) {
+                        isHead = true;
+                        cascadeMod = 1.0 + headGlow * 1.5;
+                    } else if (streamPos <= cascadeLen) {
+                        let tailFraction = streamPos / cascadeLen;
+                        let fade = Math.pow(1.0 - tailFraction, cascadeFade);
+                        cascadeMod = 0.1 + 0.9 * fade;
+                    } else {
+                        if (cellHash > finalThreshold * 0.3) {
+                            return 0.0;
+                        }
+                        cascadeMod = 0.08;
+                    }
+                } else {
+                    if (cellHash > finalThreshold) {
+                        return 0.0;
+                    }
                 }
 
+                // Available character set selection
                 let availableChars = ['0', '1'];
                 if (charSet === 'digits') {
                     availableChars = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'];
                 } else if (charSet === 'hex') {
                     availableChars = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'A', 'B', 'C', 'D', 'E', 'F'];
                 } else if (charSet === 'matrix_kanji') {
-                    availableChars = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'A', 'B', 'C', 'D', 'E', 'F', '+', '-', '*', '=', '?', '!'];
+                    availableChars = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'A', 'B', 'C', 'D', 'E', 'F', '+', '-', '*', '=', '?', '!', '#'];
                 } else if (charSet === 'custom') {
                     availableChars = customChars.split('');
-                    if (availableChars.length === 0) availableChars = ['0', '1'];
+                    if (availableChars.length === 0) availableChars = ['l', 'o', 'v', 'e'];
                 }
 
-                let charHash = Voronoi.hash(ix * 307 + seed * 991, iy * 409 + seed * 733);
-                let charIdx = Math.floor(charHash * availableChars.length) % availableChars.length;
-                let ch = availableChars[charIdx];
+                let ch = '0';
+                if (charSet === 'custom' && wordMode === 'sequence') {
+                    let charIdx = ((iy) % availableChars.length + availableChars.length) % availableChars.length;
+                    ch = availableChars[charIdx];
+                } else {
+                    let charHash = Voronoi.hash(ix * 307 + seed * 991, iy * 409 + seed * 733);
+                    let charIdx = Math.floor(charHash * availableChars.length) % availableChars.length;
+                    ch = availableChars[charIdx];
+                }
 
                 let cx = fx;
                 let cy = fy;
-                let maxGlowMargin = glow > 0 ? 0.25 : 0.0;
-                if (digitScale !== 1.0 && digitScale > 0.01) {
-                    cx = (fx - 0.5) / digitScale + 0.5;
-                    cy = (fy - 0.5) / digitScale + 0.5;
-                    if (cx < -maxGlowMargin || cx > 1 + maxGlowMargin || cy < -maxGlowMargin || cy > 1 + maxGlowMargin) {
-                        return 0.0;
-                    }
-                }
 
                 let val = 0.0;
                 if (digitStyle === 'digital_7seg') {
                     val = this.eval7Segment(cx, cy, ch, glow);
                 } else {
-                    let rows = this.BITMAPS[ch] || this.BITMAPS['0'];
+                    let rows = this.getCharBitmap(ch);
                     let gridW = 5;
                     let gridH = 7;
                     if (digitStyle === 'pixel_3x5') {
@@ -1837,13 +1935,9 @@
                     }
                 }
 
-                let brightnessMod = rainTrailMod;
-                let headHash = Voronoi.hash(ix * 83 + seed * 991, iy * 97 + seed * 733);
-                if (headGlow > 0) {
-                    let headProb = Math.min(0.5, headGlow * 0.2);
-                    if (headHash < headProb) {
-                        brightnessMod += (1.0 + (1.0 - headHash / headProb) * headGlow * 2.5);
-                    }
+                let brightnessMod = cascadeMod;
+                if (isHead && headGlow > 0) {
+                    brightnessMod += headGlow * 1.5;
                 }
 
                 if (jitter > 0) {
@@ -6493,10 +6587,14 @@
                 p.hbAngle = Math.floor(Math.random() * 180);
             }
             if (lay.generatorType === 'matrix_digits') {
-                let charSets = ['binary', 'digits', 'hex', 'matrix_kanji'];
+                let charSets = ['binary', 'digits', 'hex', 'matrix_kanji', 'custom'];
                 let fontStyles = ['pixel_5x7', 'pixel_3x5', 'digital_7seg'];
                 p.matrixCharSet = charSets[Math.floor(Math.random() * charSets.length)];
                 p.matrixDigitStyle = fontStyles[Math.floor(Math.random() * fontStyles.length)];
+                p.matrixCustomChars = 'love';
+                p.matrixWordMode = 'sequence';
+                p.matrixCascade = 12;
+                p.matrixCascadeFade = 1.0;
                 p.matrixDensity = parseFloat((0.3 + Math.random() * 0.6).toFixed(2));
                 p.matrixCloudNoise = parseFloat((Math.random() * 0.8).toFixed(2));
                 p.matrixCloudFreq = parseFloat((1.0 + Math.random() * 6.0).toFixed(1));
@@ -7828,7 +7926,7 @@
 
             if (lay.generatorType === 'matrix_digits') {
                 algoSpecificHTML += `
-                <div class="section-title">📟 Матриця цифр (Matrix Rain & Digits Cloud)</div>
+                <div class="section-title">📟 Матриця цифр та слів (Matrix Code & Word Rain)</div>
                 <div class="property-group grid-2">
                     <div>
                         <label class="property-label">Набір символів</label>
@@ -7837,7 +7935,7 @@
                             <option value="digits" ${lp.matrixCharSet==='digits'?'selected':''}>0 - 9 (Десятичні цифри)</option>
                             <option value="hex" ${lp.matrixCharSet==='hex'?'selected':''}>0 - F (16-річні Hex)</option>
                             <option value="matrix_kanji" ${lp.matrixCharSet==='matrix_kanji'?'selected':''}>Цифри та Символи (*+#=?!)</option>
-                            <option value="custom" ${lp.matrixCharSet==='custom'?'selected':''}>Власний рядок (Custom)</option>
+                            <option value="custom" ${lp.matrixCharSet==='custom'?'selected':''}>Власний рядок / Слово (Custom Word)</option>
                         </select>
                     </div>
                     <div>
@@ -7851,11 +7949,23 @@
                 </div>`;
 
                 if (lp.matrixCharSet === 'custom') {
-                    algoSpecificHTML += `<div class="property-group">
-                        <label class="property-label">Власні символи (наприклад: 010101 / ABC)</label>
-                        <input type="text" class="form-control" value="${lp.matrixCustomChars !== undefined ? lp.matrixCustomChars : '01'}" oninput="upd('matrixCustomChars', this.value)" style="font-size:12px; padding:4px 8px;">
+                    algoSpecificHTML += `<div class="property-group grid-2">
+                        <div>
+                            <label class="property-label">Власні букви / слово (напр. love)</label>
+                            <input type="text" class="form-control" value="${lp.matrixCustomChars !== undefined ? lp.matrixCustomChars : 'love'}" oninput="upd('matrixCustomChars', this.value)" style="font-size:12px; padding:4px 8px;">
+                        </div>
+                        <div>
+                            <label class="property-label">Порядок букв / слів</label>
+                            <select class="form-control" onchange="upd('matrixWordMode', this.value)">
+                                <option value="sequence" ${(lp.matrixWordMode||'sequence')==='sequence'?'selected':''}>🔤 Послідовне слово</option>
+                                <option value="random" ${lp.matrixWordMode==='random'?'selected':''}>🎲 Випадковий порядок</option>
+                            </select>
+                        </div>
                     </div>`;
                 }
+
+                algoSpecificHTML += createSlider("Каскадність / Довжина хвоста (Cascade Length)", "matrixCascade", 0, 40, 1, lp.matrixCascade !== undefined ? lp.matrixCascade : 12, false, 12);
+                algoSpecificHTML += createSlider("Розтяжка тону / Спад (Tone Gradient Falloff)", "matrixCascadeFade", 0.1, 3.0, 0.1, lp.matrixCascadeFade !== undefined ? lp.matrixCascadeFade : 1.0, false, 1.0);
 
                 algoSpecificHTML += createSlider("Густота / Заповнення (Density)", "matrixDensity", 0.05, 1.0, 0.01, lp.matrixDensity !== undefined ? lp.matrixDensity : 0.75, false, 0.75);
                 algoSpecificHTML += createSlider("Шум хмарності (Cloud Noise Mask)", "matrixCloudNoise", 0.0, 1.0, 0.05, lp.matrixCloudNoise !== undefined ? lp.matrixCloudNoise : 0.5, false, 0.5);
@@ -7881,7 +7991,7 @@
                     </div>
                 </div>`;
 
-                algoSpecificHTML += createSlider("Масштаб цифр у комірці", "matrixDigitScale", 0.1, 3.0, 0.05, lp.matrixDigitScale !== undefined ? lp.matrixDigitScale : 1.0, false, 1.0);
+                algoSpecificHTML += createSlider("Масштаб цифр та клітинки (Digit & Grid Scale)", "matrixDigitScale", 0.1, 4.0, 0.05, lp.matrixDigitScale !== undefined ? lp.matrixDigitScale : 1.0, false, 1.0);
                 algoSpecificHTML += createSlider("Проміжок між цифрами (Spacing)", "matrixSpacing", 0.0, 0.8, 0.01, lp.matrixSpacing !== undefined ? lp.matrixSpacing : 0.0, false, 0.0);
                 algoSpecificHTML += createSlider("Світіння та німб (Glow Halo)", "matrixGlow", 0.0, 3.0, 0.05, lp.matrixGlow !== undefined ? lp.matrixGlow : 0.2, false, 0.2);
                 algoSpecificHTML += createSlider("Спалахи головних цифр (Head Glow)", "matrixHeadGlow", 0.0, 3.0, 0.05, lp.matrixHeadGlow !== undefined ? lp.matrixHeadGlow : 0.3, false, 0.3);
