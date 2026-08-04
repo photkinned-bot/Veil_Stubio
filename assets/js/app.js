@@ -1793,6 +1793,8 @@
                 let seed = p.matrixSeed || 0;
                 let rainSpeed = p.matrixRainSpeed !== undefined ? p.matrixRainSpeed : 0.0;
                 let gridType = p.matrixGridType || 'standard';
+                let direction = p.matrixDirection || 'top_down';
+                let charAngle = p.matrixCharAngle !== undefined ? p.matrixCharAngle : 0;
 
                 // Cascade controls:
                 let cascadeLen = p.matrixCascade !== undefined ? p.matrixCascade : 12;
@@ -1818,16 +1820,52 @@
                 let ix = Math.floor(gx);
                 let iyBase = Math.floor(gy);
 
+                // Movement direction primary & secondary coordinates
+                let primaryCoord = iyBase;
+                let secondaryCoord = ix;
+                let streamSign = 1;
+
+                if (direction === 'bottom_up') {
+                    primaryCoord = iyBase;
+                    secondaryCoord = ix;
+                    streamSign = -1;
+                } else if (direction === 'left_right') {
+                    primaryCoord = ix;
+                    secondaryCoord = iyBase;
+                    streamSign = 1;
+                } else if (direction === 'right_left') {
+                    primaryCoord = ix;
+                    secondaryCoord = iyBase;
+                    streamSign = -1;
+                }
+
                 let colOffset = 0;
                 if (rainSpeed > 0) {
                     let speedFactor = rainSpeed * 10.0;
-                    colOffset = Math.floor(Voronoi.hash(ix * 17 + seed * 31, 101) * speedFactor);
+                    colOffset = Math.floor(Voronoi.hash(secondaryCoord * 17 + seed * 31, 101) * speedFactor);
                 }
 
-                let iy = iyBase + colOffset;
+                let iy = iyBase + (direction === 'top_down' || direction === 'bottom_up' ? colOffset : 0);
+                let ixWithOffset = ix + (direction === 'left_right' || direction === 'right_left' ? colOffset : 0);
 
                 let fx = gx - Math.floor(gx);
                 let fy = gy - Math.floor(gy);
+
+                // Rotate character inside cell if matrixCharAngle is set
+                if (charAngle !== 0) {
+                    let rad = (charAngle * Math.PI) / 180;
+                    let cosA = Math.cos(rad);
+                    let sinA = Math.sin(rad);
+                    let dx = fx - 0.5;
+                    let dy = fy - 0.5;
+                    let rfx = dx * cosA - dy * sinA + 0.5;
+                    let rfy = dx * sinA + dy * cosA + 0.5;
+                    if (rfx < 0.0 || rfx > 1.0 || rfy < 0.0 || rfy > 1.0) {
+                        return 0.0;
+                    }
+                    fx = rfx;
+                    fy = rfy;
+                }
 
                 // Correlated Spacing / Cell padding
                 if (spacing > 0.001) {
@@ -1859,10 +1897,12 @@
                 let isHead = false;
 
                 if (cascadeLen > 0) {
-                    let colStreamSeed = Voronoi.hash(ix * 73 + seed * 991, 313);
+                    let colStreamSeed = Voronoi.hash(secondaryCoord * 73 + seed * 991, 313);
                     let streamLen = Math.max(cascadeLen + 4, Math.floor(12 + colStreamSeed * 20));
                     let headOffset = Math.floor(colStreamSeed * 1000 + colOffset);
-                    let streamPos = ((iy - headOffset) % streamLen + streamLen) % streamLen;
+                    let curPrimary = (direction === 'left_right' || direction === 'right_left') ? ix : iyBase;
+                    let relativePrimary = streamSign > 0 ? (curPrimary - headOffset) : (headOffset - curPrimary);
+                    let streamPos = ((relativePrimary % streamLen) + streamLen) % streamLen;
 
                     if (streamPos === 0) {
                         isHead = true;
@@ -1891,7 +1931,9 @@
 
                 let ch = '0';
                 if (charSet === 'custom' && wordMode === 'sequence') {
-                    let charIdx = ((iy) % availableChars.length + availableChars.length) % availableChars.length;
+                    let seqCoord = (direction === 'left_right' || direction === 'right_left') ? ix : iy;
+                    if (direction === 'bottom_up' || direction === 'right_left') seqCoord = -seqCoord;
+                    let charIdx = ((seqCoord) % availableChars.length + availableChars.length) % availableChars.length;
                     ch = availableChars[charIdx];
                 } else {
                     let charHash = Voronoi.hash(ix * 307 + seed * 991, iy * 409 + seed * 733);
@@ -8009,6 +8051,15 @@
 
                 algoSpecificHTML += `<div class="property-group grid-2">
                     <div>
+                        <label class="property-label">Напрямок розтяжки / каскаду</label>
+                        <select class="form-control" onchange="upd('matrixDirection', this.value)">
+                            <option value="top_down" ${(lp.matrixDirection||'top_down')==='top_down'?'selected':''}>⬇️ Згори вниз (Top to Bottom)</option>
+                            <option value="bottom_up" ${lp.matrixDirection==='bottom_up'?'selected':''}>⬆️ Знизу вгору (Bottom to Top)</option>
+                            <option value="left_right" ${lp.matrixDirection==='left_right'?'selected':''}>➡️ Зліва направо (Left to Right)</option>
+                            <option value="right_left" ${lp.matrixDirection==='right_left'?'selected':''}>⬅️ Зправа наліво (Right to Left)</option>
+                        </select>
+                    </div>
+                    <div>
                         <label class="property-label">Тип сітки (Grid Layout)</label>
                         <select class="form-control" onchange="upd('matrixGridType', this.value)">
                             <option value="standard" ${(lp.matrixGridType||'standard')==='standard'?'selected':''}>Стандартна сітка</option>
@@ -8016,6 +8067,8 @@
                             <option value="staggered_v" ${lp.matrixGridType==='staggered_v'?'selected':''}>Шахматна V</option>
                         </select>
                     </div>
+                </div>
+                <div class="property-group grid-2">
                     <div>
                         <label class="property-label">Псевдовипадковий Seed</label>
                         <div style="display:flex; gap:4px;">
@@ -8024,6 +8077,8 @@
                         </div>
                     </div>
                 </div>`;
+
+                algoSpecificHTML += createSlider("Обертання символів (Char Rotation)", "matrixCharAngle", -180, 180, 5, lp.matrixCharAngle || 0, false, 0);
 
                 algoSpecificHTML += createSlider("Масштаб цифр та клітинки (Digit & Grid Scale)", "matrixDigitScale", 0.1, 4.0, 0.05, lp.matrixDigitScale !== undefined ? lp.matrixDigitScale : 1.0, false, 1.0);
                 algoSpecificHTML += createSlider("Проміжок між цифрами (Spacing)", "matrixSpacing", 0.0, 0.8, 0.01, lp.matrixSpacing !== undefined ? lp.matrixSpacing : 0.0, false, 0.0);
