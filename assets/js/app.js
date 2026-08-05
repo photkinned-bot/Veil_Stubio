@@ -595,25 +595,220 @@
             };
         };
 
-        const Perlin = {
-            p: new Uint8Array(512),
-            init(seed = 1337) {
-                let rng = mulberry32(seed);
-                let a = new Uint8Array(256);
-                for(let i=0;i<256;i++) a[i]=i;
-                for(let i=255;i>0;i--){ let j=Math.floor(rng()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; }
-                for(let i=0;i<512;i++) this.p[i]=a[i&255];
-            },
-            fade: t => t*t*t*(t*(t*6-15)+10),
-            lerp: (t,a,b) => a+t*(b-a),
-            grad(h,x,y){ let u=h<4?x:y, v=h<4?y:x; return ((h&1)?-u:u)+((h&2)?-2.0*v:2.0*v); },
-            noise(x,y){
-                let X=Math.floor(x)&255, Y=Math.floor(y)&255; x-=Math.floor(x); y-=Math.floor(y);
-                let u=this.fade(x), v=this.fade(y), A=this.p[X]+Y, B=this.p[X+1]+Y;
-                return this.lerp(v, this.lerp(u, this.grad(this.p[A],x,y), this.grad(this.p[B],x-1,y)),
-                                    this.lerp(u, this.grad(this.p[A+1],x,y-1), this.grad(this.p[B+1],x-1,y-1)));
+        const Perlin = (function() {
+            const GRAD2D = [
+                [1, 0], [-1, 0], [0, 1], [0, -1],
+                [1, 1], [-1, 1], [1, -1], [-1, -1]
+            ];
+
+            const permCache = new Map();
+
+            function getPerm(seed = 1337) {
+                let s = (seed | 0) & 0x7fffffff;
+                if (permCache.has(s)) return permCache.get(s);
+
+                let rng = mulberry32(s || 1337);
+                let p = new Uint8Array(256);
+                for (let i = 0; i < 256; i++) p[i] = i;
+                for (let i = 255; i > 0; i--) {
+                    let j = Math.floor(rng() * (i + 1));
+                    let temp = p[i]; p[i] = p[j]; p[j] = temp;
+                }
+
+                let perm = new Uint8Array(512);
+                for (let i = 0; i < 512; i++) {
+                    perm[i] = p[i & 255];
+                }
+
+                if (permCache.size > 64) {
+                    let firstKey = permCache.keys().next().value;
+                    permCache.delete(firstKey);
+                }
+                permCache.set(s, perm);
+                return perm;
             }
-        }; Perlin.init(1337);
+
+            function fadeQuintic(t) { return t * t * t * (t * (t * 6 - 15) + 10); }
+            function fadeCubic(t) { return t * t * (3 - 2 * t); }
+            function fadeCosine(t) { return (1 - Math.cos(t * Math.PI)) * 0.5; }
+
+            function getFade(t, curve = 'quintic') {
+                if (t <= 0) return 0;
+                if (t >= 1) return 1;
+                switch (curve) {
+                    case 'cubic':
+                    case 'hermite':
+                        return fadeCubic(t);
+                    case 'cosine':
+                        return fadeCosine(t);
+                    case 'linear':
+                        return t;
+                    case 'quintic':
+                    default:
+                        return fadeQuintic(t);
+                }
+            }
+
+            function lerpFn(t, a, b) { return a + t * (b - a); }
+
+            function grad2D(hash, dx, dy) {
+                const g = GRAD2D[hash & 7];
+                return g[0] * dx + g[1] * dy;
+            }
+
+            function rawNoise2D(x, y, seed = 1337, curve = 'quintic') {
+                const perm = getPerm(seed);
+                let X = Math.floor(x), Y = Math.floor(y);
+                let fx = x - X, fy = y - Y;
+
+                X = X & 255;
+                Y = Y & 255;
+
+                let u = getFade(fx, curve);
+                let v = getFade(fy, curve);
+
+                let A = perm[X] + Y;
+                let B = perm[X + 1] + Y;
+
+                let g00 = grad2D(perm[A], fx, fy);
+                let g10 = grad2D(perm[B], fx - 1, fy);
+                let g01 = grad2D(perm[A + 1], fx, fy - 1);
+                let g11 = grad2D(perm[B + 1], fx - 1, fy - 1);
+
+                let nx0 = g00 + u * (g10 - g00);
+                let nx1 = g01 + u * (g11 - g01);
+                return nx0 + v * (nx1 - nx0);
+            }
+
+            function rawPnoise2D(x, y, px, py, seed = 1337, curve = 'quintic') {
+                const perm = getPerm(seed);
+                let periodX = Math.max(1, px | 0);
+                let periodY = Math.max(1, py | 0);
+
+                let X0 = Math.floor(x) % periodX; if (X0 < 0) X0 += periodX;
+                let Y0 = Math.floor(y) % periodY; if (Y0 < 0) Y0 += periodY;
+
+                let X1 = (X0 + 1) % periodX;
+                let Y1 = (Y0 + 1) % periodY;
+
+                let fx = x - Math.floor(x);
+                let fy = y - Math.floor(y);
+
+                let u = getFade(fx, curve);
+                let v = getFade(fy, curve);
+
+                let A0 = perm[X0 & 255] + (Y0 & 255);
+                let A1 = perm[X0 & 255] + (Y1 & 255);
+                let B0 = perm[X1 & 255] + (Y0 & 255);
+                let B1 = perm[X1 & 255] + (Y1 & 255);
+
+                let g00 = grad2D(perm[A0], fx, fy);
+                let g10 = grad2D(perm[B0], fx - 1, fy);
+                let g01 = grad2D(perm[A1], fx, fy - 1);
+                let g11 = grad2D(perm[B1], fx - 1, fy - 1);
+
+                let nx0 = g00 + u * (g10 - g00);
+                let nx1 = g01 + u * (g11 - g01);
+                return nx0 + v * (nx1 - nx0);
+            }
+
+            function evalLayer(tx, ty, sx, sy, p = {}) {
+                let mode = p.perlinMode || 'standard';
+                let octaves = Math.max(1, Math.min(10, p.octaves || 4));
+                let lacunarity = p.lacunarity !== undefined ? Math.max(1.0, p.lacunarity) : 2.0;
+                let gain = p.gain !== undefined ? Math.max(0.01, Math.min(1.0, p.gain)) : 0.5;
+                let seed = p.seed || 1337;
+                let curve = p.perlinCurve || 'quintic';
+                let isSeamless = !!p.seamless;
+
+                let warpStr = p.warpStrength || 0;
+                let warpFreq = p.warpFreq || 1.0;
+
+                let px = tx * sx;
+                let py = ty * sy;
+
+                if (warpStr > 0) {
+                    let wx = isSeamless ? 
+                        rawPnoise2D(px * warpFreq + 13.5, py * warpFreq + 27.1, Math.max(1, Math.round(sx * warpFreq)), Math.max(1, Math.round(sy * warpFreq)), seed + 101, curve) :
+                        rawNoise2D(px * warpFreq + 13.5, py * warpFreq + 27.1, seed + 101, curve);
+                    let wy = isSeamless ? 
+                        rawPnoise2D(px * warpFreq + 71.3, py * warpFreq + 83.9, Math.max(1, Math.round(sx * warpFreq)), Math.max(1, Math.round(sy * warpFreq)), seed + 307, curve) :
+                        rawNoise2D(px * warpFreq + 71.3, py * warpFreq + 83.9, seed + 307, curve);
+                    px += wx * warpStr * 2.0;
+                    py += wy * warpStr * 2.0;
+                }
+
+                let periodX = Math.max(1, Math.round(sx));
+                let periodY = Math.max(1, Math.round(sy));
+
+                let total = 0;
+                let amplitude = 1.0;
+                let maxAmp = 0;
+                let freq = 1.0;
+                let ridgePower = p.ridgePower !== undefined ? p.ridgePower : 2.0;
+                let weight = 1.0;
+
+                for (let o = 0; o < octaves; o++) {
+                    let curX = px * freq;
+                    let curY = py * freq;
+                    let curPx = Math.max(1, Math.round(periodX * freq));
+                    let curPy = Math.max(1, Math.round(periodY * freq));
+
+                    let n = isSeamless ?
+                        rawPnoise2D(curX, curY, curPx, curPy, seed + o * 131, curve) :
+                        rawNoise2D(curX, curY, seed + o * 131, curve);
+
+                    if (mode === 'ridged') {
+                        n = 1.0 - Math.abs(n);
+                        n = Math.pow(Math.max(0, n), ridgePower);
+                        total += n * amplitude;
+                    } else if (mode === 'billow') {
+                        n = Math.abs(n) * 2.0 - 1.0;
+                        total += n * amplitude;
+                    } else if (mode === 'turbulence') {
+                        n = Math.abs(n);
+                        total += n * amplitude;
+                    } else if (mode === 'swiss') {
+                        let signal = 1.0 - Math.abs(n);
+                        signal = Math.pow(Math.max(0, signal), ridgePower);
+                        signal *= weight;
+                        weight = Math.max(0, Math.min(1, signal * 2.0));
+                        total += signal * amplitude;
+                    } else {
+                        total += n * amplitude;
+                    }
+
+                    maxAmp += amplitude;
+                    amplitude *= gain;
+                    freq *= lacunarity;
+                }
+
+                let result = maxAmp > 0 ? total / maxAmp : 0;
+
+                if (mode === 'standard' || mode === 'billow') {
+                    result = (result + 1.0) * 0.5;
+                } else if (mode === 'turbulence' || mode === 'ridged' || mode === 'swiss') {
+                    result = Math.min(1.0, Math.max(0.0, result));
+                }
+
+                return Math.max(0, Math.min(1, result));
+            }
+
+            return {
+                get p() { return getPerm(1337); },
+                init(seed = 1337) { getPerm(seed); },
+                fade: fadeQuintic,
+                fadeCubic,
+                fadeCosine,
+                getFade,
+                lerp: lerpFn,
+                grad: grad2D,
+                noise(x, y) { return rawNoise2D(x, y, 1337, 'quintic'); },
+                noise2D: rawNoise2D,
+                pnoise2D: rawPnoise2D,
+                eval: evalLayer
+            };
+        })();
 
         const Simplex = (function() {
             const F2 = 0.5 * (Math.sqrt(3.0) - 1.0);
@@ -4895,7 +5090,7 @@
                 case 'gradient': v = ProceduralGradient.eval(tx, ty, p, sx, sy); break;
                 case 'cymatics': v = Cymatics.noise(tx, ty, p, cymaticsSources, sx, sy); break;
                 case 'simplex': v = Simplex.eval(tx, ty, sx, sy, p); break;
-                case 'perlin': v=(Perlin.noise(tx*sx,ty*sy)+1)/2; break;
+                case 'perlin': v = Perlin.eval(tx, ty, sx, sy, p); break;
                 case 'voronoi': v=Voronoi.noise(tx*sx,ty*sy,p.mode||'f1',p.metric||'euclidean',p.distExp||2); break;
                 case 'fbm': v=fbm(tx*sx,ty*sy,p.octaves||3,p.lacunarity??2,p.gain??0.5,'simplex'); break;
                 case 'ridged': v=ridged(tx*sx,ty*sy,p.octaves||3,p.lacunarity??2,p.gain??0.5,p); break;
@@ -8597,8 +8792,78 @@
                 }
             }
 
-            if (['perlin', 'spiral'].includes(lay.generatorType)) {
-                algoSpecificHTML += createSlider(lay.generatorType === 'spiral' ? 'Кількість рукавів (Arms)' : 'Октави', "octaves", 1, 10, 1, lp.octaves || 3, false, 3);
+            if (lay.generatorType === 'perlin') {
+                let mode = lp.perlinMode || 'standard';
+                let octaves = lp.octaves || 4;
+                let lacunarity = lp.lacunarity !== undefined ? lp.lacunarity : 2.0;
+                let gain = lp.gain !== undefined ? lp.gain : 0.5;
+                let warpStr = lp.warpStrength || 0;
+                let warpFreq = lp.warpFreq || 1.0;
+                let ridgePower = lp.ridgePower !== undefined ? lp.ridgePower : 2.0;
+                let seamless = lp.seamless === true;
+                let curve = lp.perlinCurve || 'quintic';
+
+                algoSpecificHTML += `
+                <div class="section-title" style="margin-top:12px; font-weight:700; color:var(--primary-color, #3b82f6);">⚡ Perlin Noise Pro (Градієнтний шум Перліна)</div>
+
+                <div class="property-group">
+                    <label class="property-label">Режим шуму (Perlin Variant)</label>
+                    <div class="gen-grid" style="grid-template-columns:repeat(2,1fr);">
+                        <button type="button" onclick="upd('perlinMode','standard'); renderProps();" class="gen-btn ${mode === 'standard' ? 'active' : ''}">🌊 Стандартний (fBM)</button>
+                        <button type="button" onclick="upd('perlinMode','ridged'); renderProps();" class="gen-btn ${mode === 'ridged' ? 'active' : ''}">⛰️ Хребти (Ridged)</button>
+                        <button type="button" onclick="upd('perlinMode','billow'); renderProps();" class="gen-btn ${mode === 'billow' ? 'active' : ''}">☁️ Хмароподібний (Billow)</button>
+                        <button type="button" onclick="upd('perlinMode','turbulence'); renderProps();" class="gen-btn ${mode === 'turbulence' ? 'active' : ''}">🌪️ Турбулентність</button>
+                        <button type="button" onclick="upd('perlinMode','swiss'); renderProps();" class="gen-btn ${mode === 'swiss' ? 'active' : ''}">🧀 Швейцарський (Swiss)</button>
+                    </div>
+                </div>
+
+                <div class="property-group grid-2">
+                    <div>
+                        <label class="property-label">Інтерполяція (Interpolation)</label>
+                        <select class="form-control" onchange="upd('perlinCurve', this.value)">
+                            <option value="quintic" ${curve === 'quintic' ? 'selected' : ''}>Quintic (М'яка t⁵)</option>
+                            <option value="cubic" ${curve === 'cubic' ? 'selected' : ''}>Cubic (Smoothstep t³)</option>
+                            <option value="cosine" ${curve === 'cosine' ? 'selected' : ''}>Cosine (Косинус)</option>
+                            <option value="hermite" ${curve === 'hermite' ? 'selected' : ''}>Hermite (Ерміт)</option>
+                            <option value="linear" ${curve === 'linear' ? 'selected' : ''}>Linear (Лінійна)</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="property-label">Seed</label>
+                        <div style="display:flex; gap:4px;">
+                            <input type="number" class="form-control" min="0" max="9999" value="${lp.seed || 1337}" onchange="upd('seed', parseInt(this.value)||1337)" style="font-size:11px;">
+                            <button type="button" class="btn btn-secondary" style="padding:2px 8px; font-size:11px;" onclick="upd('seed', Math.floor(Math.random()*9999)); renderProps();" title="Випадковий seed">🎲</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="property-group" style="margin-bottom:8px;">
+                    <label style="font-size:11px; cursor:pointer; display:flex; align-items:center; gap:6px;">
+                        <input type="checkbox" ${seamless ? 'checked' : ''} onchange="upd('seamless', this.checked); renderProps();">
+                        <span><strong>Безшовне періодичне покриття (Seamless Perlin)</strong></span>
+                    </label>
+                    <div style="font-size:10px; color:var(--text-muted, #a1a1aa); margin-top:2px; line-height:1.3;">
+                        Створює 100% безшовну текстуру через періодичне закодування координат.
+                    </div>
+                </div>
+                `;
+
+                algoSpecificHTML += createSlider("Октави (Octaves)", "octaves", 1, 10, 1, octaves, false, 4);
+                algoSpecificHTML += createSlider("Лакунарність (Lacunarity)", "lacunarity", 1.0, 4.0, 0.1, lacunarity, false, 2.0);
+                algoSpecificHTML += createSlider("Загасання / Амплітуда (Gain)", "gain", 0.01, 0.9, 0.05, gain, false, 0.5);
+
+                if (mode === 'ridged' || mode === 'swiss') {
+                    algoSpecificHTML += createSlider("Загострення хребтів (Ridge Power)", "ridgePower", 0.5, 4.0, 0.1, ridgePower, false, 2.0);
+                }
+
+                algoSpecificHTML += createSlider("Деформація домену (Domain Warping)", "warpStrength", 0.0, 2.0, 0.05, warpStr, false, 0);
+                if (warpStr > 0) {
+                    algoSpecificHTML += createSlider("Частота деформації (Warp Freq)", "warpFreq", 0.1, 5.0, 0.1, warpFreq, false, 1.0);
+                }
+            }
+
+            if (lay.generatorType === 'spiral') {
+                algoSpecificHTML += createSlider('Кількість рукавів (Arms)', "octaves", 1, 10, 1, lp.octaves || 3, false, 3);
             }
             if (lay.generatorType === 'fbm') {
                 algoSpecificHTML += createSlider("Октави (Octaves)", "octaves", 1, 10, 1, lp.octaves || 3, false, 3);
