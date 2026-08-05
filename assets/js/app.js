@@ -199,7 +199,10 @@
                 "Розтяжка тону / Спад (Tone Gradient Falloff)": "Розтяжка тону / Спад (Tone Gradient Falloff)",
                 "Масштаб цифр та клітинки (Digit & Grid Scale)": "Масштаб цифр та клітинки (Digit & Grid Scale)",
                 "Обертання символів (Char Rotation)": "Обертання символів (Char Rotation)",
-                "Випадковий розкид кута (Rotation Randomness)": "Випадковий розкид кута (Rotation Randomness)"
+                "Випадковий розкид кута (Rotation Randomness)": "Випадковий розкид кута (Rotation Randomness)",
+                "Сила роз'їжджання цифр (Displacement Strength)": "Сила роз'їжджання цифр (Displacement Strength)",
+                "Хаотичність роз'їжджання (Displacement Randomness)": "Хаотичність роз'їжджання (Displacement Randomness)",
+                "Випадковий розмір символів (Size Randomness)": "Випадковий розмір символів (Size Randomness)"
             },
             en: {
                 app_title: "Veil Studio — Procedural Texture Generator",
@@ -395,7 +398,10 @@
                 "Розтяжка тону / Спад (Tone Gradient Falloff)": "Tone Gradient Falloff",
                 "Масштаб цифр та клітинки (Digit & Grid Scale)": "Digit & Grid Scale",
                 "Обертання символів (Char Rotation)": "Char Base Rotation",
-                "Випадковий розкид кута (Rotation Randomness)": "Char Rotation Randomness"
+                "Випадковий розкид кута (Rotation Randomness)": "Char Rotation Randomness",
+                "Сила роз'їжджання цифр (Displacement Strength)": "Displacement Strength",
+                "Хаотичність роз'їжджання (Displacement Randomness)": "Displacement Randomness",
+                "Випадковий розмір символів (Size Randomness)": "Char Size Randomness"
             }
         };
 
@@ -1801,6 +1807,11 @@
                 let charAngle = p.matrixCharAngle !== undefined ? p.matrixCharAngle : 0;
                 let charAngleJitter = p.matrixCharAngleJitter !== undefined ? p.matrixCharAngleJitter : 0;
 
+                // New displacement & size jitter controls:
+                let displacement = p.matrixDisplacement !== undefined ? p.matrixDisplacement : 0.0;
+                let displacementJitter = p.matrixDisplacementJitter !== undefined ? p.matrixDisplacementJitter : 0.5;
+                let digitScaleJitter = p.matrixDigitScaleJitter !== undefined ? p.matrixDigitScaleJitter : 0.0;
+
                 // Cascade controls:
                 let cascadeLen = p.matrixCascade !== undefined ? p.matrixCascade : 12;
                 let cascadeFade = p.matrixCascadeFade !== undefined ? p.matrixCascadeFade : 1.0;
@@ -1812,228 +1823,262 @@
                 let gx = tx * effScaleX;
                 let gy = ty * effScaleY;
 
-                let rawRow = Math.floor(gy);
-                let rawCol = Math.floor(gx);
-
-                // Grid staggering math:
-                if (gridType === 'staggered_h' && Math.abs(rawRow) % 2 === 1) {
-                    gx += 0.5;
-                } else if (gridType === 'staggered_v' && Math.abs(rawCol) % 2 === 1) {
-                    gy += 0.5;
-                }
-
                 let ix = Math.floor(gx);
                 let iyBase = Math.floor(gy);
 
-                // Movement direction primary & secondary coordinates
-                let primaryCoord = iyBase;
-                let secondaryCoord = ix;
-                let streamSign = 1;
+                let maxVal = 0.0;
 
-                if (direction === 'bottom_up') {
-                    primaryCoord = iyBase;
-                    secondaryCoord = ix;
-                    streamSign = -1;
-                } else if (direction === 'left_right') {
-                    primaryCoord = ix;
-                    secondaryCoord = iyBase;
-                    streamSign = 1;
-                } else if (direction === 'right_left') {
-                    primaryCoord = ix;
-                    secondaryCoord = iyBase;
-                    streamSign = -1;
-                }
+                // Range of neighboring candidate cells to check if displacement or size jitter allows cross-cell overlap
+                let rangeX = (displacement > 0.001 || digitScaleJitter > 0.2) ? 1 : 0;
+                let rangeY = (displacement > 0.001 || digitScaleJitter > 0.2) ? 1 : 0;
 
-                let colOffset = 0;
-                if (rainSpeed > 0) {
-                    let speedFactor = rainSpeed * 10.0;
-                    colOffset = Math.floor(Voronoi.hash(secondaryCoord * 17 + seed * 31, 101) * speedFactor);
-                }
+                for (let dIy = -rangeY; dIy <= rangeY; dIy++) {
+                    for (let dIx = -rangeX; dIx <= rangeX; dIx++) {
+                        let nIx = ix + dIx;
+                        let nIyBase = iyBase + dIy;
 
-                let iy = iyBase + (direction === 'top_down' || direction === 'bottom_up' ? colOffset : 0);
-                let ixWithOffset = ix + (direction === 'left_right' || direction === 'right_left' ? colOffset : 0);
+                        let nGx = nIx;
+                        let nGy = nIyBase;
 
-                let fx = gx - Math.floor(gx);
-                let fy = gy - Math.floor(gy);
-
-                // Rotate character inside cell with optional random rotation jitter
-                let effAngle = charAngle;
-                if (charAngleJitter > 0) {
-                    let rotHash = Voronoi.hash(ix * 509 + seed * 991, iy * 701 + seed * 43);
-                    let randOffset = (rotHash * 2.0 - 1.0) * charAngleJitter;
-                    effAngle += randOffset;
-                }
-
-                if (effAngle !== 0) {
-                    let rad = (effAngle * Math.PI) / 180;
-                    let cosA = Math.cos(rad);
-                    let sinA = Math.sin(rad);
-                    let dx = fx - 0.5;
-                    let dy = fy - 0.5;
-                    let rfx = dx * cosA - dy * sinA + 0.5;
-                    let rfy = dx * sinA + dy * cosA + 0.5;
-                    if (rfx < 0.0 || rfx > 1.0 || rfy < 0.0 || rfy > 1.0) {
-                        return 0.0;
-                    }
-                    fx = rfx;
-                    fy = rfy;
-                }
-
-                // Correlated Spacing / Cell padding
-                if (spacing > 0.001) {
-                    let halfGap = spacing * 0.45;
-                    if (fx < halfGap || fx > (1.0 - halfGap) || fy < halfGap || fy > (1.0 - halfGap)) {
-                        return 0.0;
-                    }
-                    fx = (fx - halfGap) / (1.0 - spacing * 0.9);
-                    fy = (fy - halfGap) / (1.0 - spacing * 0.9);
-                }
-
-                // Cloud noise & density calculation
-                let cloudVal = 1.0;
-                if (cloudNoise > 0.001) {
-                    let n = (Simplex.noise(ix * 0.05 * cloudFreq + seed * 10, iy * 0.05 * cloudFreq + seed * 20) + 1.0) * 0.5;
-                    cloudVal = n;
-                }
-
-                let finalThreshold = (1.0 - cloudNoise) * density + cloudNoise * cloudVal * density;
-
-                // Cell presence check (directly controlled by Density & Cloud Noise)
-                let cellHash = Voronoi.hash(ix * 1013 + seed * 17, iy * 31337 + seed * 53);
-                if (cellHash > finalThreshold) {
-                    return 0.0;
-                }
-
-                // Cascade & Tone Falloff calculation
-                let cascadeMod = 1.0;
-                let isHead = false;
-
-                if (cascadeLen > 0) {
-                    let colStreamSeed = Voronoi.hash(secondaryCoord * 73 + seed * 991, 313);
-                    let streamLen = Math.max(cascadeLen + 4, Math.floor(12 + colStreamSeed * 20));
-                    let headOffset = Math.floor(colStreamSeed * 1000 + colOffset);
-                    let curPrimary = (direction === 'left_right' || direction === 'right_left') ? ix : iyBase;
-                    let relativePrimary = streamSign > 0 ? (curPrimary - headOffset) : (headOffset - curPrimary);
-                    let streamPos = ((relativePrimary % streamLen) + streamLen) % streamLen;
-
-                    if (streamPos === 0) {
-                        isHead = true;
-                        cascadeMod = 1.0 + headGlow * 2.0;
-                    } else if (streamPos <= cascadeLen) {
-                        let tailFraction = streamPos / cascadeLen;
-                        let fade = Math.pow(1.0 - tailFraction, cascadeFade);
-                        cascadeMod = 0.05 + 0.95 * fade;
-                    } else {
-                        cascadeMod = 0.03;
-                    }
-                }
-
-                // Available character set selection
-                let availableChars = ['0', '1'];
-                if (charSet === 'digits') {
-                    availableChars = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'];
-                } else if (charSet === 'hex') {
-                    availableChars = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'A', 'B', 'C', 'D', 'E', 'F'];
-                } else if (charSet === 'matrix_kanji') {
-                    availableChars = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'A', 'B', 'C', 'D', 'E', 'F', '+', '-', '*', '=', '?', '!', '#'];
-                } else if (charSet === 'custom') {
-                    availableChars = customChars.split('');
-                    if (availableChars.length === 0) availableChars = ['l', 'o', 'v', 'e'];
-                }
-
-                let ch = '0';
-                if (charSet === 'custom' && wordMode === 'sequence') {
-                    let seqCoord = (direction === 'left_right' || direction === 'right_left') ? ix : iy;
-                    let charIdx = ((seqCoord) % availableChars.length + availableChars.length) % availableChars.length;
-                    ch = availableChars[charIdx];
-                } else {
-                    let charHash = Voronoi.hash(ix * 307 + seed * 991, iy * 409 + seed * 733);
-                    let charIdx = Math.floor(charHash * availableChars.length) % availableChars.length;
-                    ch = availableChars[charIdx];
-                }
-
-                let cx = fx;
-                let cy = fy;
-
-                let val = 0.0;
-                if (digitStyle === 'digital_7seg') {
-                    val = this.eval7Segment(cx, cy, ch, glow);
-                } else {
-                    let rows = this.getCharBitmap(ch);
-                    let gridW = 5;
-                    let gridH = 7;
-                    if (digitStyle === 'pixel_3x5') {
-                        gridW = 3;
-                        gridH = 5;
-                    }
-
-                    let px = Math.floor(cx * gridW);
-                    let py = Math.floor(cy * gridH);
-
-                    let isOn = false;
-                    if (px >= 0 && px < gridW && py >= 0 && py < gridH) {
-                        let rowBitmask = rows[Math.min(rows.length - 1, Math.floor((py / gridH) * rows.length))];
-                        let bitIndex = 4 - Math.min(4, Math.floor((px / gridW) * 5));
-                        if ((rowBitmask & (1 << bitIndex)) !== 0) {
-                            isOn = true;
+                        if (gridType === 'staggered_h' && Math.abs(nIyBase) % 2 === 1) {
+                            nGx += 0.5;
+                        } else if (gridType === 'staggered_v' && Math.abs(nIx) % 2 === 1) {
+                            nGy += 0.5;
                         }
-                    }
 
-                    if (isOn) {
-                        val = 1.0;
-                    } else if (glow > 0.001) {
-                        let minDist = 999;
-                        for (let by = 0; by < gridH; by++) {
-                            let rowBitmask = rows[Math.min(rows.length - 1, Math.floor((by / gridH) * rows.length))];
-                            for (let bx = 0; bx < gridW; bx++) {
-                                let bitIndex = 4 - Math.min(4, Math.floor((bx / gridW) * 5));
+                        let primaryCoord = nIyBase;
+                        let secondaryCoord = nIx;
+                        let streamSign = 1;
+
+                        if (direction === 'bottom_up') {
+                            primaryCoord = nIyBase;
+                            secondaryCoord = nIx;
+                            streamSign = -1;
+                        } else if (direction === 'left_right') {
+                            primaryCoord = nIx;
+                            secondaryCoord = nIyBase;
+                            streamSign = 1;
+                        } else if (direction === 'right_left') {
+                            primaryCoord = nIx;
+                            secondaryCoord = nIyBase;
+                            streamSign = -1;
+                        }
+
+                        let colOffset = 0;
+                        if (rainSpeed > 0) {
+                            let speedFactor = rainSpeed * 10.0;
+                            colOffset = Math.floor(Voronoi.hash(secondaryCoord * 17 + seed * 31, 101) * speedFactor);
+                        }
+
+                        let iy = nIyBase + (direction === 'top_down' || direction === 'bottom_up' ? colOffset : 0);
+
+                        // Density & Cloud Noise Check
+                        let cloudVal = 1.0;
+                        if (cloudNoise > 0.001) {
+                            let n = (Simplex.noise(nIx * 0.05 * cloudFreq + seed * 10, iy * 0.05 * cloudFreq + seed * 20) + 1.0) * 0.5;
+                            cloudVal = n;
+                        }
+
+                        let finalThreshold = (1.0 - cloudNoise) * density + cloudNoise * cloudVal * density;
+                        let cellHash = Voronoi.hash(nIx * 1013 + seed * 17, iy * 31337 + seed * 53);
+                        if (cellHash > finalThreshold) continue;
+
+                        // Base character center in grid space
+                        let charCenterX = nGx + 0.5;
+                        let charCenterY = nGy + 0.5;
+
+                        // Apply Random Displacement ("Роз'їжджання")
+                        if (displacement > 0.001) {
+                            let dispAngleHash = Voronoi.hash(nIx * 733 + seed * 19, iy * 887 + seed * 97);
+                            let dispDistHash  = Voronoi.hash(nIx * 919 + seed * 41, iy * 643 + seed * 109);
+                            let angle = dispAngleHash * Math.PI * 2.0;
+                            let distFactor = 1.0 - displacementJitter * (1.0 - dispDistHash);
+                            let shiftDist = displacement * distFactor * 0.5;
+                            charCenterX += Math.cos(angle) * shiftDist;
+                            charCenterY += Math.sin(angle) * shiftDist;
+                        }
+
+                        // Apply Random Size Variation ("Рандомна величина цифр")
+                        let cellScaleFactor = 1.0;
+                        if (digitScaleJitter > 0.001) {
+                            let sizeHash = Voronoi.hash(nIx * 1237 + seed * 151, iy * 1451 + seed * 173);
+                            cellScaleFactor = 1.0 + (sizeHash * 2.0 - 1.0) * digitScaleJitter * 0.65;
+                            cellScaleFactor = Math.max(0.1, cellScaleFactor);
+                        }
+
+                        let dx = (gx - charCenterX) / cellScaleFactor;
+                        let dy = (gy - charCenterY) / cellScaleFactor;
+
+                        let fx = dx + 0.5;
+                        let fy = dy + 0.5;
+
+                        // Rotation inside cell
+                        let effAngle = charAngle;
+                        if (charAngleJitter > 0) {
+                            let rotHash = Voronoi.hash(nIx * 509 + seed * 991, iy * 701 + seed * 43);
+                            let randOffset = (rotHash * 2.0 - 1.0) * charAngleJitter;
+                            effAngle += randOffset;
+                        }
+
+                        if (effAngle !== 0) {
+                            let rad = (effAngle * Math.PI) / 180;
+                            let cosA = Math.cos(rad);
+                            let sinA = Math.sin(rad);
+                            let rdx = fx - 0.5;
+                            let rdy = fy - 0.5;
+                            let rfx = rdx * cosA - rdy * sinA + 0.5;
+                            let rfy = rdx * sinA + rdy * cosA + 0.5;
+                            if (rfx < 0.0 || rfx > 1.0 || rfy < 0.0 || rfy > 1.0) continue;
+                            fx = rfx;
+                            fy = rfy;
+                        }
+
+                        if (fx < 0.0 || fx > 1.0 || fy < 0.0 || fy > 1.0) continue;
+
+                        // Spacing
+                        if (spacing > 0.001) {
+                            let halfGap = spacing * 0.45;
+                            if (fx < halfGap || fx > (1.0 - halfGap) || fy < halfGap || fy > (1.0 - halfGap)) continue;
+                            fx = (fx - halfGap) / (1.0 - spacing * 0.9);
+                            fy = (fy - halfGap) / (1.0 - spacing * 0.9);
+                        }
+
+                        // Cascade & Tone Falloff calculation
+                        let cascadeMod = 1.0;
+                        let isHead = false;
+
+                        if (cascadeLen > 0) {
+                            let colStreamSeed = Voronoi.hash(secondaryCoord * 73 + seed * 991, 313);
+                            let streamLen = Math.max(cascadeLen + 4, Math.floor(12 + colStreamSeed * 20));
+                            let headOffset = Math.floor(colStreamSeed * 1000 + colOffset);
+                            let curPrimary = (direction === 'left_right' || direction === 'right_left') ? nIx : nIyBase;
+                            let relativePrimary = streamSign > 0 ? (curPrimary - headOffset) : (headOffset - curPrimary);
+                            let streamPos = ((relativePrimary % streamLen) + streamLen) % streamLen;
+
+                            if (streamPos === 0) {
+                                isHead = true;
+                                cascadeMod = 1.0 + headGlow * 2.0;
+                            } else if (streamPos <= cascadeLen) {
+                                let tailFraction = streamPos / cascadeLen;
+                                let fade = Math.pow(1.0 - tailFraction, cascadeFade);
+                                cascadeMod = 0.05 + 0.95 * fade;
+                            } else {
+                                cascadeMod = 0.03;
+                            }
+                        }
+
+                        // Available character set selection
+                        let availableChars = ['0', '1'];
+                        if (charSet === 'digits') {
+                            availableChars = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'];
+                        } else if (charSet === 'hex') {
+                            availableChars = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'A', 'B', 'C', 'D', 'E', 'F'];
+                        } else if (charSet === 'matrix_kanji') {
+                            availableChars = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'A', 'B', 'C', 'D', 'E', 'F', '+', '-', '*', '=', '?', '!', '#'];
+                        } else if (charSet === 'custom') {
+                            availableChars = customChars.split('');
+                            if (availableChars.length === 0) availableChars = ['l', 'o', 'v', 'e'];
+                        }
+
+                        let ch = '0';
+                        if (charSet === 'custom' && wordMode === 'sequence') {
+                            let seqCoord = (direction === 'left_right' || direction === 'right_left') ? nIx : iy;
+                            let charIdx = ((seqCoord) % availableChars.length + availableChars.length) % availableChars.length;
+                            ch = availableChars[charIdx];
+                        } else {
+                            let charHash = Voronoi.hash(nIx * 307 + seed * 991, iy * 409 + seed * 733);
+                            let charIdx = Math.floor(charHash * availableChars.length) % availableChars.length;
+                            ch = availableChars[charIdx];
+                        }
+
+                        let cx = fx;
+                        let cy = fy;
+
+                        let val = 0.0;
+                        if (digitStyle === 'digital_7seg') {
+                            val = this.eval7Segment(cx, cy, ch, glow);
+                        } else {
+                            let rows = this.getCharBitmap(ch);
+                            let gridW = 5;
+                            let gridH = 7;
+                            if (digitStyle === 'pixel_3x5') {
+                                gridW = 3;
+                                gridH = 5;
+                            }
+
+                            let px = Math.floor(cx * gridW);
+                            let py = Math.floor(cy * gridH);
+
+                            let isOn = false;
+                            if (px >= 0 && px < gridW && py >= 0 && py < gridH) {
+                                let rowBitmask = rows[Math.min(rows.length - 1, Math.floor((py / gridH) * rows.length))];
+                                let bitIndex = 4 - Math.min(4, Math.floor((px / gridW) * 5));
                                 if ((rowBitmask & (1 << bitIndex)) !== 0) {
-                                    let bitMinX = bx / gridW;
-                                    let bitMaxX = (bx + 1) / gridW;
-                                    let bitMinY = by / gridH;
-                                    let bitMaxY = (by + 1) / gridH;
+                                    isOn = true;
+                                }
+                            }
 
-                                    let dx = 0;
-                                    if (cx < bitMinX) dx = bitMinX - cx;
-                                    else if (cx > bitMaxX) dx = cx - bitMaxX;
+                            if (isOn) {
+                                val = 1.0;
+                            } else if (glow > 0.001) {
+                                let minDist = 999;
+                                for (let by = 0; by < gridH; by++) {
+                                    let rowBitmask = rows[Math.min(rows.length - 1, Math.floor((by / gridH) * rows.length))];
+                                    for (let bx = 0; bx < gridW; bx++) {
+                                        let bitIndex = 4 - Math.min(4, Math.floor((bx / gridW) * 5));
+                                        if ((rowBitmask & (1 << bitIndex)) !== 0) {
+                                            let bitMinX = bx / gridW;
+                                            let bitMaxX = (bx + 1) / gridW;
+                                            let bitMinY = by / gridH;
+                                            let bitMaxY = (by + 1) / gridH;
 
-                                    let dy = 0;
-                                    if (cy < bitMinY) dy = bitMinY - cy;
-                                    else if (cy > bitMaxY) dy = cy - bitMaxY;
+                                            let dxB = 0;
+                                            if (cx < bitMinX) dxB = bitMinX - cx;
+                                            else if (cx > bitMaxX) dxB = cx - bitMaxX;
 
-                                    let d = Math.sqrt(dx * dx + dy * dy);
-                                    if (d < minDist) minDist = d;
+                                            let dyB = 0;
+                                            if (cy < bitMinY) dyB = bitMinY - cy;
+                                            else if (cy > bitMaxY) dyB = cy - bitMaxY;
+
+                                            let d = Math.sqrt(dxB * dxB + dyB * dyB);
+                                            if (d < minDist) minDist = d;
+                                        }
+                                    }
+                                }
+
+                                if (minDist < 900) {
+                                    let sigma = 0.02 + 0.05 * Math.min(2.5, glow);
+                                    let gaussianGlow = Math.exp(-(minDist * minDist) / (2.0 * sigma * sigma));
+                                    val = gaussianGlow * Math.min(1.2, glow * 0.75);
+                                    if (val < 0.005) val = 0.0;
                                 }
                             }
                         }
 
-                        if (minDist < 900) {
-                            let sigma = 0.02 + 0.05 * Math.min(2.5, glow);
-                            let gaussianGlow = Math.exp(-(minDist * minDist) / (2.0 * sigma * sigma));
-                            val = gaussianGlow * Math.min(1.2, glow * 0.75);
-                            if (val < 0.005) val = 0.0;
+                        let brightnessMod = cascadeMod;
+                        if (isHead && headGlow > 0) {
+                            brightnessMod = 1.5 + headGlow * 3.0;
+                        }
+
+                        if (jitter > 0) {
+                            let jHash = Voronoi.hash(nIx * 133 + seed * 19, iy * 199 + seed * 23);
+                            brightnessMod *= Math.max(0.05, 1.0 + (jHash - 0.5) * jitter * 2.0);
+                        }
+
+                        val *= brightnessMod;
+
+                        if (isHead && headGlow > 0) {
+                            let headCore = Math.exp(-((fx - 0.5) * (fx - 0.5) + (fy - 0.5) * (fy - 0.5)) * 8.0);
+                            val = Math.max(val, headCore * headGlow * 0.8);
+                        }
+
+                        if (val > maxVal) {
+                            maxVal = val;
                         }
                     }
                 }
 
-                let brightnessMod = cascadeMod;
-                if (isHead && headGlow > 0) {
-                    brightnessMod = 1.5 + headGlow * 3.0;
-                }
-
-                if (jitter > 0) {
-                    let jHash = Voronoi.hash(ix * 133 + seed * 19, iy * 199 + seed * 23);
-                    brightnessMod *= Math.max(0.05, 1.0 + (jHash - 0.5) * jitter * 2.0);
-                }
-
-                val *= brightnessMod;
-
-                if (isHead && headGlow > 0) {
-                    let headCore = Math.exp(-((fx - 0.5) * (fx - 0.5) + (fy - 0.5) * (fy - 0.5)) * 8.0);
-                    val = Math.max(val, headCore * headGlow * 0.8);
-                }
-
-                return Math.max(0, Math.min(3.0, val));
+                return Math.max(0.0, Math.min(3.0, maxVal));
             }
         };
 
@@ -7337,6 +7382,11 @@
                 p.matrixGlow = parseFloat((Math.random() * 0.5).toFixed(2));
                 p.matrixHeadGlow = parseFloat((Math.random() * 0.5).toFixed(2));
                 p.matrixJitter = parseFloat((Math.random() * 0.4).toFixed(2));
+                p.matrixCharAngle = Math.random() > 0.6 ? Math.floor((Math.random() * 360 - 180) / 15) * 15 : 0;
+                p.matrixCharAngleJitter = Math.random() > 0.5 ? Math.floor(Math.random() * 90) : 0;
+                p.matrixDisplacement = Math.random() > 0.5 ? parseFloat((Math.random() * 0.8).toFixed(2)) : 0;
+                p.matrixDisplacementJitter = parseFloat((Math.random() * 0.8).toFixed(2));
+                p.matrixDigitScaleJitter = Math.random() > 0.5 ? parseFloat((Math.random() * 0.5).toFixed(2)) : 0;
                 p.matrixSeed = Math.floor(Math.random() * 9999);
             }
             if (lay.generatorType === 'gradient') {
@@ -8739,6 +8789,11 @@
 
                 algoSpecificHTML += createSlider("Обертання символів (Char Rotation)", "matrixCharAngle", -180, 180, 5, lp.matrixCharAngle || 0, false, 0);
                 algoSpecificHTML += createSlider("Випадковий розкид кута (Rotation Randomness)", "matrixCharAngleJitter", 0, 180, 5, lp.matrixCharAngleJitter || 0, false, 0);
+
+                algoSpecificHTML += createSlider("Сила роз'їжджання цифр (Displacement Strength)", "matrixDisplacement", 0.0, 2.0, 0.05, lp.matrixDisplacement !== undefined ? lp.matrixDisplacement : 0.0, false, 0.0);
+                algoSpecificHTML += createSlider("Хаотичність роз'їжджання (Displacement Randomness)", "matrixDisplacementJitter", 0.0, 1.0, 0.05, lp.matrixDisplacementJitter !== undefined ? lp.matrixDisplacementJitter : 0.5, false, 0.5);
+
+                algoSpecificHTML += createSlider("Випадковий розмір символів (Size Randomness)", "matrixDigitScaleJitter", 0.0, 1.0, 0.05, lp.matrixDigitScaleJitter !== undefined ? lp.matrixDigitScaleJitter : 0.0, false, 0.0);
 
                 algoSpecificHTML += createSlider("Масштаб цифр та клітинки (Digit & Grid Scale)", "matrixDigitScale", 0.1, 4.0, 0.05, lp.matrixDigitScale !== undefined ? lp.matrixDigitScale : 1.0, false, 1.0);
                 algoSpecificHTML += createSlider("Проміжок між цифрами (Spacing)", "matrixSpacing", 0.0, 0.8, 0.01, lp.matrixSpacing !== undefined ? lp.matrixSpacing : 0.0, false, 0.0);
