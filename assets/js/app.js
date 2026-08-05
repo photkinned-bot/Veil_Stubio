@@ -5218,15 +5218,30 @@
 
                 let rSum = 0, gSum = 0, bSum = 0, wSum = 0;
 
-                if (bType === 'directional') {
+                if (bType === 'box') {
+                    let steps = Math.max(3, Math.min(9, Math.round(bVal / 3) | 1));
+                    if (steps % 2 === 0) steps += 1;
+                    let half = (steps - 1) / 2;
+                    let stepSize = rad / half;
+                    for (let dy = -half; dy <= half; dy++) {
+                        let offsetY = dy * stepSize;
+                        for (let dx = -half; dx <= half; dx++) {
+                            let offsetX = dx * stepSize;
+                            let pix = evalRawGeneratorPixel(type, tx + offsetX, ty + offsetY, sx, sy, p, activeCymaticsSources, lay, lutR, lutG, lutB);
+                            rSum += pix[0]; gSum += pix[1]; bSum += pix[2];
+                            wSum += 1.0;
+                        }
+                    }
+                } else if (bType === 'directional') {
                     let angRad = ((p.blurAngle || 0) * Math.PI) / 180;
                     let dirX = Math.cos(angRad) * rad;
                     let dirY = Math.sin(angRad) * rad;
-                    let offsets = [-1, -0.66, -0.33, 0, 0.33, 0.66, 1];
-                    let weights = [0.05, 0.1, 0.2, 0.3, 0.2, 0.1, 0.05];
-                    for (let k = 0; k < offsets.length; k++) {
-                        let t = offsets[k];
-                        let wt = weights[k];
+                    let numSteps = Math.max(9, Math.min(33, Math.round(bVal * 1.5) | 1));
+                    if (numSteps % 2 === 0) numSteps += 1;
+                    let halfSteps = (numSteps - 1) / 2;
+                    for (let k = -halfSteps; k <= halfSteps; k++) {
+                        let t = k / halfSteps;
+                        let wt = Math.exp(-2.0 * t * t);
                         let pix = evalRawGeneratorPixel(type, tx + dirX * t, ty + dirY * t, sx, sy, p, activeCymaticsSources, lay, lutR, lutG, lutB);
                         rSum += pix[0] * wt; gSum += pix[1] * wt; bSum += pix[2] * wt;
                         wSum += wt;
@@ -5237,37 +5252,46 @@
                     let zstr = (p.zoomBlurStrength !== undefined ? parseFloat(p.zoomBlurStrength) : 100) / 100;
                     let dirX = (tx - zcx) * zstr * rad * 2;
                     let dirY = (ty - zcy) * zstr * rad * 2;
-                    let offsets = [-1, -0.66, -0.33, 0, 0.33, 0.66, 1];
-                    let weights = [0.05, 0.1, 0.2, 0.3, 0.2, 0.1, 0.05];
-                    for (let k = 0; k < offsets.length; k++) {
-                        let t = offsets[k];
-                        let wt = weights[k];
+                    let numSteps = Math.max(9, Math.min(33, Math.round(bVal * 1.5) | 1));
+                    if (numSteps % 2 === 0) numSteps += 1;
+                    let halfSteps = (numSteps - 1) / 2;
+                    for (let k = -halfSteps; k <= halfSteps; k++) {
+                        let t = k / halfSteps;
+                        let wt = Math.exp(-2.0 * t * t);
                         let pix = evalRawGeneratorPixel(type, tx + dirX * t, ty + dirY * t, sx, sy, p, activeCymaticsSources, lay, lutR, lutG, lutB);
                         rSum += pix[0] * wt; gSum += pix[1] * wt; bSum += pix[2] * wt;
                         wSum += wt;
                     }
                 } else {
+                    // Gaussian blur: multi-ring concentric sampling to cover the entire disk smoothly
                     let centerPix = evalRawGeneratorPixel(type, tx, ty, sx, sy, p, activeCymaticsSources, lay, lutR, lutG, lutB);
-                    rSum += centerPix[0] * 0.25; gSum += centerPix[1] * 0.25; bSum += centerPix[2] * 0.25;
-                    wSum += 0.25;
+                    rSum += centerPix[0] * 1.0; gSum += centerPix[1] * 1.0; bSum += centerPix[2] * 1.0;
+                    wSum += 1.0;
 
-                    let offsetsD = [
-                        [rad, 0], [-rad, 0], [0, rad], [0, -rad]
-                    ];
-                    for (let k = 0; k < 4; k++) {
-                        let pix = evalRawGeneratorPixel(type, tx + offsetsD[k][0], ty + offsetsD[k][1], sx, sy, p, activeCymaticsSources, lay, lutR, lutG, lutB);
-                        rSum += pix[0] * 0.125; gSum += pix[1] * 0.125; bSum += pix[2] * 0.125;
-                        wSum += 0.125;
+                    let rings;
+                    if (bVal <= 4) {
+                        rings = [[0.5, 4], [1.0, 4]];
+                    } else if (bVal <= 12) {
+                        rings = [[0.33, 4], [0.66, 8], [1.0, 8]];
+                    } else {
+                        rings = [[0.25, 4], [0.50, 8], [0.75, 8], [1.0, 12]];
                     }
 
-                    let diagR = rad * 0.7071;
-                    let offsetsDiag = [
-                        [diagR, diagR], [-diagR, diagR], [diagR, -diagR], [-diagR, -diagR]
-                    ];
-                    for (let k = 0; k < 4; k++) {
-                        let pix = evalRawGeneratorPixel(type, tx + offsetsDiag[k][0], ty + offsetsDiag[k][1], sx, sy, p, activeCymaticsSources, lay, lutR, lutG, lutB);
-                        rSum += pix[0] * 0.0625; gSum += pix[1] * 0.0625; bSum += pix[2] * 0.0625;
-                        wSum += 0.0625;
+                    for (let rIdx = 0; rIdx < rings.length; rIdx++) {
+                        let rFrac = rings[rIdx][0];
+                        let count = rings[rIdx][1];
+                        let curRad = rad * rFrac;
+                        let wt = Math.exp(-2.0 * rFrac * rFrac);
+                        let angleOffset = (rIdx % 2 === 1) ? (Math.PI / count) : 0;
+
+                        for (let k = 0; k < count; k++) {
+                            let angle = (k * 2 * Math.PI) / count + angleOffset;
+                            let ox = curRad * Math.cos(angle);
+                            let oy = curRad * Math.sin(angle);
+                            let pix = evalRawGeneratorPixel(type, tx + ox, ty + oy, sx, sy, p, activeCymaticsSources, lay, lutR, lutG, lutB);
+                            rSum += pix[0] * wt; gSum += pix[1] * wt; bSum += pix[2] * wt;
+                            wSum += wt;
+                        }
                     }
                 }
 
