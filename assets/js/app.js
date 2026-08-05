@@ -3525,6 +3525,68 @@
             }
         }
 
+        function applyZoomBlur(buf, tmp, w, h, rad, cx = 0.5, cy = 0.5, strength = 100, mode = 'wrap') {
+            if (!rad || rad <= 0) return;
+            let effectiveMode = mode;
+            if (typeof mode === 'boolean') {
+                effectiveMode = mode ? 'clamp' : 'wrap';
+            }
+
+            let centerX = cx * w;
+            let centerY = cy * h;
+            let str = (strength !== undefined ? strength : 100) / 100;
+            let factor = (rad / 100) * str * 0.5;
+
+            let steps = Math.max(7, Math.min(31, Math.round((rad * str * (w / 512)) * 0.6) | 1));
+            if (steps % 2 === 0) steps += 1;
+            let halfSteps = (steps - 1) / 2;
+            let invSteps = 1 / steps;
+
+            for (let y = 0; y < h; y++) {
+                let rowOffset = y * w;
+                let dy = y - centerY;
+                for (let x = 0; x < w; x++) {
+                    let dx = x - centerX;
+                    let sum = 0;
+
+                    for (let k = -halfSteps; k <= halfSteps; k++) {
+                        let s = k / halfSteps;
+                        let sx = x + dx * s * factor;
+                        let sy = y + dy * s * factor;
+
+                        let x0 = Math.floor(sx), y0 = Math.floor(sy);
+                        let x1 = x0 + 1, y1 = y0 + 1;
+                        let fx = sx - x0, fy = sy - y0;
+
+                        if (effectiveMode === 'clamp') {
+                            x0 = Math.max(0, Math.min(w - 1, x0));
+                            x1 = Math.max(0, Math.min(w - 1, x1));
+                            y0 = Math.max(0, Math.min(h - 1, y0));
+                            y1 = Math.max(0, Math.min(h - 1, y1));
+                        } else {
+                            x0 = (x0 % w + w) % w;
+                            x1 = (x1 % w + w) % w;
+                            y0 = (y0 % h + h) % h;
+                            y1 = (y1 % h + h) % h;
+                        }
+
+                        let v00 = buf[y0 * w + x0];
+                        let v10 = buf[y0 * w + x1];
+                        let v01 = buf[y1 * w + x0];
+                        let v11 = buf[y1 * w + x1];
+
+                        let val = (1 - fx) * (1 - fy) * v00 + fx * (1 - fy) * v10 + (1 - fx) * fy * v01 + fx * fy * v11;
+                        sum += val;
+                    }
+                    tmp[rowOffset + x] = sum * invSteps;
+                }
+            }
+
+            for (let i = 0; i < w * h; i++) {
+                buf[i] = tmp[i];
+            }
+        }
+
         function applyEdgeDetection(buf, tmp, w, h) {
             let step = Math.max(1, Math.round(w / 512));
             for(let i=0;i<w*h;i++) tmp[i]=buf[i];
@@ -5804,6 +5866,13 @@
                         applyDirectionalBlur(layerBufferR, blurTempR, w, h, parseInt(p.blur), p.blurAngle || 0, blurMode);
                         applyDirectionalBlur(layerBufferG, blurTempG, w, h, parseInt(p.blur), p.blurAngle || 0, blurMode);
                         applyDirectionalBlur(layerBufferB, blurTempB, w, h, parseInt(p.blur), p.blurAngle || 0, blurMode);
+                    } else if (bType === 'zoom') {
+                        let zcx = p.zoomBlurCenterX !== undefined ? parseFloat(p.zoomBlurCenterX) : 0.5;
+                        let zcy = p.zoomBlurCenterY !== undefined ? parseFloat(p.zoomBlurCenterY) : 0.5;
+                        let zstr = p.zoomBlurStrength !== undefined ? parseFloat(p.zoomBlurStrength) : 100;
+                        applyZoomBlur(layerBufferR, blurTempR, w, h, parseInt(p.blur), zcx, zcy, zstr, blurMode);
+                        applyZoomBlur(layerBufferG, blurTempG, w, h, parseInt(p.blur), zcx, zcy, zstr, blurMode);
+                        applyZoomBlur(layerBufferB, blurTempB, w, h, parseInt(p.blur), zcx, zcy, zstr, blurMode);
                     } else if (bType === 'box') {
                         applyBoxBlur(layerBufferR, blurTempR, w, h, parseInt(p.blur), blurMode);
                         applyBoxBlur(layerBufferG, blurTempG, w, h, parseInt(p.blur), blurMode);
@@ -6045,6 +6114,13 @@
                     applyDirectionalBlur(blendBufferR, blurTempR, w, h, parseInt(state.global.blur), state.global.blurAngle || 0, globalBlurMode);
                     applyDirectionalBlur(blendBufferG, blurTempG, w, h, parseInt(state.global.blur), state.global.blurAngle || 0, globalBlurMode);
                     applyDirectionalBlur(blendBufferB, blurTempB, w, h, parseInt(state.global.blur), state.global.blurAngle || 0, globalBlurMode);
+                } else if (gBType === 'zoom') {
+                    let zcx = state.global.zoomBlurCenterX !== undefined ? parseFloat(state.global.zoomBlurCenterX) : 0.5;
+                    let zcy = state.global.zoomBlurCenterY !== undefined ? parseFloat(state.global.zoomBlurCenterY) : 0.5;
+                    let zstr = state.global.zoomBlurStrength !== undefined ? parseFloat(state.global.zoomBlurStrength) : 100;
+                    applyZoomBlur(blendBufferR, blurTempR, w, h, parseInt(state.global.blur), zcx, zcy, zstr, globalBlurMode);
+                    applyZoomBlur(blendBufferG, blurTempG, w, h, parseInt(state.global.blur), zcx, zcy, zstr, globalBlurMode);
+                    applyZoomBlur(blendBufferB, blurTempB, w, h, parseInt(state.global.blur), zcx, zcy, zstr, globalBlurMode);
                 } else if (gBType === 'box') {
                     applyBoxBlur(blendBufferR, blurTempR, w, h, parseInt(state.global.blur), globalBlurMode);
                     applyBoxBlur(blendBufferG, blurTempG, w, h, parseInt(state.global.blur), globalBlurMode);
@@ -6453,7 +6529,7 @@
         // значення за замовчуванням через || / ?? у renderProps()/evalGenerator()
         // самі, щойно з'являються на екрані для свого типу генератора.
         function freshLayerParams() {
-            return { seamless:false, scale:10, scaleX:10, scaleY:10, lockScale:true, layerScale:1, contrast:1, brightness:1, angle:0, perspectiveV:0, perspectiveH:0, blur:0, blurType:'gaussian', blurAngle:0, blurClampEdge:false,
+            return { seamless:false, scale:10, scaleX:10, scaleY:10, lockScale:true, layerScale:1, contrast:1, brightness:1, angle:0, perspectiveV:0, perspectiveH:0, blur:0, blurType:'gaussian', blurAngle:0, blurClampEdge:false, zoomBlurCenterX:0.5, zoomBlurCenterY:0.5, zoomBlurStrength:100,
                 dotSize: 0.25, dotSoftness: 0.05, dotGrid: 'square', dotShape: 'circle',
                 pixelGap: 0.0, pixelGapValue: 0.0, pixelGapSoftness: 0.0,
                 pixelGridType: 'standard', pixelShape: 'square', pixelCornerRadius: 0.1,
@@ -6479,7 +6555,7 @@
                 vignetteHighlights: 0,
                 vignetteCenterX: 0.5,
                 vignetteCenterY: 0.5,
-                grain:10, blur:0, blurType:'gaussian', blurAngle:0, blurClampEdge:false,
+                grain:10, blur:0, blurType:'gaussian', blurAngle:0, blurClampEdge:false, zoomBlurCenterX:0.5, zoomBlurCenterY:0.5, zoomBlurStrength:100,
                 globalZoom:1, globalScaleX:1, globalScaleY:1, globalRotation:0, globalOffsetX:0, globalOffsetY:0,
                 globalPerspectiveV:0, globalPerspectiveH:0,
                 tileMode:'off', tileRepeatX:2, tileRepeatY:2, tileMirrorX:true, tileMirrorY:true,
@@ -8296,13 +8372,19 @@
                 ${createSlider("Розмиття (px)", "blur", 0, 100, 1, lp.blur||0, false, 0)}
                 <div class="property-group" style="margin-top:-6px;">
                     <label class="property-label" style="font-size:11px; margin-bottom:4px;">Тип розмиття</label>
-                    <div class="gen-grid" style="grid-template-columns:repeat(3,1fr);">
+                    <div class="gen-grid" style="grid-template-columns:repeat(2,1fr);">
                         <button onclick="upd('blurType','gaussian'); renderProps();" class="gen-btn ${(lp.blurType||'gaussian')==='gaussian'?'active':''}">Гаус (Gaussian)</button>
                         <button onclick="upd('blurType','box'); renderProps();" class="gen-btn ${lp.blurType==='box'?'active':''}">Бокс (Box)</button>
                         <button onclick="upd('blurType','directional'); renderProps();" class="gen-btn ${lp.blurType==='directional'?'active':''}">За напрямком</button>
+                        <button onclick="upd('blurType','zoom'); renderProps();" class="gen-btn ${lp.blurType==='zoom'?'active':''}">Zoom (Радіальне)</button>
                     </div>
                 </div>
                 ${(lp.blurType === 'directional') ? createSlider("Кут розмиття (°)", "blurAngle", -180, 180, 1, lp.blurAngle||0, false, 0) : ''}
+                ${(lp.blurType === 'zoom') ? `
+                    ${createSlider("Центр X Zoom", "zoomBlurCenterX", 0, 1, 0.01, lp.zoomBlurCenterX !== undefined ? lp.zoomBlurCenterX : 0.5, false, 0.5)}
+                    ${createSlider("Центр Y Zoom", "zoomBlurCenterY", 0, 1, 0.01, lp.zoomBlurCenterY !== undefined ? lp.zoomBlurCenterY : 0.5, false, 0.5)}
+                    ${createSlider("Сила Zoom (%)", "zoomBlurStrength", 0, 200, 1, lp.zoomBlurStrength !== undefined ? lp.zoomBlurStrength : 100, false, 100)}
+                ` : ''}
                 <div class="property-group" style="margin-top:-6px;">
                     <label class="checkbox-label" style="font-size:11px; display:flex; align-items:center; gap:6px;">
                         <input type="checkbox" ${lp.blurClampEdge ? 'checked' : ''} onchange="upd('blurClampEdge', this.checked)">
@@ -8559,13 +8641,19 @@
                 ${createSlider("Глобальне розмиття", "blur", 0, 100, 1, g.blur||0, true, 0)}
                 <div class="property-group" style="margin-top:-6px;">
                     <label class="property-label" style="font-size:11px; margin-bottom:4px;">Тип розмиття</label>
-                    <div class="gen-grid" style="grid-template-columns:repeat(3,1fr);">
+                    <div class="gen-grid" style="grid-template-columns:repeat(2,1fr);">
                         <button onclick="upd('blurType','gaussian',true); renderGlobal();" class="gen-btn ${(g.blurType||'gaussian')==='gaussian'?'active':''}">Гаус (Gaussian)</button>
                         <button onclick="upd('blurType','box',true); renderGlobal();" class="gen-btn ${g.blurType==='box'?'active':''}">Бокс (Box)</button>
                         <button onclick="upd('blurType','directional',true); renderGlobal();" class="gen-btn ${g.blurType==='directional'?'active':''}">За напрямком</button>
+                        <button onclick="upd('blurType','zoom',true); renderGlobal();" class="gen-btn ${g.blurType==='zoom'?'active':''}">Zoom (Радіальне)</button>
                     </div>
                 </div>
                 ${(g.blurType === 'directional') ? createSlider("Кут розмиття (°)", "blurAngle", -180, 180, 1, g.blurAngle||0, true, 0) : ''}
+                ${(g.blurType === 'zoom') ? `
+                    ${createSlider("Центр X Zoom", "zoomBlurCenterX", 0, 1, 0.01, g.zoomBlurCenterX !== undefined ? g.zoomBlurCenterX : 0.5, true, 0.5)}
+                    ${createSlider("Центр Y Zoom", "zoomBlurCenterY", 0, 1, 0.01, g.zoomBlurCenterY !== undefined ? g.zoomBlurCenterY : 0.5, true, 0.5)}
+                    ${createSlider("Сила Zoom (%)", "zoomBlurStrength", 0, 200, 1, g.zoomBlurStrength !== undefined ? g.zoomBlurStrength : 100, true, 100)}
+                ` : ''}
                 <div class="property-group" style="margin-top:-6px;">
                     <label class="checkbox-label" style="font-size:11px; display:flex; align-items:center; gap:6px;">
                         <input type="checkbox" ${g.blurClampEdge ? 'checked' : ''} onchange="state.global.blurClampEdge=this.checked; invalidateCaches(); requestRender(); commitHistorySnapshot();">
@@ -10834,7 +10922,7 @@
                     state.global.vignetteAmount = -parsedVal * 100;
                 }
 
-                const COORD_PARAMS = ['globalZoom', 'globalScaleX', 'globalScaleY', 'globalRotation', 'globalOffsetX', 'globalOffsetY', 'globalPerspectiveV', 'globalPerspectiveH', 'tileRepeatX', 'tileRepeatY', 'tileSeamOffsetX', 'tileSeamOffsetY', 'forceSeamlessSoftness', 'blur', 'blurClampEdge', 'blurType'];
+                const COORD_PARAMS = ['globalZoom', 'globalScaleX', 'globalScaleY', 'globalRotation', 'globalOffsetX', 'globalOffsetY', 'globalPerspectiveV', 'globalPerspectiveH', 'tileRepeatX', 'tileRepeatY', 'tileSeamOffsetX', 'tileSeamOffsetY', 'forceSeamlessSoftness', 'blur', 'blurClampEdge', 'blurType', 'zoomBlurCenterX', 'zoomBlurCenterY', 'zoomBlurStrength'];
                 if (COORD_PARAMS.includes(k) || k.startsWith('tile')) {
                     invalidateCaches();
                 }

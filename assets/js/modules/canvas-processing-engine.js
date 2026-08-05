@@ -117,6 +117,57 @@ export class CanvasProcessingEngine {
   }
 
   /**
+   * Helper: Zoom / Radial Blur on Float32Array
+   */
+  static zoomBlurFloatBuffer(buffer, width, height, radius, cx = 0.5, cy = 0.5, strength = 1.0) {
+    if (!radius || radius < 1) return buffer;
+    const size = width * height;
+    const out = new Float32Array(size);
+    const centerX = cx * width;
+    const centerY = cy * height;
+    const str = strength !== undefined ? strength : 1.0;
+    const factor = (radius / 100) * str * 0.5;
+
+    let steps = Math.max(7, Math.min(31, Math.round((radius * str * (width / 512)) * 0.6) | 1));
+    if (steps % 2 === 0) steps += 1;
+    const halfSteps = (steps - 1) / 2;
+    const invSteps = 1 / steps;
+
+    for (let y = 0; y < height; y++) {
+      const rowOffset = y * width;
+      const dy = y - centerY;
+      for (let x = 0; x < width; x++) {
+        const dx = x - centerX;
+        let sum = 0;
+
+        for (let k = -halfSteps; k <= halfSteps; k++) {
+          const s = k / halfSteps;
+          const sx = x + dx * s * factor;
+          const sy = y + dy * s * factor;
+
+          let x0 = Math.floor(sx), y0 = Math.floor(sy);
+          let x1 = x0 + 1, y1 = y0 + 1;
+          const fx = sx - x0, fy = sy - y0;
+
+          x0 = (x0 % width + width) % width;
+          x1 = (x1 % width + width) % width;
+          y0 = (y0 % height + height) % height;
+          y1 = (y1 % height + height) % height;
+
+          const v00 = buffer[y0 * width + x0];
+          const v10 = buffer[y0 * width + x1];
+          const v01 = buffer[y1 * width + x0];
+          const v11 = buffer[y1 * width + x1];
+
+          sum += (1 - fx) * (1 - fy) * v00 + fx * (1 - fy) * v10 + (1 - fx) * fy * v01 + fx * fy * v11;
+        }
+        out[rowOffset + x] = sum * invSteps;
+      }
+    }
+    return out;
+  }
+
+  /**
    * Helper: Sharpen kernel filter on Float32Array
    */
   static sharpenFloatBuffer(buffer, width, height, amount) {
