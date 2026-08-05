@@ -5163,6 +5163,7 @@
             for(let lIdx=state.layers.length-1; lIdx>=0; lIdx--){
                 let lay = state.layers[lIdx]; if(!lay.visible) continue;
                 let op = lay.opacity/100, bFn = Blend[lay.blendMode] || Blend.normal, p = lay.params;
+                let usePreTransformBlur = !!(p.blur > 0 && p.blurWithTransform);
                 let lScale = p.layerScale || 1;
 
                 if (lay.generatorType === 'paint') {
@@ -5217,9 +5218,10 @@
                     const { lutR, lutG, lutB } = buildLayerColorLUT(p, lay.generatorType);
 
                     let isGlobalWarpFirst = (state.global.warpOrder === 'warp_first');
-                    let hasGlobalTransform = (gZoom !== 1 || gScaleX !== 1 || gScaleY !== 1 || gRot || gOffX || gOffY || gTileMode !== 'off' || gPerspV || gPerspH);
+                    let useGlobalPreTransformBlur = !!(state.global.blur > 0 && state.global.blurWithTransform);
+                    let hasGlobalTransform = !useGlobalPreTransformBlur && (gZoom !== 1 || gScaleX !== 1 || gScaleY !== 1 || gRot || gOffX || gOffY || gTileMode !== 'off' || gPerspV || gPerspH);
                     let activeGlobalWarps = (state.global.warps || []).filter(w => w && w.type !== 'none' && w.visible !== false);
-                    let hasGlobalWarps = activeGlobalWarps.length > 0;
+                    let hasGlobalWarps = !useGlobalPreTransformBlur && activeGlobalWarps.length > 0;
 
                     let isLayerWarpFirst = (p.warpOrder === 'warp_first');
                     let hasLayerTransform = (lScale !== 1 || p.angle || p.perspectiveV || p.perspectiveH || p.offsetX || p.offsetY);
@@ -5231,6 +5233,141 @@
 
                     let lrRad = -(p.angle || 0) * Math.PI / 180;
                     let cosLRot = p.angle ? Math.cos(lrRad) : 1, sinLRot = p.angle ? Math.sin(lrRad) : 0;
+
+                    if (usePreTransformBlur) {
+                        const unwarpedR = getGlobalFloatBuffer('unwarpedR', w * h);
+                        const unwarpedG = getGlobalFloatBuffer('unwarpedG', w * h);
+                        const unwarpedB = getGlobalFloatBuffer('unwarpedB', w * h);
+
+                        for (let uY = 0; uY < h; uY++) {
+                            let ny0 = uY / h;
+                            for (let uX = 0; uX < w; uX++) {
+                                let nx0 = uX / w;
+                                let uIdx = uY * w + uX;
+                                let tx0 = nx0 + (p.seed || 0) * 0.013;
+                                let ty0 = ny0 + (p.seed || 0) * 0.021;
+                                let sx0 = p.scaleX || 10, sy0 = p.scaleY || 10;
+
+                                if (lay.generatorType === 'paint') {
+                                    let pr = 0, pg = 0, pb = 0;
+                                    if (lay.paintBufferR) {
+                                        let scaleFactorX = (sx0 || 10) / 10;
+                                        let scaleFactorY = (sy0 || 10) / 10;
+                                        let stx = (tx0 - 0.5) * scaleFactorX + 0.5;
+                                        let sty = (ty0 - 0.5) * scaleFactorY + 0.5;
+                                        let px = (stx % 1 + 1) % 1;
+                                        let py = (sty % 1 + 1) % 1;
+                                        let pw = 1024, ph = 1024;
+                                        let x = px * (pw - 1), y = py * (ph - 1);
+                                        let x0 = Math.floor(x), y0 = Math.floor(y);
+                                        let x1 = Math.min(pw - 1, x0 + 1), y1 = Math.min(ph - 1, y0 + 1);
+                                        let fx = x - x0, fy = y - y0;
+                                        
+                                        let r00 = lay.paintBufferR[y0 * pw + x0], r10 = lay.paintBufferR[y0 * pw + x1];
+                                        let r01 = lay.paintBufferR[y1 * pw + x0], r11 = lay.paintBufferR[y1 * pw + x1];
+                                        pr = (1 - fy) * ((1 - fx) * r00 + fx * r10) + fy * ((1 - fx) * r01 + fx * r11);
+
+                                        let g00 = lay.paintBufferG[y0 * pw + x0], g10 = lay.paintBufferG[y0 * pw + x1];
+                                        let g01 = lay.paintBufferG[y1 * pw + x0], g11 = lay.paintBufferG[y1 * pw + x1];
+                                        pg = (1 - fy) * ((1 - fx) * g00 + fx * g10) + fy * ((1 - fx) * g01 + fx * g11);
+
+                                        let b00 = lay.paintBufferB[y0 * pw + x0], b10 = lay.paintBufferB[y0 * pw + x1];
+                                        let b01 = lay.paintBufferB[y1 * pw + x0], b11 = lay.paintBufferB[y1 * pw + x1];
+                                        pb = (1 - fy) * ((1 - fx) * b00 + fx * b10) + fy * ((1 - fx) * b01 + fx * b11);
+                                    }
+                                    if(p.brightness!==undefined) { pr*=p.brightness; pg*=p.brightness; pb*=p.brightness; }
+                                    if(p.contrast!==undefined) { pr=(pr-0.5)*p.contrast+0.5; pg=(pg-0.5)*p.contrast+0.5; pb=(pb-0.5)*p.contrast+0.5; }
+                                    if(p.invert) { pr=1-pr; pg=1-pg; pb=1-pb; }
+                                    unwarpedR[uIdx] = Math.max(0, Math.min(1, pr));
+                                    unwarpedG[uIdx] = Math.max(0, Math.min(1, pg));
+                                    unwarpedB[uIdx] = Math.max(0, Math.min(1, pb));
+                                } else {
+                                    let v = 0;
+                                    if (p.seamless || gForceSeamless) {
+                                        let tx00 = tx0 % 1.0; if (tx00 < 0) tx00 += 1.0;
+                                        let ty00 = ty0 % 1.0; if (ty00 < 0) ty00 += 1.0;
+                                        
+                                        let softness = gForceSeamless ? Math.max(0, Math.min(1, gForceSoftness)) : Math.max(0, Math.min(1, p.seamlessSoftness ?? 1));
+                                        let curveX = gBlendCurve === 'linear' ? tx00 : Perlin.fade(tx00);
+                                        let curveY = gBlendCurve === 'linear' ? ty00 : Perlin.fade(ty00);
+                                        let wx = Perlin.lerp(softness, tx00, curveX);
+                                        let wy = Perlin.lerp(softness, ty00, curveY);
+
+                                        let v00 = evalGenerator(lay.generatorType, tx00, ty00, sx0, sy0, p, activeCymaticsSources, lay);
+                                        let totalV = v00 * (1 - wx) * (1 - wy);
+
+                                        if (wx > 0.0005) {
+                                            let v10 = evalGenerator(lay.generatorType, tx00 - 1, ty00, sx0, sy0, p, activeCymaticsSources, lay);
+                                            totalV += v10 * wx * (1 - wy);
+                                        }
+                                        if (wy > 0.0005) {
+                                            let v01 = evalGenerator(lay.generatorType, tx00, ty00 - 1, sx0, sy0, p, activeCymaticsSources, lay);
+                                            totalV += v01 * (1 - wx) * wy;
+                                        }
+                                        if (wx > 0.0005 && wy > 0.0005) {
+                                            let v11 = evalGenerator(lay.generatorType, tx00 - 1, ty00 - 1, sx0, sy0, p, activeCymaticsSources, lay);
+                                            totalV += v11 * wx * wy;
+                                        }
+                                        v = totalV;
+                                    } else {
+                                        v = evalGenerator(lay.generatorType, tx0, ty0, sx0, sy0, p, activeCymaticsSources, lay);
+                                    }
+
+                                    if(p.brightness!==undefined) v=v*p.brightness;
+                                    if(p.contrast!==undefined) v=(v-0.5)*p.contrast+0.5;
+                                    if(p.invert) v=1-v;
+
+                                    if (p.useLevels) {
+                                        let min = (p.levelMin||0)/100, max = (p.levelMax||100)/100;
+                                        if (max > min) v = (v - min) / (max - min);
+                                    }
+                                    if (p.useThreshold) v = v >= (p.thresholdVal||50)/100 ? 1 : 0;
+                                    
+                                    if (p.usePosterize) {
+                                        let levels = Math.max(2, p.posterizeLevels || 4);
+                                        v = Math.floor(v * levels) / (levels - 1);
+                                    }
+
+                                    v = Math.max(0, Math.min(1, v));
+                                    let lutIdx = (v * 255.99) | 0;
+                                    if (lutIdx < 0) lutIdx = 0; else if (lutIdx > 255) lutIdx = 255;
+
+                                    unwarpedR[uIdx] = lutR[lutIdx];
+                                    unwarpedG[uIdx] = lutG[lutIdx];
+                                    unwarpedB[uIdx] = lutB[lutIdx];
+                                }
+                            }
+                        }
+
+                        if (p.useFindEdges) {
+                            applyEdgeDetection(unwarpedR, blurTempR, w, h);
+                            applyEdgeDetection(unwarpedG, blurTempG, w, h);
+                            applyEdgeDetection(unwarpedB, blurTempB, w, h);
+                        }
+
+                        let blurMode = p.blurClampEdge ? 'clamp' : 'wrap';
+                        let bType = p.blurType || 'gaussian';
+                        if (bType === 'directional') {
+                            applyDirectionalBlur(unwarpedR, blurTempR, w, h, parseInt(p.blur), p.blurAngle || 0, blurMode);
+                            applyDirectionalBlur(unwarpedG, blurTempG, w, h, parseInt(p.blur), p.blurAngle || 0, blurMode);
+                            applyDirectionalBlur(unwarpedB, blurTempB, w, h, parseInt(p.blur), p.blurAngle || 0, blurMode);
+                        } else if (bType === 'zoom') {
+                            let zcx = p.zoomBlurCenterX !== undefined ? parseFloat(p.zoomBlurCenterX) : 0.5;
+                            let zcy = p.zoomBlurCenterY !== undefined ? parseFloat(p.zoomBlurCenterY) : 0.5;
+                            let zstr = p.zoomBlurStrength !== undefined ? parseFloat(p.zoomBlurStrength) : 100;
+                            applyZoomBlur(unwarpedR, blurTempR, w, h, parseInt(p.blur), zcx, zcy, zstr, blurMode);
+                            applyZoomBlur(unwarpedG, blurTempG, w, h, parseInt(p.blur), zcx, zcy, zstr, blurMode);
+                            applyZoomBlur(unwarpedB, blurTempB, w, h, parseInt(p.blur), zcx, zcy, zstr, blurMode);
+                        } else if (bType === 'box') {
+                            applyBoxBlur(unwarpedR, blurTempR, w, h, parseInt(p.blur), blurMode);
+                            applyBoxBlur(unwarpedG, blurTempG, w, h, parseInt(p.blur), blurMode);
+                            applyBoxBlur(unwarpedB, blurTempB, w, h, parseInt(p.blur), blurMode);
+                        } else {
+                            applyGaussianBlur(unwarpedR, blurTempR, w, h, parseInt(p.blur), blurMode);
+                            applyGaussianBlur(unwarpedG, blurTempG, w, h, parseInt(p.blur), blurMode);
+                            applyGaussianBlur(unwarpedB, blurTempB, w, h, parseInt(p.blur), blurMode);
+                        }
+                    }
 
                     for(let y=0; y<h; y++){
                         const baseY = y/h;
@@ -5750,7 +5887,41 @@
                             let tx = nx + (p.seed||0)*0.013, ty = ny + (p.seed||0)*0.021;
                             let sx=p.scaleX||10, sy=p.scaleY||10;
 
-                            if (lay.generatorType === 'paint') {
+                            if (usePreTransformBlur) {
+                                const unwarpedR = getGlobalFloatBuffer('unwarpedR', w * h);
+                                const unwarpedG = getGlobalFloatBuffer('unwarpedG', w * h);
+                                const unwarpedB = getGlobalFloatBuffer('unwarpedB', w * h);
+
+                                let px, py;
+                                if (p.blurClampEdge) {
+                                    px = Math.max(0, Math.min(1, nx));
+                                    py = Math.max(0, Math.min(1, ny));
+                                } else {
+                                    px = (nx % 1.0 + 1.0) % 1.0;
+                                    py = (ny % 1.0 + 1.0) % 1.0;
+                                }
+
+                                let sxSample = px * (w - 1);
+                                let sySample = py * (h - 1);
+                                let x0 = Math.floor(sxSample), y0 = Math.floor(sySample);
+                                let x1 = Math.min(w - 1, x0 + 1), y1 = Math.min(h - 1, y0 + 1);
+                                let fx = sxSample - x0, fy = sySample - y0;
+
+                                let idx00 = y0 * w + x0, idx10 = y0 * w + x1;
+                                let idx01 = y1 * w + x0, idx11 = y1 * w + x1;
+
+                                let r00 = unwarpedR[idx00], r10 = unwarpedR[idx10];
+                                let r01 = unwarpedR[idx01], r11 = unwarpedR[idx11];
+                                targetBufR[idx] = (1 - fy) * ((1 - fx) * r00 + fx * r10) + fy * ((1 - fx) * r01 + fx * r11);
+
+                                let g00 = unwarpedG[idx00], g10 = unwarpedG[idx10];
+                                let g01 = unwarpedG[idx01], g11 = unwarpedG[idx11];
+                                targetBufG[idx] = (1 - fy) * ((1 - fx) * g00 + fx * g10) + fy * ((1 - fx) * g01 + fx * g11);
+
+                                let b00 = unwarpedB[idx00], b10 = unwarpedB[idx10];
+                                let b01 = unwarpedB[idx01], b11 = unwarpedB[idx11];
+                                targetBufB[idx] = (1 - fy) * ((1 - fx) * b00 + fx * b10) + fy * ((1 - fx) * b01 + fx * b11);
+                            } else if (lay.generatorType === 'paint') {
                                 let pr = 0, pg = 0, pb = 0;
                                 if (lay.paintBufferR) {
                                     let scaleFactorX = (sx || 10) / 10;
@@ -5853,34 +6024,36 @@
                     }
                 }
 
-                if (p.useFindEdges) {
-                    applyEdgeDetection(layerBufferR, blurTempR, w, h);
-                    applyEdgeDetection(layerBufferG, blurTempG, w, h);
-                    applyEdgeDetection(layerBufferB, blurTempB, w, h);
-                }
-                if (p.blur > 0) {
-                    let isTiled = (state.global.tileMode && state.global.tileMode !== 'off') || !!p.seamless;
-                    let blurMode = isTiled ? 'wrap' : (p.blurClampEdge ? 'clamp' : 'wrap');
-                    let bType = p.blurType || 'gaussian';
-                    if (bType === 'directional') {
-                        applyDirectionalBlur(layerBufferR, blurTempR, w, h, parseInt(p.blur), p.blurAngle || 0, blurMode);
-                        applyDirectionalBlur(layerBufferG, blurTempG, w, h, parseInt(p.blur), p.blurAngle || 0, blurMode);
-                        applyDirectionalBlur(layerBufferB, blurTempB, w, h, parseInt(p.blur), p.blurAngle || 0, blurMode);
-                    } else if (bType === 'zoom') {
-                        let zcx = p.zoomBlurCenterX !== undefined ? parseFloat(p.zoomBlurCenterX) : 0.5;
-                        let zcy = p.zoomBlurCenterY !== undefined ? parseFloat(p.zoomBlurCenterY) : 0.5;
-                        let zstr = p.zoomBlurStrength !== undefined ? parseFloat(p.zoomBlurStrength) : 100;
-                        applyZoomBlur(layerBufferR, blurTempR, w, h, parseInt(p.blur), zcx, zcy, zstr, blurMode);
-                        applyZoomBlur(layerBufferG, blurTempG, w, h, parseInt(p.blur), zcx, zcy, zstr, blurMode);
-                        applyZoomBlur(layerBufferB, blurTempB, w, h, parseInt(p.blur), zcx, zcy, zstr, blurMode);
-                    } else if (bType === 'box') {
-                        applyBoxBlur(layerBufferR, blurTempR, w, h, parseInt(p.blur), blurMode);
-                        applyBoxBlur(layerBufferG, blurTempG, w, h, parseInt(p.blur), blurMode);
-                        applyBoxBlur(layerBufferB, blurTempB, w, h, parseInt(p.blur), blurMode);
-                    } else {
-                        applyGaussianBlur(layerBufferR, blurTempR, w, h, parseInt(p.blur), blurMode);
-                        applyGaussianBlur(layerBufferG, blurTempG, w, h, parseInt(p.blur), blurMode);
-                        applyGaussianBlur(layerBufferB, blurTempB, w, h, parseInt(p.blur), blurMode);
+                if (!usePreTransformBlur) {
+                    if (p.useFindEdges) {
+                        applyEdgeDetection(layerBufferR, blurTempR, w, h);
+                        applyEdgeDetection(layerBufferG, blurTempG, w, h);
+                        applyEdgeDetection(layerBufferB, blurTempB, w, h);
+                    }
+                    if (p.blur > 0) {
+                        let isTiled = (state.global.tileMode && state.global.tileMode !== 'off') || !!p.seamless;
+                        let blurMode = isTiled ? 'wrap' : (p.blurClampEdge ? 'clamp' : 'wrap');
+                        let bType = p.blurType || 'gaussian';
+                        if (bType === 'directional') {
+                            applyDirectionalBlur(layerBufferR, blurTempR, w, h, parseInt(p.blur), p.blurAngle || 0, blurMode);
+                            applyDirectionalBlur(layerBufferG, blurTempG, w, h, parseInt(p.blur), p.blurAngle || 0, blurMode);
+                            applyDirectionalBlur(layerBufferB, blurTempB, w, h, parseInt(p.blur), p.blurAngle || 0, blurMode);
+                        } else if (bType === 'zoom') {
+                            let zcx = p.zoomBlurCenterX !== undefined ? parseFloat(p.zoomBlurCenterX) : 0.5;
+                            let zcy = p.zoomBlurCenterY !== undefined ? parseFloat(p.zoomBlurCenterY) : 0.5;
+                            let zstr = p.zoomBlurStrength !== undefined ? parseFloat(p.zoomBlurStrength) : 100;
+                            applyZoomBlur(layerBufferR, blurTempR, w, h, parseInt(p.blur), zcx, zcy, zstr, blurMode);
+                            applyZoomBlur(layerBufferG, blurTempG, w, h, parseInt(p.blur), zcx, zcy, zstr, blurMode);
+                            applyZoomBlur(layerBufferB, blurTempB, w, h, parseInt(p.blur), zcx, zcy, zstr, blurMode);
+                        } else if (bType === 'box') {
+                            applyBoxBlur(layerBufferR, blurTempR, w, h, parseInt(p.blur), blurMode);
+                            applyBoxBlur(layerBufferG, blurTempG, w, h, parseInt(p.blur), blurMode);
+                            applyBoxBlur(layerBufferB, blurTempB, w, h, parseInt(p.blur), blurMode);
+                        } else {
+                            applyGaussianBlur(layerBufferR, blurTempR, w, h, parseInt(p.blur), blurMode);
+                            applyGaussianBlur(layerBufferG, blurTempG, w, h, parseInt(p.blur), blurMode);
+                            applyGaussianBlur(layerBufferB, blurTempB, w, h, parseInt(p.blur), blurMode);
+                        }
                     }
                 }
 
@@ -6106,9 +6279,10 @@
                 }
             }
 
+            let useGlobalPreTransformBlur = !!(state.global.blur > 0 && state.global.blurWithTransform);
             if(state.global.blur>0) {
                 let isGlobalTiled = (state.global.tileMode && state.global.tileMode !== 'off');
-                let globalBlurMode = isGlobalTiled ? 'wrap' : (state.global.blurClampEdge ? 'clamp' : 'wrap');
+                let globalBlurMode = (useGlobalPreTransformBlur || isGlobalTiled) ? 'wrap' : (state.global.blurClampEdge ? 'clamp' : 'wrap');
                 let gBType = state.global.blurType || 'gaussian';
                 if (gBType === 'directional') {
                     applyDirectionalBlur(blendBufferR, blurTempR, w, h, parseInt(state.global.blur), state.global.blurAngle || 0, globalBlurMode);
@@ -6129,6 +6303,166 @@
                     applyGaussianBlur(blendBufferR, blurTempR, w, h, parseInt(state.global.blur), globalBlurMode);
                     applyGaussianBlur(blendBufferG, blurTempG, w, h, parseInt(state.global.blur), globalBlurMode);
                     applyGaussianBlur(blendBufferB, blurTempB, w, h, parseInt(state.global.blur), globalBlurMode);
+                }
+            }
+
+            if (useGlobalPreTransformBlur) {
+                let realHasGlobalTransform = (gZoom !== 1 || gScaleX !== 1 || gScaleY !== 1 || gRot || gOffX || gOffY || gTileMode !== 'off' || gPerspV || gPerspH);
+                let realActiveGlobalWarps = (state.global.warps || []).filter(w => w && w.type !== 'none' && w.visible !== false);
+                let realHasGlobalWarps = realActiveGlobalWarps.length > 0;
+                let isGlobalWarpFirst = (state.global.warpOrder === 'warp_first');
+
+                if (realHasGlobalTransform || realHasGlobalWarps) {
+                    let tempG1R = getGlobalFloatBuffer('tempG1R', w * h);
+                    let tempG1G = getGlobalFloatBuffer('tempG1G', w * h);
+                    let tempG1B = getGlobalFloatBuffer('tempG1B', w * h);
+                    let grRad = -gRot * Math.PI / 180;
+                    let cosGRot = gRot ? Math.cos(grRad) : 1, sinGRot = gRot ? Math.sin(grRad) : 0;
+
+                    for (let y = 0; y < h; y++) {
+                        let ny0 = y / h;
+                        for (let x = 0; x < w; x++) {
+                            let nx = x / w, ny = ny0;
+
+                            if (isGlobalWarpFirst) {
+                                if (realHasGlobalWarps) {
+                                    for (let wIdx = 0; wIdx < realActiveGlobalWarps.length; wIdx++) {
+                                        let wModifier = realActiveGlobalWarps[wIdx];
+                                        let st = Number(wModifier.strength) / 100;
+                                        let fq = Math.max(0.1, Number(wModifier.freq) || 4);
+                                        let cdx = nx - 0.5, cdy = ny - 0.5;
+                                        let cdist = Math.sqrt(cdx*cdx + cdy*cdy);
+                                        if (wModifier.type === 'vortex') {
+                                            let a = cdist * st * 15;
+                                            nx = 0.5 + cdx*Math.cos(a) - cdy*Math.sin(a);
+                                            ny = 0.5 + cdx*Math.sin(a) + cdy*Math.cos(a);
+                                        } else if (wModifier.type === 'sine') {
+                                            nx += Math.sin(ny * fq * Math.PI) * st * 0.1;
+                                            ny += Math.cos(nx * fq * Math.PI) * st * 0.1;
+                                        } else if (wModifier.type === 'bulge') {
+                                            let scale = 1 + Math.exp(-cdist * fq) * st;
+                                            nx = 0.5 + cdx * scale; ny = 0.5 + cdy * scale;
+                                        } else if (wModifier.type === 'domain_warp') {
+                                            nx += (NoiseCache.get(nx*fq, ny*fq) - 0.5) * st;
+                                            ny += (NoiseCache.get(nx*fq + 100, ny*fq + 100) - 0.5) * st;
+                                        } else if (wModifier.type === 'distortion') {
+                                            nx += Math.sin(cdx * fq * Math.PI) * (st * 0.1);
+                                            ny += Math.cos(cdy * fq * Math.PI) * (st * 0.1);
+                                        }
+                                    }
+                                }
+                                if (realHasGlobalTransform) {
+                                    nx -= 0.5; ny -= 0.5;
+                                    if (gZoom !== 1 || gScaleX !== 1 || gScaleY !== 1) {
+                                        nx /= (gZoom * gScaleX); ny /= (gZoom * gScaleY);
+                                    }
+                                    if (gRot) {
+                                        let grx = nx * cosGRot - ny * sinGRot;
+                                        let gry = nx * sinGRot + ny * cosGRot;
+                                        nx = grx; ny = gry;
+                                    }
+                                    if (gPerspV || gPerspH) {
+                                        let gpv = gPerspV / 200, gph = gPerspH / 200;
+                                        let gpw = Math.max(0.1, 1 + nx * gph + ny * gpv);
+                                        nx /= gpw; ny /= gpw;
+                                    }
+                                    nx -= gOffX; ny -= gOffY;
+                                    if (gTileMode !== 'off') {
+                                        let rx = nx * gRepX + 0.5 + gSeamOffX, ry = ny * gRepY + 0.5 + gSeamOffY;
+                                        if (gTileMode === 'wrap' || gTileMode === 'blend') {
+                                            rx = wrapFold(rx); ry = wrapFold(ry);
+                                        } else if (gTileMode === 'mirror') {
+                                            rx = gMirX ? mirrorFold(rx) : wrapFold(rx);
+                                            ry = gMirY ? mirrorFold(ry) : wrapFold(ry);
+                                        }
+                                        nx = rx - 0.5; ny = ry - 0.5;
+                                    }
+                                    nx += 0.5; ny += 0.5;
+                                }
+                            } else {
+                                if (realHasGlobalTransform) {
+                                    nx -= 0.5; ny -= 0.5;
+                                    if (gZoom !== 1 || gScaleX !== 1 || gScaleY !== 1) {
+                                        nx /= (gZoom * gScaleX); ny /= (gZoom * gScaleY);
+                                    }
+                                    if (gRot) {
+                                        let grx = nx * cosGRot - ny * sinGRot;
+                                        let gry = nx * sinGRot + ny * cosGRot;
+                                        nx = grx; ny = gry;
+                                    }
+                                    if (gPerspV || gPerspH) {
+                                        let gpv = gPerspV / 200, gph = gPerspH / 200;
+                                        let gpw = Math.max(0.1, 1 + nx * gph + ny * gpv);
+                                        nx /= gpw; ny /= gpw;
+                                    }
+                                    nx -= gOffX; ny -= gOffY;
+                                    if (gTileMode !== 'off') {
+                                        let rx = nx * gRepX + 0.5 + gSeamOffX, ry = ny * gRepY + 0.5 + gSeamOffY;
+                                        if (gTileMode === 'wrap' || gTileMode === 'blend') {
+                                            rx = wrapFold(rx); ry = wrapFold(ry);
+                                        } else if (gTileMode === 'mirror') {
+                                            rx = gMirX ? mirrorFold(rx) : wrapFold(rx);
+                                            ry = gMirY ? mirrorFold(ry) : wrapFold(ry);
+                                        }
+                                        nx = rx - 0.5; ny = ry - 0.5;
+                                    }
+                                    nx += 0.5; ny += 0.5;
+                                }
+                                if (realHasGlobalWarps) {
+                                    for (let wIdx = 0; wIdx < realActiveGlobalWarps.length; wIdx++) {
+                                        let wModifier = realActiveGlobalWarps[wIdx];
+                                        let st = Number(wModifier.strength) / 100;
+                                        let fq = Math.max(0.1, Number(wModifier.freq) || 4);
+                                        let cdx = nx - 0.5, cdy = ny - 0.5;
+                                        let cdist = Math.sqrt(cdx*cdx + cdy*cdy);
+                                        if (wModifier.type === 'vortex') {
+                                            let a = cdist * st * 15;
+                                            nx = 0.5 + cdx*Math.cos(a) - cdy*Math.sin(a);
+                                            ny = 0.5 + cdx*Math.sin(a) + cdy*Math.cos(a);
+                                        } else if (wModifier.type === 'sine') {
+                                            nx += Math.sin(ny * fq * Math.PI) * st * 0.1;
+                                            ny += Math.cos(nx * fq * Math.PI) * st * 0.1;
+                                        } else if (wModifier.type === 'bulge') {
+                                            let scale = 1 + Math.exp(-cdist * fq) * st;
+                                            nx = 0.5 + cdx * scale; ny = 0.5 + cdy * scale;
+                                        } else if (wModifier.type === 'domain_warp') {
+                                            nx += (NoiseCache.get(nx*fq, ny*fq) - 0.5) * st;
+                                            ny += (NoiseCache.get(nx*fq + 100, ny*fq + 100) - 0.5) * st;
+                                        } else if (wModifier.type === 'distortion') {
+                                            nx += Math.sin(cdx * fq * Math.PI) * (st * 0.1);
+                                            ny += Math.cos(cdy * fq * Math.PI) * (st * 0.1);
+                                        }
+                                    }
+                                }
+                            }
+
+                            let px, py;
+                            if (state.global.blurClampEdge) {
+                                px = Math.max(0, Math.min(1, nx));
+                                py = Math.max(0, Math.min(1, ny));
+                            } else {
+                                px = (nx % 1.0 + 1.0) % 1.0;
+                                py = (ny % 1.0 + 1.0) % 1.0;
+                            }
+
+                            let sxSample = px * (w - 1);
+                            let sySample = py * (h - 1);
+                            let x0 = Math.floor(sxSample), y0 = Math.floor(sySample);
+                            let x1 = Math.min(w - 1, x0 + 1), y1 = Math.min(h - 1, y0 + 1);
+                            let fx = sxSample - x0, fy = sySample - y0;
+
+                            let idx00 = y0 * w + x0, idx10 = y0 * w + x1;
+                            let idx01 = y1 * w + x0, idx11 = y1 * w + x1;
+
+                            let outIdx = y * w + x;
+                            tempG1R[outIdx] = (1 - fy) * ((1 - fx) * blendBufferR[idx00] + fx * blendBufferR[idx10]) + fy * ((1 - fx) * blendBufferR[idx01] + fx * blendBufferR[idx11]);
+                            tempG1G[outIdx] = (1 - fy) * ((1 - fx) * blendBufferG[idx00] + fx * blendBufferG[idx10]) + fy * ((1 - fx) * blendBufferG[idx01] + fx * blendBufferG[idx11]);
+                            tempG1B[outIdx] = (1 - fy) * ((1 - fx) * blendBufferB[idx00] + fx * blendBufferB[idx10]) + fy * ((1 - fx) * blendBufferB[idx01] + fx * blendBufferB[idx11]);
+                        }
+                    }
+                    blendBufferR.set(tempG1R);
+                    blendBufferG.set(tempG1G);
+                    blendBufferB.set(tempG1B);
                 }
             }
 
@@ -6529,7 +6863,7 @@
         // значення за замовчуванням через || / ?? у renderProps()/evalGenerator()
         // самі, щойно з'являються на екрані для свого типу генератора.
         function freshLayerParams() {
-            return { seamless:false, scale:10, scaleX:10, scaleY:10, lockScale:true, layerScale:1, contrast:1, brightness:1, angle:0, perspectiveV:0, perspectiveH:0, blur:0, blurType:'gaussian', blurAngle:0, blurClampEdge:false, zoomBlurCenterX:0.5, zoomBlurCenterY:0.5, zoomBlurStrength:100,
+            return { seamless:false, scale:10, scaleX:10, scaleY:10, lockScale:true, layerScale:1, contrast:1, brightness:1, angle:0, perspectiveV:0, perspectiveH:0, blur:0, blurType:'gaussian', blurAngle:0, blurClampEdge:false, blurWithTransform:false, zoomBlurCenterX:0.5, zoomBlurCenterY:0.5, zoomBlurStrength:100,
                 dotSize: 0.25, dotSoftness: 0.05, dotGrid: 'square', dotShape: 'circle',
                 pixelGap: 0.0, pixelGapValue: 0.0, pixelGapSoftness: 0.0,
                 pixelGridType: 'standard', pixelShape: 'square', pixelCornerRadius: 0.1,
@@ -6555,7 +6889,7 @@
                 vignetteHighlights: 0,
                 vignetteCenterX: 0.5,
                 vignetteCenterY: 0.5,
-                grain:10, blur:0, blurType:'gaussian', blurAngle:0, blurClampEdge:false, zoomBlurCenterX:0.5, zoomBlurCenterY:0.5, zoomBlurStrength:100,
+                grain:10, blur:0, blurType:'gaussian', blurAngle:0, blurClampEdge:false, blurWithTransform:false, zoomBlurCenterX:0.5, zoomBlurCenterY:0.5, zoomBlurStrength:100,
                 globalZoom:1, globalScaleX:1, globalScaleY:1, globalRotation:0, globalOffsetX:0, globalOffsetY:0,
                 globalPerspectiveV:0, globalPerspectiveH:0,
                 tileMode:'off', tileRepeatX:2, tileRepeatY:2, tileMirrorX:true, tileMirrorY:true,
@@ -8385,7 +8719,11 @@
                     ${createSlider("Центр Y Zoom", "zoomBlurCenterY", 0, 1, 0.01, lp.zoomBlurCenterY !== undefined ? lp.zoomBlurCenterY : 0.5, false, 0.5)}
                     ${createSlider("Сила Zoom (%)", "zoomBlurStrength", 0, 200, 1, lp.zoomBlurStrength !== undefined ? lp.zoomBlurStrength : 100, false, 100)}
                 ` : ''}
-                <div class="property-group" style="margin-top:-6px;">
+                <div class="property-group" style="margin-top:-6px; display:flex; flex-direction:column; gap:6px;">
+                    <label class="checkbox-label" style="font-size:11px; display:flex; align-items:center; gap:6px;" title="Якщо увімкнено, розмиття розраховується до трансформацій і перспективи та деформується разом із шаром">
+                        <input type="checkbox" ${lp.blurWithTransform ? 'checked' : ''} onchange="upd('blurWithTransform', this.checked)">
+                        <span>Розмивати з трансформацією (Blur with Transform)</span>
+                    </label>
                     <label class="checkbox-label" style="font-size:11px; display:flex; align-items:center; gap:6px;">
                         <input type="checkbox" ${lp.blurClampEdge ? 'checked' : ''} onchange="upd('blurClampEdge', this.checked)">
                         <span>Repeat Edge Pixels / Clamp to Edge</span>
@@ -8654,7 +8992,11 @@
                     ${createSlider("Центр Y Zoom", "zoomBlurCenterY", 0, 1, 0.01, g.zoomBlurCenterY !== undefined ? g.zoomBlurCenterY : 0.5, true, 0.5)}
                     ${createSlider("Сила Zoom (%)", "zoomBlurStrength", 0, 200, 1, g.zoomBlurStrength !== undefined ? g.zoomBlurStrength : 100, true, 100)}
                 ` : ''}
-                <div class="property-group" style="margin-top:-6px;">
+                <div class="property-group" style="margin-top:-6px; display:flex; flex-direction:column; gap:6px;">
+                    <label class="checkbox-label" style="font-size:11px; display:flex; align-items:center; gap:6px;" title="Якщо увімкнено, глобальне розмиття розраховується до глобальних трансформацій (перспективи, масштабу, повороту) та підпорядковується їм">
+                        <input type="checkbox" ${g.blurWithTransform ? 'checked' : ''} onchange="state.global.blurWithTransform=this.checked; invalidateCaches(); requestRender(); commitHistorySnapshot();">
+                        <span>Розмивати з трансформацією (Blur with Transform)</span>
+                    </label>
                     <label class="checkbox-label" style="font-size:11px; display:flex; align-items:center; gap:6px;">
                         <input type="checkbox" ${g.blurClampEdge ? 'checked' : ''} onchange="state.global.blurClampEdge=this.checked; invalidateCaches(); requestRender(); commitHistorySnapshot();">
                         <span>Repeat Edge Pixels / Clamp to Edge</span>
