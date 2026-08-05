@@ -747,10 +747,11 @@
                 let freq = 1.0;
                 let ridgePower = p.ridgePower !== undefined ? p.ridgePower : 2.0;
                 let weight = 1.0;
+                let warpX = 0, warpY = 0;
 
                 for (let o = 0; o < octaves; o++) {
-                    let curX = px * freq;
-                    let curY = py * freq;
+                    let curX = (px + warpX) * freq;
+                    let curY = (py + warpY) * freq;
                     let curPx = Math.max(1, Math.round(periodX * freq));
                     let curPy = Math.max(1, Math.round(periodY * freq));
 
@@ -759,22 +760,37 @@
                         rawNoise2D(curX, curY, seed + o * 131, curve);
 
                     if (mode === 'ridged') {
-                        n = 1.0 - Math.abs(n);
-                        n = Math.pow(Math.max(0, n), ridgePower);
-                        total += n * amplitude;
-                    } else if (mode === 'billow') {
-                        n = Math.abs(n) * 2.0 - 1.0;
-                        total += n * amplitude;
-                    } else if (mode === 'turbulence') {
-                        n = Math.abs(n);
-                        total += n * amplitude;
-                    } else if (mode === 'swiss') {
                         let signal = 1.0 - Math.abs(n);
                         signal = Math.pow(Math.max(0, signal), ridgePower);
                         signal *= weight;
                         weight = Math.max(0, Math.min(1, signal * 2.0));
                         total += signal * amplitude;
+                    } else if (mode === 'billow') {
+                        // Billow: Puffy rounded cloud domes (1 - |n|) with sharp crevices
+                        let nOct = 1.0 - Math.abs(n);
+                        total += nOct * amplitude;
+                    } else if (mode === 'turbulence') {
+                        // Turbulence: Broad smooth hills (|n|) with sharp pinched creases
+                        let nOct = Math.abs(n);
+                        total += nOct * amplitude;
+                    } else if (mode === 'swiss') {
+                        // Swiss: Ridged noise with derivative domain warping across octaves
+                        let dX = isSeamless ?
+                            rawPnoise2D(curX + 17.3, curY + 31.7, curPx, curPy, seed + o * 313, curve) :
+                            rawNoise2D(curX + 17.3, curY + 31.7, seed + o * 313, curve);
+                        let dY = isSeamless ?
+                            rawPnoise2D(curX + 71.9, curY + 83.1, curPx, curPy, seed + o * 401, curve) :
+                            rawNoise2D(curX + 71.9, curY + 83.1, seed + o * 401, curve);
+
+                        let signal = Math.pow(Math.max(0, 1.0 - Math.abs(n)), ridgePower);
+                        signal *= weight;
+                        weight = Math.max(0.05, Math.min(1.0, signal * 2.0));
+                        total += signal * amplitude;
+
+                        warpX += dX * amplitude * 0.35;
+                        warpY += dY * amplitude * 0.35;
                     } else {
+                        // Standard fBM: raw signed noise
                         total += n * amplitude;
                     }
 
@@ -785,9 +801,9 @@
 
                 let result = maxAmp > 0 ? total / maxAmp : 0;
 
-                if (mode === 'standard' || mode === 'billow') {
+                if (mode === 'standard') {
                     result = (result + 1.0) * 0.5;
-                } else if (mode === 'turbulence' || mode === 'ridged' || mode === 'swiss') {
+                } else {
                     result = Math.min(1.0, Math.max(0.0, result));
                 }
 
@@ -1179,13 +1195,13 @@
                 } else if (mode === 'billow') {
                     let val = 0, amp = 1, freq = 1, maxAmp = 0;
                     for (let i = 0; i < octaves; i++) {
-                        let n = Math.abs(sampleSample(x * freq, y * freq, seed + i * 37)) * 2 - 1;
+                        let n = 1.0 - Math.abs(sampleSample(x * freq, y * freq, seed + i * 37));
                         val += n * amp;
                         maxAmp += amp;
                         amp *= gain;
                         freq *= lacunarity;
                     }
-                    return Math.max(0, Math.min(1, (val / maxAmp + 1) * 0.5));
+                    return Math.max(0, Math.min(1, val / maxAmp));
                 } else if (mode === 'turbulence') {
                     let val = 0, amp = 1, freq = 1, maxAmp = 0;
                     for (let i = 0; i < octaves; i++) {
@@ -8813,7 +8829,14 @@
                         <button type="button" onclick="upd('perlinMode','ridged'); renderProps();" class="gen-btn ${mode === 'ridged' ? 'active' : ''}">⛰️ Хребти (Ridged)</button>
                         <button type="button" onclick="upd('perlinMode','billow'); renderProps();" class="gen-btn ${mode === 'billow' ? 'active' : ''}">☁️ Хмароподібний (Billow)</button>
                         <button type="button" onclick="upd('perlinMode','turbulence'); renderProps();" class="gen-btn ${mode === 'turbulence' ? 'active' : ''}">🌪️ Турбулентність</button>
-                        <button type="button" onclick="upd('perlinMode','swiss'); renderProps();" class="gen-btn ${mode === 'swiss' ? 'active' : ''}">🧀 Швейцарський (Swiss)</button>
+                        <button type="button" onclick="upd('perlinMode','swiss'); renderProps();" class="gen-btn ${mode === 'swiss' ? 'active' : ''}" style="grid-column: span 2;">🧀 Швейцарський (Swiss)</button>
+                    </div>
+                    <div style="font-size:10px; color:var(--primary-color, #3b82f6); background: rgba(59, 130, 246, 0.08); padding: 6px 8px; border-radius: 4px; margin-top: 6px; line-height: 1.35; border-left: 2px solid var(--primary-color, #3b82f6);">
+                        ${mode === 'standard' ? '<strong>🌊 Стандартний (fBM):</strong> Класичний м\'який фрактальний шум із розмитими переходами між висотами.' : ''}
+                        ${mode === 'ridged' ? '<strong>⛰️ Хребти (Ridged):</strong> Інвертовані інверсні абсолюти з загостренням — створюють чіткі гірські пасма та жили.' : ''}
+                        ${mode === 'billow' ? '<strong>☁️ Хмароподібний (Billow):</strong> Округлі білі куполи хмар/бульбашок із темними заглибленнями між ними.' : ''}
+                        ${mode === 'turbulence' ? '<strong>🌪️ Турбулентність:</strong> Broad яскраві області із темними гострими складками (ефект мармуру / полум\'я).' : ''}
+                        ${mode === 'swiss' ? '<strong>🧀 Швейцарський (Swiss):</strong> Поєднання хребтів із похідною самодеформацією — створює складний еродований рельєф.' : ''}
                     </div>
                 </div>
 
@@ -11791,7 +11814,7 @@
                 } else {
                     lay.params[k] = val;
                     lay.isDirty = true;
-                    if (['seamless', 'useThreshold', 'useLevels', 'useFindEdges', 'usePosterize', 'brushTool', 'gradType', 'spreadMethod', 'sourceMode', 'metric', 'mode', 'lockScale', 'blurClampEdge', 'enableRays', 'enableRings', 'blurType', 'colorMode', 'palettePreset', 'sineMode', 'sineProfile'].includes(k)) {
+                    if (['seamless', 'useThreshold', 'useLevels', 'useFindEdges', 'usePosterize', 'brushTool', 'gradType', 'spreadMethod', 'sourceMode', 'metric', 'mode', 'perlinMode', 'simplexMode', 'perlinCurve', 'lockScale', 'blurClampEdge', 'enableRays', 'enableRings', 'blurType', 'colorMode', 'palettePreset', 'sineMode', 'sineProfile'].includes(k)) {
                         renderProps();
                     }
                     if (String(k).startsWith('brush')) updateBrushPreview();
