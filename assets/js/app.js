@@ -5154,6 +5154,129 @@
             let gForceSoftness = state.global.forceSeamlessSoftness ?? 1;
             let gBlendCurve = state.global.blendCurve || 'smooth';
 
+            function evalRawGeneratorPixel(type, tx0, ty0, sx0, sy0, p, activeCymaticsSources, lay, lutR, lutG, lutB) {
+                let v = 0;
+                if (p.seamless || gForceSeamless) {
+                    let tx00 = tx0 % 1.0; if (tx00 < 0) tx00 += 1.0;
+                    let ty00 = ty0 % 1.0; if (ty00 < 0) ty00 += 1.0;
+                    
+                    let softness = gForceSeamless ? Math.max(0, Math.min(1, gForceSoftness)) : Math.max(0, Math.min(1, p.seamlessSoftness ?? 1));
+                    let curveX = gBlendCurve === 'linear' ? tx00 : Perlin.fade(tx00);
+                    let curveY = gBlendCurve === 'linear' ? ty00 : Perlin.fade(ty00);
+                    let wx = Perlin.lerp(softness, tx00, curveX);
+                    let wy = Perlin.lerp(softness, ty00, curveY);
+
+                    let v00 = evalGenerator(type, tx00, ty00, sx0, sy0, p, activeCymaticsSources, lay);
+                    let totalV = v00 * (1 - wx) * (1 - wy);
+
+                    if (wx > 0.0005) {
+                        let v10 = evalGenerator(type, tx00 - 1, ty00, sx0, sy0, p, activeCymaticsSources, lay);
+                        totalV += v10 * wx * (1 - wy);
+                    }
+                    if (wy > 0.0005) {
+                        let v01 = evalGenerator(type, tx00, ty00 - 1, sx0, sy0, p, activeCymaticsSources, lay);
+                        totalV += v01 * (1 - wx) * wy;
+                    }
+                    if (wx > 0.0005 && wy > 0.0005) {
+                        let v11 = evalGenerator(type, tx00 - 1, ty00 - 1, sx0, sy0, p, activeCymaticsSources, lay);
+                        totalV += v11 * wx * wy;
+                    }
+                    v = totalV;
+                } else {
+                    v = evalGenerator(type, tx0, ty0, sx0, sy0, p, activeCymaticsSources, lay);
+                }
+
+                if(p.brightness!==undefined) v=v*p.brightness;
+                if(p.contrast!==undefined) v=(v-0.5)*p.contrast+0.5;
+                if(p.invert) v=1-v;
+
+                if (p.useLevels) {
+                    let min = (p.levelMin||0)/100, max = (p.levelMax||100)/100;
+                    if (max > min) v = (v - min) / (max - min);
+                }
+                if (p.useThreshold) v = v >= (p.thresholdVal||50)/100 ? 1 : 0;
+                
+                if (p.usePosterize) {
+                    let levels = Math.max(2, p.posterizeLevels || 4);
+                    v = Math.floor(v * levels) / (levels - 1);
+                }
+
+                v = Math.max(0, Math.min(1, v));
+                let lutIdx = (v * 255.99) | 0;
+                if (lutIdx < 0) lutIdx = 0; else if (lutIdx > 255) lutIdx = 255;
+
+                return [lutR[lutIdx], lutG[lutIdx], lutB[lutIdx]];
+            }
+
+            function sampleBlurredGenerator(type, tx, ty, sx, sy, p, activeCymaticsSources, lay, lutR, lutG, lutB, w) {
+                let bVal = parseInt(p.blur || 0);
+                if (bVal <= 0) {
+                    return evalRawGeneratorPixel(type, tx, ty, sx, sy, p, activeCymaticsSources, lay, lutR, lutG, lutB);
+                }
+                let bType = p.blurType || 'gaussian';
+                let rad = (bVal / w);
+
+                let rSum = 0, gSum = 0, bSum = 0, wSum = 0;
+
+                if (bType === 'directional') {
+                    let angRad = ((p.blurAngle || 0) * Math.PI) / 180;
+                    let dirX = Math.cos(angRad) * rad;
+                    let dirY = Math.sin(angRad) * rad;
+                    let offsets = [-1, -0.66, -0.33, 0, 0.33, 0.66, 1];
+                    let weights = [0.05, 0.1, 0.2, 0.3, 0.2, 0.1, 0.05];
+                    for (let k = 0; k < offsets.length; k++) {
+                        let t = offsets[k];
+                        let wt = weights[k];
+                        let pix = evalRawGeneratorPixel(type, tx + dirX * t, ty + dirY * t, sx, sy, p, activeCymaticsSources, lay, lutR, lutG, lutB);
+                        rSum += pix[0] * wt; gSum += pix[1] * wt; bSum += pix[2] * wt;
+                        wSum += wt;
+                    }
+                } else if (bType === 'zoom') {
+                    let zcx = p.zoomBlurCenterX !== undefined ? parseFloat(p.zoomBlurCenterX) : 0.5;
+                    let zcy = p.zoomBlurCenterY !== undefined ? parseFloat(p.zoomBlurCenterY) : 0.5;
+                    let zstr = (p.zoomBlurStrength !== undefined ? parseFloat(p.zoomBlurStrength) : 100) / 100;
+                    let dirX = (tx - zcx) * zstr * rad * 2;
+                    let dirY = (ty - zcy) * zstr * rad * 2;
+                    let offsets = [-1, -0.66, -0.33, 0, 0.33, 0.66, 1];
+                    let weights = [0.05, 0.1, 0.2, 0.3, 0.2, 0.1, 0.05];
+                    for (let k = 0; k < offsets.length; k++) {
+                        let t = offsets[k];
+                        let wt = weights[k];
+                        let pix = evalRawGeneratorPixel(type, tx + dirX * t, ty + dirY * t, sx, sy, p, activeCymaticsSources, lay, lutR, lutG, lutB);
+                        rSum += pix[0] * wt; gSum += pix[1] * wt; bSum += pix[2] * wt;
+                        wSum += wt;
+                    }
+                } else {
+                    let centerPix = evalRawGeneratorPixel(type, tx, ty, sx, sy, p, activeCymaticsSources, lay, lutR, lutG, lutB);
+                    rSum += centerPix[0] * 0.25; gSum += centerPix[1] * 0.25; bSum += centerPix[2] * 0.25;
+                    wSum += 0.25;
+
+                    let offsetsD = [
+                        [rad, 0], [-rad, 0], [0, rad], [0, -rad]
+                    ];
+                    for (let k = 0; k < 4; k++) {
+                        let pix = evalRawGeneratorPixel(type, tx + offsetsD[k][0], ty + offsetsD[k][1], sx, sy, p, activeCymaticsSources, lay, lutR, lutG, lutB);
+                        rSum += pix[0] * 0.125; gSum += pix[1] * 0.125; bSum += pix[2] * 0.125;
+                        wSum += 0.125;
+                    }
+
+                    let diagR = rad * 0.7071;
+                    let offsetsDiag = [
+                        [diagR, diagR], [-diagR, diagR], [diagR, -diagR], [-diagR, -diagR]
+                    ];
+                    for (let k = 0; k < 4; k++) {
+                        let pix = evalRawGeneratorPixel(type, tx + offsetsDiag[k][0], ty + offsetsDiag[k][1], sx, sy, p, activeCymaticsSources, lay, lutR, lutG, lutB);
+                        rSum += pix[0] * 0.0625; gSum += pix[1] * 0.0625; bSum += pix[2] * 0.0625;
+                        wSum += 0.0625;
+                    }
+                }
+
+                if (wSum > 0) {
+                    return [rSum / wSum, gSum / wSum, bSum / wSum];
+                }
+                return evalRawGeneratorPixel(type, tx, ty, sx, sy, p, activeCymaticsSources, lay, lutR, lutG, lutB);
+            }
+
             // --- Шар-маска (Clipping Mask) ---
             let { maskTargetIndex, clippedByMasks } = computeMaskRelationships();
             let pendingRemaining = 0, pendingOp = 1, pendingBlendFn = Blend.normal;
@@ -5234,7 +5357,7 @@
                     let lrRad = -(p.angle || 0) * Math.PI / 180;
                     let cosLRot = p.angle ? Math.cos(lrRad) : 1, sinLRot = p.angle ? Math.sin(lrRad) : 0;
 
-                    if (usePreTransformBlur) {
+                    if (usePreTransformBlur && lay.generatorType === 'paint') {
                         const unwarpedR = getGlobalFloatBuffer('unwarpedR', w * h);
                         const unwarpedG = getGlobalFloatBuffer('unwarpedG', w * h);
                         const unwarpedB = getGlobalFloatBuffer('unwarpedB', w * h);
@@ -5248,94 +5371,38 @@
                                 let ty0 = ny0 + (p.seed || 0) * 0.021;
                                 let sx0 = p.scaleX || 10, sy0 = p.scaleY || 10;
 
-                                if (lay.generatorType === 'paint') {
-                                    let pr = 0, pg = 0, pb = 0;
-                                    if (lay.paintBufferR) {
-                                        let scaleFactorX = (sx0 || 10) / 10;
-                                        let scaleFactorY = (sy0 || 10) / 10;
-                                        let stx = (tx0 - 0.5) * scaleFactorX + 0.5;
-                                        let sty = (ty0 - 0.5) * scaleFactorY + 0.5;
-                                        let px = (stx % 1 + 1) % 1;
-                                        let py = (sty % 1 + 1) % 1;
-                                        let pw = 1024, ph = 1024;
-                                        let x = px * (pw - 1), y = py * (ph - 1);
-                                        let x0 = Math.floor(x), y0 = Math.floor(y);
-                                        let x1 = Math.min(pw - 1, x0 + 1), y1 = Math.min(ph - 1, y0 + 1);
-                                        let fx = x - x0, fy = y - y0;
-                                        
-                                        let r00 = lay.paintBufferR[y0 * pw + x0], r10 = lay.paintBufferR[y0 * pw + x1];
-                                        let r01 = lay.paintBufferR[y1 * pw + x0], r11 = lay.paintBufferR[y1 * pw + x1];
-                                        pr = (1 - fy) * ((1 - fx) * r00 + fx * r10) + fy * ((1 - fx) * r01 + fx * r11);
-
-                                        let g00 = lay.paintBufferG[y0 * pw + x0], g10 = lay.paintBufferG[y0 * pw + x1];
-                                        let g01 = lay.paintBufferG[y1 * pw + x0], g11 = lay.paintBufferG[y1 * pw + x1];
-                                        pg = (1 - fy) * ((1 - fx) * g00 + fx * g10) + fy * ((1 - fx) * g01 + fx * g11);
-
-                                        let b00 = lay.paintBufferB[y0 * pw + x0], b10 = lay.paintBufferB[y0 * pw + x1];
-                                        let b01 = lay.paintBufferB[y1 * pw + x0], b11 = lay.paintBufferB[y1 * pw + x1];
-                                        pb = (1 - fy) * ((1 - fx) * b00 + fx * b10) + fy * ((1 - fx) * b01 + fx * b11);
-                                    }
-                                    if(p.brightness!==undefined) { pr*=p.brightness; pg*=p.brightness; pb*=p.brightness; }
-                                    if(p.contrast!==undefined) { pr=(pr-0.5)*p.contrast+0.5; pg=(pg-0.5)*p.contrast+0.5; pb=(pb-0.5)*p.contrast+0.5; }
-                                    if(p.invert) { pr=1-pr; pg=1-pg; pb=1-pb; }
-                                    unwarpedR[uIdx] = Math.max(0, Math.min(1, pr));
-                                    unwarpedG[uIdx] = Math.max(0, Math.min(1, pg));
-                                    unwarpedB[uIdx] = Math.max(0, Math.min(1, pb));
-                                } else {
-                                    let v = 0;
-                                    if (p.seamless || gForceSeamless) {
-                                        let tx00 = tx0 % 1.0; if (tx00 < 0) tx00 += 1.0;
-                                        let ty00 = ty0 % 1.0; if (ty00 < 0) ty00 += 1.0;
-                                        
-                                        let softness = gForceSeamless ? Math.max(0, Math.min(1, gForceSoftness)) : Math.max(0, Math.min(1, p.seamlessSoftness ?? 1));
-                                        let curveX = gBlendCurve === 'linear' ? tx00 : Perlin.fade(tx00);
-                                        let curveY = gBlendCurve === 'linear' ? ty00 : Perlin.fade(ty00);
-                                        let wx = Perlin.lerp(softness, tx00, curveX);
-                                        let wy = Perlin.lerp(softness, ty00, curveY);
-
-                                        let v00 = evalGenerator(lay.generatorType, tx00, ty00, sx0, sy0, p, activeCymaticsSources, lay);
-                                        let totalV = v00 * (1 - wx) * (1 - wy);
-
-                                        if (wx > 0.0005) {
-                                            let v10 = evalGenerator(lay.generatorType, tx00 - 1, ty00, sx0, sy0, p, activeCymaticsSources, lay);
-                                            totalV += v10 * wx * (1 - wy);
-                                        }
-                                        if (wy > 0.0005) {
-                                            let v01 = evalGenerator(lay.generatorType, tx00, ty00 - 1, sx0, sy0, p, activeCymaticsSources, lay);
-                                            totalV += v01 * (1 - wx) * wy;
-                                        }
-                                        if (wx > 0.0005 && wy > 0.0005) {
-                                            let v11 = evalGenerator(lay.generatorType, tx00 - 1, ty00 - 1, sx0, sy0, p, activeCymaticsSources, lay);
-                                            totalV += v11 * wx * wy;
-                                        }
-                                        v = totalV;
-                                    } else {
-                                        v = evalGenerator(lay.generatorType, tx0, ty0, sx0, sy0, p, activeCymaticsSources, lay);
-                                    }
-
-                                    if(p.brightness!==undefined) v=v*p.brightness;
-                                    if(p.contrast!==undefined) v=(v-0.5)*p.contrast+0.5;
-                                    if(p.invert) v=1-v;
-
-                                    if (p.useLevels) {
-                                        let min = (p.levelMin||0)/100, max = (p.levelMax||100)/100;
-                                        if (max > min) v = (v - min) / (max - min);
-                                    }
-                                    if (p.useThreshold) v = v >= (p.thresholdVal||50)/100 ? 1 : 0;
+                                let pr = 0, pg = 0, pb = 0;
+                                if (lay.paintBufferR) {
+                                    let scaleFactorX = (sx0 || 10) / 10;
+                                    let scaleFactorY = (sy0 || 10) / 10;
+                                    let stx = (tx0 - 0.5) * scaleFactorX + 0.5;
+                                    let sty = (ty0 - 0.5) * scaleFactorY + 0.5;
+                                    let px = (stx % 1 + 1) % 1;
+                                    let py = (sty % 1 + 1) % 1;
+                                    let pw = 1024, ph = 1024;
+                                    let x = px * (pw - 1), y = py * (ph - 1);
+                                    let x0 = Math.floor(x), y0 = Math.floor(y);
+                                    let x1 = Math.min(pw - 1, x0 + 1), y1 = Math.min(ph - 1, y0 + 1);
+                                    let fx = x - x0, fy = y - y0;
                                     
-                                    if (p.usePosterize) {
-                                        let levels = Math.max(2, p.posterizeLevels || 4);
-                                        v = Math.floor(v * levels) / (levels - 1);
-                                    }
+                                    let r00 = lay.paintBufferR[y0 * pw + x0], r10 = lay.paintBufferR[y0 * pw + x1];
+                                    let r01 = lay.paintBufferR[y1 * pw + x0], r11 = lay.paintBufferR[y1 * pw + x1];
+                                    pr = (1 - fy) * ((1 - fx) * r00 + fx * r10) + fy * ((1 - fx) * r01 + fx * r11);
 
-                                    v = Math.max(0, Math.min(1, v));
-                                    let lutIdx = (v * 255.99) | 0;
-                                    if (lutIdx < 0) lutIdx = 0; else if (lutIdx > 255) lutIdx = 255;
+                                    let g00 = lay.paintBufferG[y0 * pw + x0], g10 = lay.paintBufferG[y0 * pw + x1];
+                                    let g01 = lay.paintBufferG[y1 * pw + x0], g11 = lay.paintBufferG[y1 * pw + x1];
+                                    pg = (1 - fy) * ((1 - fx) * g00 + fx * g10) + fy * ((1 - fx) * g01 + fx * g11);
 
-                                    unwarpedR[uIdx] = lutR[lutIdx];
-                                    unwarpedG[uIdx] = lutG[lutIdx];
-                                    unwarpedB[uIdx] = lutB[lutIdx];
+                                    let b00 = lay.paintBufferB[y0 * pw + x0], b10 = lay.paintBufferB[y0 * pw + x1];
+                                    let b01 = lay.paintBufferB[y1 * pw + x0], b11 = lay.paintBufferB[y1 * pw + x1];
+                                    pb = (1 - fy) * ((1 - fx) * b00 + fx * b10) + fy * ((1 - fx) * b01 + fx * b11);
                                 }
+                                if(p.brightness!==undefined) { pr*=p.brightness; pg*=p.brightness; pb*=p.brightness; }
+                                if(p.contrast!==undefined) { pr=(pr-0.5)*p.contrast+0.5; pg=(pg-0.5)*p.contrast+0.5; pb=(pb-0.5)*p.contrast+0.5; }
+                                if(p.invert) { pr=1-pr; pg=1-pg; pb=1-pb; }
+                                unwarpedR[uIdx] = Math.max(0, Math.min(1, pr));
+                                unwarpedG[uIdx] = Math.max(0, Math.min(1, pg));
+                                unwarpedB[uIdx] = Math.max(0, Math.min(1, pb));
                             }
                         }
 
@@ -5888,39 +5955,91 @@
                             let sx=p.scaleX||10, sy=p.scaleY||10;
 
                             if (usePreTransformBlur) {
-                                const unwarpedR = getGlobalFloatBuffer('unwarpedR', w * h);
-                                const unwarpedG = getGlobalFloatBuffer('unwarpedG', w * h);
-                                const unwarpedB = getGlobalFloatBuffer('unwarpedB', w * h);
+                                if (lay.generatorType === 'paint') {
+                                    const unwarpedR = getGlobalFloatBuffer('unwarpedR', w * h);
+                                    const unwarpedG = getGlobalFloatBuffer('unwarpedG', w * h);
+                                    const unwarpedB = getGlobalFloatBuffer('unwarpedB', w * h);
 
-                                let px, py;
-                                if (p.blurClampEdge) {
-                                    px = Math.max(0, Math.min(1, nx));
-                                    py = Math.max(0, Math.min(1, ny));
+                                    let isTiledLayer = (state.global.tileMode && state.global.tileMode !== 'off') || !!p.seamless;
+                                    if (nx >= 0 && nx <= 1 && ny >= 0 && ny <= 1) {
+                                        let px = nx, py = ny;
+                                        let sxSample = px * (w - 1);
+                                        let sySample = py * (h - 1);
+                                        let x0 = Math.floor(sxSample), y0 = Math.floor(sySample);
+                                        let x1 = Math.min(w - 1, x0 + 1), y1 = Math.min(h - 1, y0 + 1);
+                                        let fx = sxSample - x0, fy = sySample - y0;
+
+                                        let idx00 = y0 * w + x0, idx10 = y0 * w + x1;
+                                        let idx01 = y1 * w + x0, idx11 = y1 * w + x1;
+
+                                        let r00 = unwarpedR[idx00], r10 = unwarpedR[idx10];
+                                        let r01 = unwarpedR[idx01], r11 = unwarpedR[idx11];
+                                        targetBufR[idx] = (1 - fy) * ((1 - fx) * r00 + fx * r10) + fy * ((1 - fx) * r01 + fx * r11);
+
+                                        let g00 = unwarpedG[idx00], g10 = unwarpedG[idx10];
+                                        let g01 = unwarpedG[idx01], g11 = unwarpedG[idx11];
+                                        targetBufG[idx] = (1 - fy) * ((1 - fx) * g00 + fx * g10) + fy * ((1 - fx) * g01 + fx * g11);
+
+                                        let b00 = unwarpedB[idx00], b10 = unwarpedB[idx10];
+                                        let b01 = unwarpedB[idx01], b11 = unwarpedB[idx11];
+                                        targetBufB[idx] = (1 - fy) * ((1 - fx) * b00 + fx * b10) + fy * ((1 - fx) * b01 + fx * b11);
+                                    } else if (isTiledLayer) {
+                                        let px = (nx % 1.0 + 1.0) % 1.0;
+                                        let py = (ny % 1.0 + 1.0) % 1.0;
+                                        let sxSample = px * (w - 1);
+                                        let sySample = py * (h - 1);
+                                        let x0 = Math.floor(sxSample), y0 = Math.floor(sySample);
+                                        let x1 = Math.min(w - 1, x0 + 1), y1 = Math.min(h - 1, y0 + 1);
+                                        let fx = sxSample - x0, fy = sySample - y0;
+
+                                        let idx00 = y0 * w + x0, idx10 = y0 * w + x1;
+                                        let idx01 = y1 * w + x0, idx11 = y1 * w + x1;
+
+                                        let r00 = unwarpedR[idx00], r10 = unwarpedR[idx10];
+                                        let r01 = unwarpedR[idx01], r11 = unwarpedR[idx11];
+                                        targetBufR[idx] = (1 - fy) * ((1 - fx) * r00 + fx * r10) + fy * ((1 - fx) * r01 + fx * r11);
+
+                                        let g00 = unwarpedG[idx00], g10 = unwarpedG[idx10];
+                                        let g01 = unwarpedG[idx01], g11 = unwarpedG[idx11];
+                                        targetBufG[idx] = (1 - fy) * ((1 - fx) * g00 + fx * g10) + fy * ((1 - fx) * g01 + fx * g11);
+
+                                        let b00 = unwarpedB[idx00], b10 = unwarpedB[idx10];
+                                        let b01 = unwarpedB[idx01], b11 = unwarpedB[idx11];
+                                        targetBufB[idx] = (1 - fy) * ((1 - fx) * b00 + fx * b10) + fy * ((1 - fx) * b01 + fx * b11);
+                                    } else if (p.blurClampEdge) {
+                                        let px = Math.max(0, Math.min(1, nx));
+                                        let py = Math.max(0, Math.min(1, ny));
+                                        let sxSample = px * (w - 1);
+                                        let sySample = py * (h - 1);
+                                        let x0 = Math.floor(sxSample), y0 = Math.floor(sySample);
+                                        let x1 = Math.min(w - 1, x0 + 1), y1 = Math.min(h - 1, y0 + 1);
+                                        let fx = sxSample - x0, fy = sySample - y0;
+
+                                        let idx00 = y0 * w + x0, idx10 = y0 * w + x1;
+                                        let idx01 = y1 * w + x0, idx11 = y1 * w + x1;
+
+                                        let r00 = unwarpedR[idx00], r10 = unwarpedR[idx10];
+                                        let r01 = unwarpedR[idx01], r11 = unwarpedR[idx11];
+                                        targetBufR[idx] = (1 - fy) * ((1 - fx) * r00 + fx * r10) + fy * ((1 - fx) * r01 + fx * r11);
+
+                                        let g00 = unwarpedG[idx00], g10 = unwarpedG[idx10];
+                                        let g01 = unwarpedG[idx01], g11 = unwarpedG[idx11];
+                                        targetBufG[idx] = (1 - fy) * ((1 - fx) * g00 + fx * g10) + fy * ((1 - fx) * g01 + fx * g11);
+
+                                        let b00 = unwarpedB[idx00], b10 = unwarpedB[idx10];
+                                        let b01 = unwarpedB[idx01], b11 = unwarpedB[idx11];
+                                        targetBufB[idx] = (1 - fy) * ((1 - fx) * b00 + fx * b10) + fy * ((1 - fx) * b01 + fx * b11);
+                                    } else {
+                                        targetBufR[idx] = 0;
+                                        targetBufG[idx] = 0;
+                                        targetBufB[idx] = 0;
+                                    }
                                 } else {
-                                    px = (nx % 1.0 + 1.0) % 1.0;
-                                    py = (ny % 1.0 + 1.0) % 1.0;
+                                    let [pr, pg, pb] = sampleBlurredGenerator(lay.generatorType, tx, ty, sx, sy, p, activeCymaticsSources, lay, lutR, lutG, lutB, w);
+                                    targetBufR[idx] = pr;
+                                    targetBufG[idx] = pg;
+                                    targetBufB[idx] = pb;
                                 }
-
-                                let sxSample = px * (w - 1);
-                                let sySample = py * (h - 1);
-                                let x0 = Math.floor(sxSample), y0 = Math.floor(sySample);
-                                let x1 = Math.min(w - 1, x0 + 1), y1 = Math.min(h - 1, y0 + 1);
-                                let fx = sxSample - x0, fy = sySample - y0;
-
-                                let idx00 = y0 * w + x0, idx10 = y0 * w + x1;
-                                let idx01 = y1 * w + x0, idx11 = y1 * w + x1;
-
-                                let r00 = unwarpedR[idx00], r10 = unwarpedR[idx10];
-                                let r01 = unwarpedR[idx01], r11 = unwarpedR[idx11];
-                                targetBufR[idx] = (1 - fy) * ((1 - fx) * r00 + fx * r10) + fy * ((1 - fx) * r01 + fx * r11);
-
-                                let g00 = unwarpedG[idx00], g10 = unwarpedG[idx10];
-                                let g01 = unwarpedG[idx01], g11 = unwarpedG[idx11];
-                                targetBufG[idx] = (1 - fy) * ((1 - fx) * g00 + fx * g10) + fy * ((1 - fx) * g01 + fx * g11);
-
-                                let b00 = unwarpedB[idx00], b10 = unwarpedB[idx10];
-                                let b01 = unwarpedB[idx01], b11 = unwarpedB[idx11];
-                                targetBufB[idx] = (1 - fy) * ((1 - fx) * b00 + fx * b10) + fy * ((1 - fx) * b01 + fx * b11);
                             } else if (lay.generatorType === 'paint') {
                                 let pr = 0, pg = 0, pb = 0;
                                 if (lay.paintBufferR) {
@@ -6436,28 +6555,58 @@
                                 }
                             }
 
-                            let px, py;
-                            if (state.global.blurClampEdge) {
-                                px = Math.max(0, Math.min(1, nx));
-                                py = Math.max(0, Math.min(1, ny));
-                            } else {
-                                px = (nx % 1.0 + 1.0) % 1.0;
-                                py = (ny % 1.0 + 1.0) % 1.0;
-                            }
-
-                            let sxSample = px * (w - 1);
-                            let sySample = py * (h - 1);
-                            let x0 = Math.floor(sxSample), y0 = Math.floor(sySample);
-                            let x1 = Math.min(w - 1, x0 + 1), y1 = Math.min(h - 1, y0 + 1);
-                            let fx = sxSample - x0, fy = sySample - y0;
-
-                            let idx00 = y0 * w + x0, idx10 = y0 * w + x1;
-                            let idx01 = y1 * w + x0, idx11 = y1 * w + x1;
-
+                            let isGlobalTiled = (gTileMode !== 'off');
                             let outIdx = y * w + x;
-                            tempG1R[outIdx] = (1 - fy) * ((1 - fx) * blendBufferR[idx00] + fx * blendBufferR[idx10]) + fy * ((1 - fx) * blendBufferR[idx01] + fx * blendBufferR[idx11]);
-                            tempG1G[outIdx] = (1 - fy) * ((1 - fx) * blendBufferG[idx00] + fx * blendBufferG[idx10]) + fy * ((1 - fx) * blendBufferG[idx01] + fx * blendBufferG[idx11]);
-                            tempG1B[outIdx] = (1 - fy) * ((1 - fx) * blendBufferB[idx00] + fx * blendBufferB[idx10]) + fy * ((1 - fx) * blendBufferB[idx01] + fx * blendBufferB[idx11]);
+
+                            if (nx >= 0 && nx <= 1 && ny >= 0 && ny <= 1) {
+                                let px = nx, py = ny;
+                                let sxSample = px * (w - 1);
+                                let sySample = py * (h - 1);
+                                let x0 = Math.floor(sxSample), y0 = Math.floor(sySample);
+                                let x1 = Math.min(w - 1, x0 + 1), y1 = Math.min(h - 1, y0 + 1);
+                                let fx = sxSample - x0, fy = sySample - y0;
+
+                                let idx00 = y0 * w + x0, idx10 = y0 * w + x1;
+                                let idx01 = y1 * w + x0, idx11 = y1 * w + x1;
+
+                                tempG1R[outIdx] = (1 - fy) * ((1 - fx) * blendBufferR[idx00] + fx * blendBufferR[idx10]) + fy * ((1 - fx) * blendBufferR[idx01] + fx * blendBufferR[idx11]);
+                                tempG1G[outIdx] = (1 - fy) * ((1 - fx) * blendBufferG[idx00] + fx * blendBufferG[idx10]) + fy * ((1 - fx) * blendBufferG[idx01] + fx * blendBufferG[idx11]);
+                                tempG1B[outIdx] = (1 - fy) * ((1 - fx) * blendBufferB[idx00] + fx * blendBufferB[idx10]) + fy * ((1 - fx) * blendBufferB[idx01] + fx * blendBufferB[idx11]);
+                            } else if (isGlobalTiled) {
+                                let px = (nx % 1.0 + 1.0) % 1.0;
+                                let py = (ny % 1.0 + 1.0) % 1.0;
+                                let sxSample = px * (w - 1);
+                                let sySample = py * (h - 1);
+                                let x0 = Math.floor(sxSample), y0 = Math.floor(sySample);
+                                let x1 = Math.min(w - 1, x0 + 1), y1 = Math.min(h - 1, y0 + 1);
+                                let fx = sxSample - x0, fy = sySample - y0;
+
+                                let idx00 = y0 * w + x0, idx10 = y0 * w + x1;
+                                let idx01 = y1 * w + x0, idx11 = y1 * w + x1;
+
+                                tempG1R[outIdx] = (1 - fy) * ((1 - fx) * blendBufferR[idx00] + fx * blendBufferR[idx10]) + fy * ((1 - fx) * blendBufferR[idx01] + fx * blendBufferR[idx11]);
+                                tempG1G[outIdx] = (1 - fy) * ((1 - fx) * blendBufferG[idx00] + fx * blendBufferG[idx10]) + fy * ((1 - fx) * blendBufferG[idx01] + fx * blendBufferG[idx11]);
+                                tempG1B[outIdx] = (1 - fy) * ((1 - fx) * blendBufferB[idx00] + fx * blendBufferB[idx10]) + fy * ((1 - fx) * blendBufferB[idx01] + fx * blendBufferB[idx11]);
+                            } else if (state.global.blurClampEdge) {
+                                let px = Math.max(0, Math.min(1, nx));
+                                let py = Math.max(0, Math.min(1, ny));
+                                let sxSample = px * (w - 1);
+                                let sySample = py * (h - 1);
+                                let x0 = Math.floor(sxSample), y0 = Math.floor(sySample);
+                                let x1 = Math.min(w - 1, x0 + 1), y1 = Math.min(h - 1, y0 + 1);
+                                let fx = sxSample - x0, fy = sySample - y0;
+
+                                let idx00 = y0 * w + x0, idx10 = y0 * w + x1;
+                                let idx01 = y1 * w + x0, idx11 = y1 * w + x1;
+
+                                tempG1R[outIdx] = (1 - fy) * ((1 - fx) * blendBufferR[idx00] + fx * blendBufferR[idx10]) + fy * ((1 - fx) * blendBufferR[idx01] + fx * blendBufferR[idx11]);
+                                tempG1G[outIdx] = (1 - fy) * ((1 - fx) * blendBufferG[idx00] + fx * blendBufferG[idx10]) + fy * ((1 - fx) * blendBufferG[idx01] + fx * blendBufferG[idx11]);
+                                tempG1B[outIdx] = (1 - fy) * ((1 - fx) * blendBufferB[idx00] + fx * blendBufferB[idx10]) + fy * ((1 - fx) * blendBufferB[idx01] + fx * blendBufferB[idx11]);
+                            } else {
+                                tempG1R[outIdx] = 0;
+                                tempG1G[outIdx] = 0;
+                                tempG1B[outIdx] = 0;
+                            }
                         }
                     }
                     blendBufferR.set(tempG1R);
@@ -8720,9 +8869,9 @@
                     ${createSlider("Сила Zoom (%)", "zoomBlurStrength", 0, 200, 1, lp.zoomBlurStrength !== undefined ? lp.zoomBlurStrength : 100, false, 100)}
                 ` : ''}
                 <div class="property-group" style="margin-top:-6px; display:flex; flex-direction:column; gap:6px;">
-                    <label class="checkbox-label" style="font-size:11px; display:flex; align-items:center; gap:6px;" title="Якщо увімкнено, розмиття розраховується до трансформацій і перспективи та деформується разом із шаром">
+                    <label class="checkbox-label" style="font-size:11px; display:flex; align-items:center; gap:6px;" title="Якщо увімкнено, розмиття є частиною генерування алгоритму і трансформується/масштабується разом із шаром">
                         <input type="checkbox" ${lp.blurWithTransform ? 'checked' : ''} onchange="upd('blurWithTransform', this.checked)">
-                        <span>Розмивати з трансформацією (Blur with Transform)</span>
+                        <span>Трансформувати з розмиванням (Transform with Blur)</span>
                     </label>
                     <label class="checkbox-label" style="font-size:11px; display:flex; align-items:center; gap:6px;">
                         <input type="checkbox" ${lp.blurClampEdge ? 'checked' : ''} onchange="upd('blurClampEdge', this.checked)">
@@ -8993,9 +9142,9 @@
                     ${createSlider("Сила Zoom (%)", "zoomBlurStrength", 0, 200, 1, g.zoomBlurStrength !== undefined ? g.zoomBlurStrength : 100, true, 100)}
                 ` : ''}
                 <div class="property-group" style="margin-top:-6px; display:flex; flex-direction:column; gap:6px;">
-                    <label class="checkbox-label" style="font-size:11px; display:flex; align-items:center; gap:6px;" title="Якщо увімкнено, глобальне розмиття розраховується до глобальних трансформацій (перспективи, масштабу, повороту) та підпорядковується їм">
+                    <label class="checkbox-label" style="font-size:11px; display:flex; align-items:center; gap:6px;" title="Якщо увімкнено, глобальне розмиття трансформується/масштабується разом із усіма глобальними трансформаціями">
                         <input type="checkbox" ${g.blurWithTransform ? 'checked' : ''} onchange="state.global.blurWithTransform=this.checked; invalidateCaches(); requestRender(); commitHistorySnapshot();">
-                        <span>Розмивати з трансформацією (Blur with Transform)</span>
+                        <span>Трансформувати з розмиванням (Transform with Blur)</span>
                     </label>
                     <label class="checkbox-label" style="font-size:11px; display:flex; align-items:center; gap:6px;">
                         <input type="checkbox" ${g.blurClampEdge ? 'checked' : ''} onchange="state.global.blurClampEdge=this.checked; invalidateCaches(); requestRender(); commitHistorySnapshot();">
