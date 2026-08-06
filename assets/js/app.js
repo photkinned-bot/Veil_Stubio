@@ -3988,25 +3988,37 @@
                 effectiveMode = mode ? 'clamp' : 'wrap';
             }
 
+            let cStr = Math.max(0, Math.min(100, cometOptions.blurComet || 0)) / 100;
+
+            if (cStr <= 0 && scaledRad > 16) {
+                let halfRad = scaledRad * 0.5;
+                applySingleDirectionalPass(buf, tmp, w, h, halfRad, angle, effectiveMode, 17, {});
+                applySingleDirectionalPass(tmp, buf, w, h, halfRad, angle, effectiveMode, 17, {});
+                return;
+            }
+
+            applySingleDirectionalPass(buf, tmp, w, h, scaledRad, angle, effectiveMode, 21, cometOptions);
+            for (let i = 0; i < w * h; i++) buf[i] = tmp[i];
+        }
+
+        function applySingleDirectionalPass(srcBuf, dstBuf, w, h, rad, angle, mode, maxSteps = 21, cometOptions = {}) {
             let radAngle = (angle || 0) * Math.PI / 180;
             let dirX = Math.cos(radAngle);
             let dirY = Math.sin(radAngle);
-
-            let kSize = scaledRad;
             let cStr = Math.max(0, Math.min(100, cometOptions.blurComet || 0)) / 100;
 
             let kernelSamples = [];
             let totalWeight = 0;
 
             if (cStr <= 0) {
-                let steps = Math.max(9, Math.min(301, (kSize | 0) * 2 + 1));
+                let steps = maxSteps;
                 if (steps % 2 === 0) steps += 1;
                 let half = (steps - 1) / 2;
-                let stepLen = kSize / half;
+                let stepLen = rad / half;
                 for (let s = -half; s <= half; s++) {
                     let ox = s * stepLen * dirX;
                     let oy = s * stepLen * dirY;
-                    let wt = Math.exp(-0.5 * Math.pow((s / half) * 2, 2));
+                    let wt = Math.exp(-0.5 * Math.pow((s / half) * 1.8, 2));
                     kernelSamples.push({ ox, oy, w: wt });
                     totalWeight += wt;
                 }
@@ -4019,15 +4031,15 @@
                 let perpX = -dirY;
                 let perpY = dirX;
 
-                let tailSteps = Math.max(8, Math.min(150, Math.round(kSize * (1 + 0.3 * cStr)) | 1));
-                let headSteps = Math.max(4, Math.min(50, Math.round(kSize * 0.25 * headSize * cStr) | 1));
+                let tailSteps = Math.max(8, Math.min(21, Math.round(rad * 0.4) | 1));
+                let headSteps = Math.max(3, Math.min(7, Math.round(rad * 0.15 * headSize * cStr) | 1));
 
                 for (let i = 0; i <= tailSteps; i++) {
                     let t = i / tailSteps;
-                    let sLong = asymSign * t * kSize * (1 + 0.3 * cStr);
+                    let sLong = asymSign * t * rad * (1 + 0.3 * cStr);
                     let decayPow = 0.5 + tailDecay * 1.5;
                     let wtLong = Math.pow(1 - t, decayPow);
-                    let bulbRadius = kSize * 0.35 * cStr * bulbWidth * headSize * Math.sqrt(Math.max(0, 1 - t * 0.85));
+                    let bulbRadius = rad * 0.35 * cStr * bulbWidth * headSize * Math.sqrt(Math.max(0, 1 - t * 0.85));
 
                     let ox = sLong * dirX;
                     let oy = sLong * dirY;
@@ -4035,8 +4047,8 @@
                     totalWeight += wtLong;
 
                     if (bulbRadius > 0.5) {
-                        let crossSubSteps = Math.max(1, Math.min(6, Math.round(bulbRadius * 0.8)));
-                        let wtCross = (wtLong * 0.6) / crossSubSteps;
+                        let crossSubSteps = Math.max(1, Math.min(2, Math.round(bulbRadius * 0.3)));
+                        let wtCross = (wtLong * 0.5) / crossSubSteps;
                         for (let b = 1; b <= crossSubSteps; b++) {
                             let bOff = bulbRadius * (b / crossSubSteps);
                             kernelSamples.push({ ox: ox + perpX * bOff, oy: oy + perpY * bOff, w: wtCross });
@@ -4048,10 +4060,10 @@
 
                 for (let i = 1; i <= headSteps; i++) {
                     let hFrac = i / headSteps;
-                    let sLong = -asymSign * hFrac * kSize * 0.25 * headSize * cStr;
+                    let sLong = -asymSign * hFrac * rad * 0.25 * headSize * cStr;
                     let headShape = Math.sqrt(Math.max(0, 1 - hFrac * hFrac));
                     let wtLong = headShape;
-                    let bulbRadius = kSize * 0.35 * cStr * bulbWidth * headSize * headShape;
+                    let bulbRadius = rad * 0.35 * cStr * bulbWidth * headSize * headShape;
 
                     let ox = sLong * dirX;
                     let oy = sLong * dirY;
@@ -4059,8 +4071,8 @@
                     totalWeight += wtLong;
 
                     if (bulbRadius > 0.5) {
-                        let crossSubSteps = Math.max(1, Math.min(6, Math.round(bulbRadius * 0.8)));
-                        let wtCross = (wtLong * 0.6) / crossSubSteps;
+                        let crossSubSteps = Math.max(1, Math.min(2, Math.round(bulbRadius * 0.3)));
+                        let wtCross = (wtLong * 0.5) / crossSubSteps;
                         for (let b = 1; b <= crossSubSteps; b++) {
                             let bOff = bulbRadius * (b / crossSubSteps);
                             kernelSamples.push({ ox: ox + perpX * bOff, oy: oy + perpY * bOff, w: wtCross });
@@ -4082,7 +4094,7 @@
                 smpW[k] = kernelSamples[k].w * invTotalWeight;
             }
 
-            let isClamp = effectiveMode === 'clamp';
+            let isClamp = mode === 'clamp';
 
             for (let y = 0; y < h; y++) {
                 let rowOffset = y * w;
@@ -4108,20 +4120,16 @@
                             y1 = (y1 % h + h) % h;
                         }
 
-                        let v00 = buf[y0 * w + x0];
-                        let v10 = buf[y0 * w + x1];
-                        let v01 = buf[y1 * w + x0];
-                        let v11 = buf[y1 * w + x1];
+                        let v00 = srcBuf[y0 * w + x0];
+                        let v10 = srcBuf[y0 * w + x1];
+                        let v01 = srcBuf[y1 * w + x0];
+                        let v11 = srcBuf[y1 * w + x1];
 
                         let val = (1 - fx) * (1 - fy) * v00 + fx * (1 - fy) * v10 + (1 - fx) * fy * v01 + fx * fy * v11;
                         sum += val * smpW[k];
                     }
-                    tmp[rowOffset + x] = sum;
+                    dstBuf[rowOffset + x] = sum;
                 }
-            }
-
-            for (let i = 0; i < w * h; i++) {
-                buf[i] = tmp[i];
             }
         }
 
@@ -5848,8 +5856,8 @@
                         let perpX = -dirY;
                         let perpY = dirX;
 
-                        let tailSteps = Math.max(8, Math.min(30, Math.round(bVal * 0.5) | 1));
-                        let headSteps = Math.max(3, Math.min(12, Math.round(bVal * 0.15 * headSize * cStr) | 1));
+                        let tailSteps = Math.max(6, Math.min(17, Math.round(bVal * 0.3) | 1));
+                        let headSteps = Math.max(2, Math.min(5, Math.round(bVal * 0.1 * headSize * cStr) | 1));
 
                         for (let i = 0; i <= tailSteps; i++) {
                             let t = i / tailSteps;
@@ -5895,12 +5903,12 @@
                             }
                         }
                     } else {
-                        let numSteps = Math.max(9, Math.min(61, Math.round(bVal * 0.8) | 1));
+                        let numSteps = Math.max(9, Math.min(21, Math.round(bVal * 0.4) | 1));
                         if (numSteps % 2 === 0) numSteps += 1;
                         let halfSteps = (numSteps - 1) / 2;
                         for (let k = -halfSteps; k <= halfSteps; k++) {
                             let t = k / halfSteps;
-                            let wt = Math.exp(-2.0 * t * t);
+                            let wt = Math.exp(-1.8 * t * t);
                             let pix = evalRawGeneratorPixel(type, tx + dirX * t, ty + dirY * t, sx, sy, p, activeCymaticsSources, lay, lutR, lutG, lutB);
                             rSum += pix[0] * wt; gSum += pix[1] * wt; bSum += pix[2] * wt;
                             wSum += wt;
