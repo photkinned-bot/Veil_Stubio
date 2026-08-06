@@ -96,7 +96,8 @@ export class CanvasProcessingEngine {
     let totalWeight = 0;
 
     if (cStr <= 0) {
-      const steps = Math.min(17, Math.max(5, (r | 0) * 2 + 1));
+      let steps = Math.max(9, Math.min(301, (r | 0) * 2 + 1));
+      if (steps % 2 === 0) steps += 1;
       const half = (steps - 1) / 2;
       const stepLen = r / half;
       for (let s = -half; s <= half; s++) {
@@ -115,8 +116,8 @@ export class CanvasProcessingEngine {
       const perpX = -dirY;
       const perpY = dirX;
 
-      const tailSteps = Math.min(10, Math.max(5, Math.round(r * 0.4) | 1));
-      const headSteps = Math.min(4, Math.max(2, Math.round(r * 0.15 * headSize * cStr) | 1));
+      const tailSteps = Math.max(8, Math.min(150, Math.round(r * (1 + 0.3 * cStr)) | 1));
+      const headSteps = Math.max(4, Math.min(50, Math.round(r * 0.25 * headSize * cStr) | 1));
 
       for (let i = 0; i <= tailSteps; i++) {
         const t = i / tailSteps;
@@ -131,10 +132,14 @@ export class CanvasProcessingEngine {
         totalWeight += wtLong;
 
         if (bulbRadius > 0.5) {
-          const wtCross = wtLong * 0.6;
-          kernelSamples.push({ ox: ox + perpX * bulbRadius, oy: oy + perpY * bulbRadius, w: wtCross });
-          kernelSamples.push({ ox: ox - perpX * bulbRadius, oy: oy - perpY * bulbRadius, w: wtCross });
-          totalWeight += wtCross * 2;
+          const crossSubSteps = Math.max(1, Math.min(6, Math.round(bulbRadius * 0.8)));
+          const wtCross = (wtLong * 0.6) / crossSubSteps;
+          for (let b = 1; b <= crossSubSteps; b++) {
+            const bOff = bulbRadius * (b / crossSubSteps);
+            kernelSamples.push({ ox: ox + perpX * bOff, oy: oy + perpY * bOff, w: wtCross });
+            kernelSamples.push({ ox: ox - perpX * bOff, oy: oy - perpY * bOff, w: wtCross });
+            totalWeight += wtCross * 2;
+          }
         }
       }
 
@@ -151,10 +156,14 @@ export class CanvasProcessingEngine {
         totalWeight += wtLong;
 
         if (bulbRadius > 0.5) {
-          const wtCross = wtLong * 0.6;
-          kernelSamples.push({ ox: ox + perpX * bulbRadius, oy: oy + perpY * bulbRadius, w: wtCross });
-          kernelSamples.push({ ox: ox - perpX * bulbRadius, oy: oy - perpY * bulbRadius, w: wtCross });
-          totalWeight += wtCross * 2;
+          const crossSubSteps = Math.max(1, Math.min(6, Math.round(bulbRadius * 0.8)));
+          const wtCross = (wtLong * 0.6) / crossSubSteps;
+          for (let b = 1; b <= crossSubSteps; b++) {
+            const bOff = bulbRadius * (b / crossSubSteps);
+            kernelSamples.push({ ox: ox + perpX * bOff, oy: oy + perpY * bOff, w: wtCross });
+            kernelSamples.push({ ox: ox - perpX * bOff, oy: oy - perpY * bOff, w: wtCross });
+            totalWeight += wtCross * 2;
+          }
         }
       }
     }
@@ -210,7 +219,7 @@ export class CanvasProcessingEngine {
     const str = strength !== undefined ? strength : 1.0;
     const factor = (radius / 100) * str * 0.5;
 
-    let steps = Math.max(7, Math.min(31, Math.round((radius * str * (width / 512)) * 0.6) | 1));
+    let steps = Math.max(9, Math.min(121, Math.round((radius * str * (width / 512)) * 1.5) | 1));
     if (steps % 2 === 0) steps += 1;
     const halfSteps = (steps - 1) / 2;
     const invSteps = 1 / steps;

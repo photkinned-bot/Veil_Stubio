@@ -3999,7 +3999,8 @@
             let totalWeight = 0;
 
             if (cStr <= 0) {
-                let steps = Math.min(17, Math.max(5, (kSize | 0) * 2 + 1));
+                let steps = Math.max(9, Math.min(301, (kSize | 0) * 2 + 1));
+                if (steps % 2 === 0) steps += 1;
                 let half = (steps - 1) / 2;
                 let stepLen = kSize / half;
                 for (let s = -half; s <= half; s++) {
@@ -4018,8 +4019,8 @@
                 let perpX = -dirY;
                 let perpY = dirX;
 
-                let tailSteps = Math.min(10, Math.max(5, Math.round(kSize * 0.4) | 1));
-                let headSteps = Math.min(4, Math.max(2, Math.round(kSize * 0.15 * headSize * cStr) | 1));
+                let tailSteps = Math.max(8, Math.min(150, Math.round(kSize * (1 + 0.3 * cStr)) | 1));
+                let headSteps = Math.max(4, Math.min(50, Math.round(kSize * 0.25 * headSize * cStr) | 1));
 
                 for (let i = 0; i <= tailSteps; i++) {
                     let t = i / tailSteps;
@@ -4034,10 +4035,14 @@
                     totalWeight += wtLong;
 
                     if (bulbRadius > 0.5) {
-                        let wtCross = wtLong * 0.6;
-                        kernelSamples.push({ ox: ox + perpX * bulbRadius, oy: oy + perpY * bulbRadius, w: wtCross });
-                        kernelSamples.push({ ox: ox - perpX * bulbRadius, oy: oy - perpY * bulbRadius, w: wtCross });
-                        totalWeight += wtCross * 2;
+                        let crossSubSteps = Math.max(1, Math.min(6, Math.round(bulbRadius * 0.8)));
+                        let wtCross = (wtLong * 0.6) / crossSubSteps;
+                        for (let b = 1; b <= crossSubSteps; b++) {
+                            let bOff = bulbRadius * (b / crossSubSteps);
+                            kernelSamples.push({ ox: ox + perpX * bOff, oy: oy + perpY * bOff, w: wtCross });
+                            kernelSamples.push({ ox: ox - perpX * bOff, oy: oy - perpY * bOff, w: wtCross });
+                            totalWeight += wtCross * 2;
+                        }
                     }
                 }
 
@@ -4054,10 +4059,14 @@
                     totalWeight += wtLong;
 
                     if (bulbRadius > 0.5) {
-                        let wtCross = wtLong * 0.6;
-                        kernelSamples.push({ ox: ox + perpX * bulbRadius, oy: oy + perpY * bulbRadius, w: wtCross });
-                        kernelSamples.push({ ox: ox - perpX * bulbRadius, oy: oy - perpY * bulbRadius, w: wtCross });
-                        totalWeight += wtCross * 2;
+                        let crossSubSteps = Math.max(1, Math.min(6, Math.round(bulbRadius * 0.8)));
+                        let wtCross = (wtLong * 0.6) / crossSubSteps;
+                        for (let b = 1; b <= crossSubSteps; b++) {
+                            let bOff = bulbRadius * (b / crossSubSteps);
+                            kernelSamples.push({ ox: ox + perpX * bOff, oy: oy + perpY * bOff, w: wtCross });
+                            kernelSamples.push({ ox: ox - perpX * bOff, oy: oy - perpY * bOff, w: wtCross });
+                            totalWeight += wtCross * 2;
+                        }
                     }
                 }
             }
@@ -4128,7 +4137,7 @@
             let str = (strength !== undefined ? strength : 100) / 100;
             let factor = (rad / 100) * str * 0.5;
 
-            let steps = Math.max(7, Math.min(31, Math.round((rad * str * (w / 512)) * 0.6) | 1));
+            let steps = Math.max(9, Math.min(121, Math.round((rad * str * (w / 512)) * 1.5) | 1));
             if (steps % 2 === 0) steps += 1;
             let halfSteps = (steps - 1) / 2;
             let invSteps = 1 / steps;
@@ -5839,8 +5848,8 @@
                         let perpX = -dirY;
                         let perpY = dirX;
 
-                        let tailSteps = 6;
-                        let headSteps = 2;
+                        let tailSteps = Math.max(8, Math.min(30, Math.round(bVal * 0.5) | 1));
+                        let headSteps = Math.max(3, Math.min(12, Math.round(bVal * 0.15 * headSize * cStr) | 1));
 
                         for (let i = 0; i <= tailSteps; i++) {
                             let t = i / tailSteps;
@@ -5886,7 +5895,7 @@
                             }
                         }
                     } else {
-                        let numSteps = Math.max(5, Math.min(13, Math.round(bVal * 0.6) | 1));
+                        let numSteps = Math.max(9, Math.min(61, Math.round(bVal * 0.8) | 1));
                         if (numSteps % 2 === 0) numSteps += 1;
                         let halfSteps = (numSteps - 1) / 2;
                         for (let k = -halfSteps; k <= halfSteps; k++) {
