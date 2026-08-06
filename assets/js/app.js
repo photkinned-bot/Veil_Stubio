@@ -10444,6 +10444,7 @@
             globalBlockContents.fx = `
                 ${createSlider("Контраст", "contrast", 0.5, 2, 0.05, g.contrast, true, 1)}
                 ${createSlider("Гамма", "gamma", 0.2, 3, 0.05, g.gamma, true, 1)}
+                ${renderCurveWidgetHTML(true)}
                 
                 <div style="background: rgba(255,255,255,0.03); border: 1px solid var(--border-color, #27272a); border-radius: 8px; padding: 10px; margin: 10px 0;">
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
@@ -10549,7 +10550,6 @@
                         <span>Інверсія всіх кольорів (Invert All)</span>
                     </label>
                 </div>
-                ${renderCurveWidgetHTML(true)}
             `;
 
             let blockMeta = {
