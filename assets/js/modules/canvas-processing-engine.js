@@ -9,6 +9,132 @@ export class CanvasProcessingEngine {
   /**
    * Helper: Convert ImageData to grayscale float array [0..1]
    */
+  static buildCurveLUT(points) {
+    if (!points || !Array.isArray(points) || points.length < 2) {
+      return null;
+    }
+    const sorted = points.slice().sort((a, b) => a.x - b.x);
+
+    const cleanPts = [sorted[0]];
+    for (let i = 1; i < sorted.length; i++) {
+      if (Math.abs(sorted[i].x - cleanPts[cleanPts.length - 1].x) > 0.0001) {
+        cleanPts.push(sorted[i]);
+      }
+    }
+    if (cleanPts.length < 2) return null;
+
+    if (cleanPts.length === 2 &&
+        Math.abs(cleanPts[0].x - 0) < 0.001 && Math.abs(cleanPts[0].y - 0) < 0.001 &&
+        Math.abs(cleanPts[1].x - 1) < 0.001 && Math.abs(cleanPts[1].y - 1) < 0.001) {
+      return null;
+    }
+
+    const n = cleanPts.length;
+    const x = new Float32Array(n);
+    const y = new Float32Array(n);
+    for (let i = 0; i < n; i++) {
+      x[i] = Math.max(0, Math.min(1, cleanPts[i].x));
+      y[i] = Math.max(0, Math.min(1, cleanPts[i].y));
+    }
+
+    const m = new Float32Array(n - 1);
+    for (let i = 0; i < n - 1; i++) {
+      let dx = x[i + 1] - x[i];
+      m[i] = dx > 0 ? (y[i + 1] - y[i]) / dx : 0;
+    }
+
+    const d = new Float32Array(n);
+    d[0] = m[0];
+    d[n - 1] = m[n - 2];
+    for (let i = 1; i < n - 1; i++) {
+      if (m[i - 1] * m[i] <= 0) {
+        d[i] = 0;
+      } else {
+        d[i] = (m[i - 1] + m[i]) * 0.5;
+      }
+    }
+
+    for (let i = 0; i < n - 1; i++) {
+      if (m[i] === 0) {
+        d[i] = 0;
+        d[i + 1] = 0;
+      } else {
+        let alpha = d[i] / m[i];
+        let beta = d[i + 1] / m[i];
+        let sumSq = alpha * alpha + beta * beta;
+        if (sumSq > 9) {
+          let tau = 3 / Math.sqrt(sumSq);
+          d[i] = tau * alpha * m[i];
+          d[i + 1] = tau * beta * m[i];
+        }
+      }
+    }
+
+    const lut = new Float32Array(256);
+    for (let k = 0; k < 256; k++) {
+      let vx = k / 255;
+      if (vx <= x[0]) {
+        lut[k] = Math.max(0, Math.min(1, y[0]));
+        continue;
+      }
+      if (vx >= x[n - 1]) {
+        lut[k] = Math.max(0, Math.min(1, y[n - 1]));
+        continue;
+      }
+
+      let i = 0;
+      while (i < n - 2 && x[i + 1] < vx) {
+        i++;
+      }
+
+      let h = x[i + 1] - x[i];
+      if (h <= 0) {
+        lut[k] = Math.max(0, Math.min(1, y[i]));
+        continue;
+      }
+      let t = (vx - x[i]) / h;
+      let t2 = t * t;
+      let t3 = t2 * t;
+
+      let h00 = 2 * t3 - 3 * t2 + 1;
+      let h10 = t3 - 2 * t2 + t;
+      let h01 = -2 * t3 + 3 * t2;
+      let h11 = t3 - t2;
+
+      let val = h00 * y[i] + h10 * h * d[i] + h01 * y[i + 1] + h11 * h * d[i + 1];
+      lut[k] = Math.max(0, Math.min(1, val));
+    }
+
+    return lut;
+  }
+
+  /**
+   * Helper: Apply LUT to Float32Array buffer with linear interpolation
+   * @param {Float32Array} buf 
+   * @param {Float32Array} lut 
+   */
+  static applyLUTToBuffer(buf, lut) {
+    if (!lut || !buf) return;
+    const len = buf.length;
+    for (let i = 0; i < len; i++) {
+      let v = buf[i];
+      if (v <= 0) {
+        buf[i] = lut[0];
+      } else if (v >= 1) {
+        buf[i] = lut[255];
+      } else {
+        let idx = v * 255;
+        let i0 = idx | 0;
+        let frac = idx - i0;
+        if (i0 >= 255) buf[i] = lut[255];
+        else buf[i] = lut[i0] + frac * (lut[i0 + 1] - lut[i0]);
+      }
+    }
+  }
+
+  /**
+   * Helper: Convert ImageData to grayscale float array [0..1]
+   */
   static getGrayscaleBuffer(imageData) {
     const width = imageData.width;
     const height = imageData.height;

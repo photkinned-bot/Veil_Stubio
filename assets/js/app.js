@@ -4429,6 +4429,22 @@
                 lutB[i] = Math.max(0, Math.min(1, b));
             }
 
+            if (p.useCurve && window.CanvasProcessingEngine) {
+                let cMasterLut = CanvasProcessingEngine.buildCurveLUT(p.curveMasterPoints);
+                let cRLut = CanvasProcessingEngine.buildCurveLUT(p.curveRPoints);
+                let cGLut = CanvasProcessingEngine.buildCurveLUT(p.curveGPoints);
+                let cBLut = CanvasProcessingEngine.buildCurveLUT(p.curveBPoints);
+
+                if (cMasterLut) {
+                    CanvasProcessingEngine.applyLUTToBuffer(lutR, cMasterLut);
+                    CanvasProcessingEngine.applyLUTToBuffer(lutG, cMasterLut);
+                    CanvasProcessingEngine.applyLUTToBuffer(lutB, cMasterLut);
+                }
+                if (cRLut) CanvasProcessingEngine.applyLUTToBuffer(lutR, cRLut);
+                if (cGLut) CanvasProcessingEngine.applyLUTToBuffer(lutG, cGLut);
+                if (cBLut) CanvasProcessingEngine.applyLUTToBuffer(lutB, cBLut);
+            }
+
             return { lutR, lutG, lutB };
         }
 
@@ -7330,6 +7346,22 @@
             let hasVignette = (vAmt !== 0);
             let aspect = w / h;
 
+            if (g.useCurve && window.CanvasProcessingEngine) {
+                let cMasterLut = CanvasProcessingEngine.buildCurveLUT(g.curveMasterPoints);
+                let cRLut = CanvasProcessingEngine.buildCurveLUT(g.curveRPoints);
+                let cGLut = CanvasProcessingEngine.buildCurveLUT(g.curveGPoints);
+                let cBLut = CanvasProcessingEngine.buildCurveLUT(g.curveBPoints);
+
+                if (cMasterLut) {
+                    CanvasProcessingEngine.applyLUTToBuffer(blendBufferR, cMasterLut);
+                    CanvasProcessingEngine.applyLUTToBuffer(blendBufferG, cMasterLut);
+                    CanvasProcessingEngine.applyLUTToBuffer(blendBufferB, cMasterLut);
+                }
+                if (cRLut) CanvasProcessingEngine.applyLUTToBuffer(blendBufferR, cRLut);
+                if (cGLut) CanvasProcessingEngine.applyLUTToBuffer(blendBufferG, cGLut);
+                if (cBLut) CanvasProcessingEngine.applyLUTToBuffer(blendBufferB, cBLut);
+            }
+
             let amtNorm = vAmt / 100; 
             let vWidth = Math.max(0.05, vFeath * 1.2);
             let vMinT = vMid * 1.2 - vWidth / 2;
@@ -8496,6 +8528,426 @@
             renderProps();
             requestRender();
             scheduleHistorySnapshot();
+        };
+
+        function getCurvePathD(pts, svgW = 240, svgH = 150) {
+            let lut = window.CanvasProcessingEngine ? CanvasProcessingEngine.buildCurveLUT(pts) : null;
+            if (lut) {
+                let pathPts = [];
+                for (let i = 0; i <= 60; i++) {
+                    let t = i / 60;
+                    let lutIdx = Math.min(255, Math.max(0, Math.round(t * 255)));
+                    let val = lut[lutIdx];
+                    let px = t * svgW;
+                    let py = (1 - val) * svgH;
+                    pathPts.push(`${px.toFixed(1)},${py.toFixed(1)}`);
+                }
+                return 'M ' + pathPts.join(' L ');
+            } else {
+                if (!pts || pts.length === 0) return '';
+                let p1x = pts[0].x * svgW, p1y = (1 - pts[0].y) * svgH;
+                let p2x = pts[pts.length - 1].x * svgW, p2y = (1 - pts[pts.length - 1].y) * svgH;
+                return `M ${p1x.toFixed(1)},${p1y.toFixed(1)} L ${p2x.toFixed(1)},${p2y.toFixed(1)}`;
+            }
+        }
+
+        function renderCurveWidgetHTML(isGlobal) {
+            let target = isGlobal ? state.global : (window.lay ? window.lay.params : null);
+            if (!target) return '';
+
+            let isCurveActive = !!target.useCurve;
+            let isExpanded = !!target.curveExpanded;
+            let activeChan = target.curveChannel || 'master';
+
+            let masterPts = target.curveMasterPoints || [{x: 0, y: 0}, {x: 1, y: 1}];
+            let rPts = target.curveRPoints || [{x: 0, y: 0}, {x: 1, y: 1}];
+            let gPts = target.curveGPoints || [{x: 0, y: 0}, {x: 1, y: 1}];
+            let bPts = target.curveBPoints || [{x: 0, y: 0}, {x: 1, y: 1}];
+
+            target.curveMasterPoints = masterPts;
+            target.curveRPoints = rPts;
+            target.curveGPoints = gPts;
+            target.curveBPoints = bPts;
+
+            [masterPts, rPts, gPts, bPts].forEach(pList => {
+                pList.forEach(p => { if (!p.id) p.id = 'p_' + Math.random().toString(36).substr(2, 9); });
+            });
+
+            let activePts = masterPts;
+            let chanColor = '#ffffff';
+            if (activeChan === 'red') { activePts = rPts; chanColor = '#ef4444'; }
+            else if (activeChan === 'green') { activePts = gPts; chanColor = '#22c55e'; }
+            else if (activeChan === 'blue') { activePts = bPts; chanColor = '#3b82f6'; }
+
+            let svgW = 240, svgH = 150;
+            let pathD = getCurvePathD(activePts, svgW, svgH);
+
+            let circlesHTML = activePts.map((pt) => {
+                let cx = (pt.x * svgW).toFixed(1);
+                let cy = ((1 - pt.y) * svgH).toFixed(1);
+                let inPct = Math.round(pt.x * 100);
+                let outPct = Math.round(pt.y * 100);
+                return `<circle data-pt-id="${pt.id}" cx="${cx}" cy="${cy}" r="7" fill="${chanColor}" stroke="#18181b" stroke-width="2" style="cursor:grab; touch-action:none; -webkit-user-select:none; user-select:none;" onpointerdown="startCurvePointDrag(event, ${isGlobal}, '${pt.id}')" title="Точка: Вхід ${inPct}%, Вихід ${outPct}% (Подвійний клік щоб видалити)" ondblclick="removeCurvePoint(event, ${isGlobal}, '${pt.id}')"></circle>`;
+            }).join('');
+
+            return `
+            <div style="background: rgba(255,255,255,0.03); border: 1px solid var(--border-color, #27272a); border-radius: 8px; margin: 10px 0; overflow: hidden; touch-action: none;">
+                <div style="display:flex; justify-content:space-between; align-items:center; padding: 8px 10px; background: rgba(255,255,255,0.02); user-select:none; -webkit-user-select:none;">
+                    <div style="display:flex; align-items:center; gap:8px;">
+                        <input type="checkbox" ${isCurveActive ? 'checked' : ''} onchange="toggleCurveActive(${isGlobal}, this.checked)" style="cursor:pointer; width:14px; height:14px;">
+                        <span onclick="toggleCurveExpanded(event, ${isGlobal})" style="font-weight:700; color:var(--primary-color, #3b82f6); font-size:11px; cursor:pointer; display:flex; align-items:center; gap:6px;">
+                            📈 Корекція Кривими (Curve) <span style="font-size:9px; color:#a1a1aa;">${isExpanded ? '▼' : '▶'}</span>
+                        </span>
+                    </div>
+                    ${isExpanded ? `<button type="button" class="reset-btn" title="Скинути поточну криву" onclick="resetCurvePoints(${isGlobal})">↺</button>` : ''}
+                </div>
+
+                ${isExpanded ? `
+                <div style="padding: 10px; border-top: 1px solid rgba(255,255,255,0.05);">
+                    <div class="gen-grid" style="grid-template-columns:repeat(4,1fr); gap:4px; margin-bottom:8px;">
+                        <button type="button" onclick="selectCurveChannel(${isGlobal}, 'master')" class="gen-btn ${activeChan === 'master' ? 'active' : ''}" style="font-size:10px; padding:4px 2px;">⚪ Master</button>
+                        <button type="button" onclick="selectCurveChannel(${isGlobal}, 'red')" class="gen-btn ${activeChan === 'red' ? 'active' : ''}" style="font-size:10px; padding:4px 2px; color:#ef4444;">🔴 Red</button>
+                        <button type="button" onclick="selectCurveChannel(${isGlobal}, 'green')" class="gen-btn ${activeChan === 'green' ? 'active' : ''}" style="font-size:10px; padding:4px 2px; color:#22c55e;">🟢 Green</button>
+                        <button type="button" onclick="selectCurveChannel(${isGlobal}, 'blue')" class="gen-btn ${activeChan === 'blue' ? 'active' : ''}" style="font-size:10px; padding:4px 2px; color:#3b82f6;">🔵 Blue</button>
+                    </div>
+
+                    <div style="position:relative; width:100%; height:${svgH}px; background:#09090b; border:1px solid #27272a; border-radius:6px; overflow:hidden; user-select:none; -webkit-user-select:none; touch-action:none; margin-bottom:8px;">
+                        <svg width="100%" height="100%" viewBox="0 0 ${svgW} ${svgH}" preserveAspectRatio="none" style="display:block; cursor:crosshair; touch-action:none; -webkit-user-select:none; user-select:none;" onpointerdown="addCurvePointFromSVG(event, ${isGlobal})">
+                            <!-- Grid lines -->
+                            <line x1="60" y1="0" x2="60" y2="${svgH}" stroke="#27272a" stroke-dasharray="2,2"/>
+                            <line x1="120" y1="0" x2="120" y2="${svgH}" stroke="#27272a" stroke-dasharray="2,2"/>
+                            <line x1="180" y1="0" x2="180" y2="${svgH}" stroke="#27272a" stroke-dasharray="2,2"/>
+                            
+                            <line x1="0" y1="37.5" x2="${svgW}" y2="37.5" stroke="#27272a" stroke-dasharray="2,2"/>
+                            <line x1="0" y1="75" x2="${svgW}" y2="75" stroke="#27272a" stroke-dasharray="2,2"/>
+                            <line x1="0" y1="112.5" x2="${svgW}" y2="112.5" stroke="#27272a" stroke-dasharray="2,2"/>
+
+                            <!-- Identity diagonal line -->
+                            <line x1="0" y1="${svgH}" x2="${svgW}" y2="0" stroke="#3f3f46" stroke-dasharray="4,4" stroke-width="1"/>
+
+                            <!-- Curve path -->
+                            <path class="curve-path" d="${pathD}" fill="none" stroke="${chanColor}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+
+                            <!-- Control points -->
+                            ${circlesHTML}
+                        </svg>
+                        <div style="position:absolute; bottom:4px; right:6px; font-size:9px; color:#71717a; pointer-events:none;">Клік — додати точку</div>
+                    </div>
+
+                    <div style="font-size:10px; color:var(--text-muted, #a1a1aa); margin-bottom:6px; display:flex; justify-content:space-between; align-items:center;">
+                        <span>Пресети кривих:</span>
+                    </div>
+
+                    <div class="gen-grid" style="grid-template-columns:repeat(3,1fr); gap:4px;">
+                        <button type="button" onclick="applyCurvePreset(${isGlobal}, 's_curve')" class="gen-btn" style="font-size:9px; padding:3px 2px;" title="Класична S-крива">📈 S-Крива</button>
+                        <button type="button" onclick="applyCurvePreset(${isGlobal}, 'soft_s')" class="gen-btn" style="font-size:9px; padding:3px 2px;" title="М'яка S-крива">📉 М'яка S</button>
+                        <button type="button" onclick="applyCurvePreset(${isGlobal}, 'shadows')" class="gen-btn" style="font-size:9px; padding:3px 2px;" title="Освітлення тіней">☀️ Тіні</button>
+                        <button type="button" onclick="applyCurvePreset(${isGlobal}, 'highlights')" class="gen-btn" style="font-size:9px; padding:3px 2px;" title="Затемнення світлих тонів">🌥️ Світлі</button>
+                        <button type="button" onclick="applyCurvePreset(${isGlobal}, 'matte')" class="gen-btn" style="font-size:9px; padding:3px 2px;" title="Матовий ефект">🎬 Матовий</button>
+                        <button type="button" onclick="applyCurvePreset(${isGlobal}, 'invert')" class="gen-btn" style="font-size:9px; padding:3px 2px;" title="Інверсія кривої">🔄 Інверсія</button>
+                    </div>
+                </div>
+                ` : ''}
+            </div>
+            `;
+        }
+
+        window.toggleCurveExpanded = function(e, isGlobal) {
+            if (e) {
+                e.preventDefault();
+                e.stopPropagation();
+            }
+            let target = isGlobal ? state.global : (window.lay ? window.lay.params : null);
+            if (!target) return;
+            target.curveExpanded = !target.curveExpanded;
+            if (isGlobal) renderGlobal();
+            else renderProps();
+        };
+
+        window.toggleCurveActive = function(isGlobal, checked) {
+            let target = isGlobal ? state.global : (window.lay ? window.lay.params : null);
+            if (!target) return;
+            target.useCurve = !!checked;
+            if (isGlobal) {
+                invalidateCaches();
+                renderGlobal();
+            } else {
+                if (window.lay) window.lay.isDirty = true;
+                renderProps();
+            }
+            requestRender();
+            commitHistorySnapshot();
+        };
+
+        window.selectCurveChannel = function(isGlobal, chan) {
+            let target = isGlobal ? state.global : (window.lay ? window.lay.params : null);
+            if (!target) return;
+            target.curveChannel = chan;
+            if (isGlobal) renderGlobal();
+            else renderProps();
+        };
+
+        window.resetCurvePoints = function(isGlobal) {
+            let target = isGlobal ? state.global : (window.lay ? window.lay.params : null);
+            if (!target) return;
+            let chan = target.curveChannel || 'master';
+            let pts = [{x: 0, y: 0, id: 'p_1'}, {x: 1, y: 1, id: 'p_2'}];
+            if (chan === 'red') target.curveRPoints = pts;
+            else if (chan === 'green') target.curveGPoints = pts;
+            else if (chan === 'blue') target.curveBPoints = pts;
+            else target.curveMasterPoints = pts;
+
+            if (isGlobal) {
+                invalidateCaches();
+                renderGlobal();
+            } else {
+                if (window.lay) window.lay.isDirty = true;
+                renderProps();
+            }
+            requestRender();
+            commitHistorySnapshot();
+        };
+
+        let lastCurveTapTime = 0;
+        let lastCurveTapPtId = null;
+
+        window.removeCurvePoint = function(e, isGlobal, ptId) {
+            if (e) {
+                if (e.preventDefault) e.preventDefault();
+                if (e.stopPropagation) e.stopPropagation();
+            }
+            let target = isGlobal ? state.global : (window.lay ? window.lay.params : null);
+            if (!target) return;
+            let chan = target.curveChannel || 'master';
+            let ptsKey = chan === 'red' ? 'curveRPoints' : (chan === 'green' ? 'curveGPoints' : (chan === 'blue' ? 'curveBPoints' : 'curveMasterPoints'));
+            if (!target[ptsKey]) target[ptsKey] = [{x: 0, y: 0, id: 'p_1'}, {x: 1, y: 1, id: 'p_2'}];
+            let pts = target[ptsKey];
+
+            if (pts.length > 2) {
+                let idx = pts.findIndex(p => p.id === ptId);
+                if (idx !== -1) {
+                    pts.splice(idx, 1);
+                    if (isGlobal) {
+                        invalidateCaches();
+                        renderGlobal();
+                    } else {
+                        if (window.lay) window.lay.isDirty = true;
+                        renderProps();
+                    }
+                    requestRender();
+                    commitHistorySnapshot();
+                }
+            }
+        };
+
+        window.startCurvePointDrag = function(e, isGlobal, ptId) {
+            if (e.preventDefault) e.preventDefault();
+            if (e.stopPropagation) e.stopPropagation();
+
+            let now = Date.now();
+            if (now - lastCurveTapTime < 350 && lastCurveTapPtId === ptId) {
+                lastCurveTapTime = 0;
+                lastCurveTapPtId = null;
+                removeCurvePoint(e, isGlobal, ptId);
+                return;
+            }
+            lastCurveTapTime = now;
+            lastCurveTapPtId = ptId;
+
+            let circle = e.currentTarget;
+            let svgEl = circle ? (circle.ownerSVGElement || circle.closest('svg')) : null;
+            if (!svgEl) return;
+
+            let target = isGlobal ? state.global : (window.lay ? window.lay.params : null);
+            if (!target) return;
+
+            let chan = target.curveChannel || 'master';
+            let ptsKey = chan === 'red' ? 'curveRPoints' : (chan === 'green' ? 'curveGPoints' : (chan === 'blue' ? 'curveBPoints' : 'curveMasterPoints'));
+            if (!target[ptsKey]) target[ptsKey] = [{x: 0, y: 0, id: 'p_1'}, {x: 1, y: 1, id: 'p_2'}];
+            let pts = target[ptsKey];
+
+            pts.forEach(p => { if (!p.id) p.id = 'p_' + Math.random().toString(36).substr(2, 9); });
+
+            let pt = pts.find(p => p.id === ptId);
+            if (!pt) return;
+
+            if (e.pointerId !== undefined && circle.setPointerCapture) {
+                try {
+                    circle.setPointerCapture(e.pointerId);
+                } catch (err) {}
+            }
+
+            let pathEl = svgEl.querySelector('path.curve-path');
+
+            const onPointerMove = (moveEv) => {
+                moveEv.preventDefault();
+                moveEv.stopPropagation();
+
+                let rect = svgEl.getBoundingClientRect();
+                if (rect.width <= 0 || rect.height <= 0) return;
+
+                let nx = (moveEv.clientX - rect.left) / rect.width;
+                let ny = 1 - (moveEv.clientY - rect.top) / rect.height;
+
+                nx = Math.max(0, Math.min(1, nx));
+                ny = Math.max(0, Math.min(1, ny));
+
+                pt.x = parseFloat(nx.toFixed(3));
+                pt.y = parseFloat(ny.toFixed(3));
+
+                let cx = (pt.x * 240).toFixed(1);
+                let cy = ((1 - pt.y) * 150).toFixed(1);
+                circle.setAttribute('cx', cx);
+                circle.setAttribute('cy', cy);
+
+                let inPct = Math.round(pt.x * 100);
+                let outPct = Math.round(pt.y * 100);
+                circle.setAttribute('title', `Точка: Вхід ${inPct}%, Вихід ${outPct}%`);
+
+                if (pathEl) {
+                    pathEl.setAttribute('d', getCurvePathD(pts, 240, 150));
+                }
+
+                target.useCurve = true;
+
+                if (isGlobal) {
+                    invalidateCaches();
+                } else {
+                    if (window.lay) window.lay.isDirty = true;
+                }
+                requestRender();
+            };
+
+            const onPointerUp = (upEv) => {
+                upEv.preventDefault();
+                upEv.stopPropagation();
+
+                if (upEv.pointerId !== undefined && circle.releasePointerCapture) {
+                    try { circle.releasePointerCapture(upEv.pointerId); } catch(err){}
+                }
+                circle.removeEventListener('pointermove', onPointerMove);
+                circle.removeEventListener('pointerup', onPointerUp);
+                circle.removeEventListener('pointercancel', onPointerUp);
+
+                pts.sort((a, b) => a.x - b.x);
+
+                if (isGlobal) {
+                    invalidateCaches();
+                    renderGlobal();
+                } else {
+                    if (window.lay) window.lay.isDirty = true;
+                    renderProps();
+                }
+                requestRender();
+                commitHistorySnapshot();
+            };
+
+            circle.addEventListener('pointermove', onPointerMove, { passive: false });
+            circle.addEventListener('pointerup', onPointerUp, { passive: false });
+            circle.addEventListener('pointercancel', onPointerUp, { passive: false });
+        };
+
+        window.addCurvePointFromSVG = function(e, isGlobal) {
+            if (e.target.tagName === 'circle') return;
+            e.preventDefault();
+            e.stopPropagation();
+
+            let svgEl = e.currentTarget;
+            let rect = svgEl.getBoundingClientRect();
+            if (rect.width <= 0 || rect.height <= 0) return;
+
+            let nx = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+            let ny = Math.max(0, Math.min(1, 1 - (e.clientY - rect.top) / rect.height));
+
+            let target = isGlobal ? state.global : (window.lay ? window.lay.params : null);
+            if (!target) return;
+
+            let chan = target.curveChannel || 'master';
+            let ptsKey = chan === 'red' ? 'curveRPoints' : (chan === 'green' ? 'curveGPoints' : (chan === 'blue' ? 'curveBPoints' : 'curveMasterPoints'));
+            if (!target[ptsKey]) target[ptsKey] = [{x: 0, y: 0, id: 'p_1'}, {x: 1, y: 1, id: 'p_2'}];
+            let pts = target[ptsKey];
+
+            let newPt = {
+                id: 'p_' + Math.random().toString(36).substr(2, 9),
+                x: parseFloat(nx.toFixed(3)),
+                y: parseFloat(ny.toFixed(3))
+            };
+
+            pts.push(newPt);
+            pts.sort((a, b) => a.x - b.x);
+
+            target.useCurve = true;
+            if (isGlobal) {
+                invalidateCaches();
+                renderGlobal();
+            } else {
+                if (window.lay) window.lay.isDirty = true;
+                renderProps();
+            }
+            requestRender();
+
+            let newCircle = document.querySelector(`circle[data-pt-id="${newPt.id}"]`);
+            if (newCircle) {
+                let fakeEv = {
+                    preventDefault: () => {},
+                    stopPropagation: () => {},
+                    currentTarget: newCircle,
+                    pointerId: e.pointerId,
+                    clientX: e.clientX,
+                    clientY: e.clientY
+                };
+                startCurvePointDrag(fakeEv, isGlobal, newPt.id);
+            }
+        };
+
+        window.applyCurvePreset = function(isGlobal, preset) {
+            let target = isGlobal ? state.global : (window.lay ? window.lay.params : null);
+            if (!target) return;
+
+            let pts = [];
+            switch(preset) {
+                case 's_curve':
+                    pts = [{x: 0, y: 0}, {x: 0.25, y: 0.12}, {x: 0.75, y: 0.88}, {x: 1, y: 1}];
+                    break;
+                case 'soft_s':
+                    pts = [{x: 0, y: 0}, {x: 0.3, y: 0.22}, {x: 0.7, y: 0.78}, {x: 1, y: 1}];
+                    break;
+                case 'shadows':
+                    pts = [{x: 0, y: 0.15}, {x: 0.35, y: 0.45}, {x: 1, y: 1}];
+                    break;
+                case 'highlights':
+                    pts = [{x: 0, y: 0}, {x: 0.65, y: 0.55}, {x: 1, y: 0.85}];
+                    break;
+                case 'matte':
+                    pts = [{x: 0, y: 0.12}, {x: 0.25, y: 0.25}, {x: 0.75, y: 0.75}, {x: 1, y: 0.88}];
+                    break;
+                case 'invert':
+                    pts = [{x: 0, y: 1}, {x: 1, y: 0}];
+                    break;
+                case 'reset':
+                default:
+                    pts = [{x: 0, y: 0}, {x: 1, y: 1}];
+                    break;
+            }
+
+            pts.forEach(p => p.id = 'p_' + Math.random().toString(36).substr(2, 9));
+
+            let chan = target.curveChannel || 'master';
+            if (chan === 'red') target.curveRPoints = pts;
+            else if (chan === 'green') target.curveGPoints = pts;
+            else if (chan === 'blue') target.curveBPoints = pts;
+            else target.curveMasterPoints = pts;
+
+            target.useCurve = true;
+            if (isGlobal) {
+                invalidateCaches();
+                renderGlobal();
+            } else {
+                if (window.lay) window.lay.isDirty = true;
+                renderProps();
+            }
+            requestRender();
+            commitHistorySnapshot();
         };
 
         window.addColorRampStop = function() {
@@ -9762,6 +10214,7 @@
                         <span>Repeat Edge Pixels / Clamp to Edge</span>
                     </label>
                 </div>
+                ${renderCurveWidgetHTML(false)}
             `;
 
             // Block: warps
@@ -10096,6 +10549,7 @@
                         <span>Інверсія всіх кольорів (Invert All)</span>
                     </label>
                 </div>
+                ${renderCurveWidgetHTML(true)}
             `;
 
             let blockMeta = {
