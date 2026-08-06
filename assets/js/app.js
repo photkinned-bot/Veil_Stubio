@@ -10156,6 +10156,7 @@
 
             layerBlockContents.fx = `
                 ${blendIfCardHTML}
+                ${renderCurveWidgetHTML(false)}
                 <div class="property-group">
                     <label class="property-label"><input type="checkbox" ${lp.useThreshold?'checked':''} onchange="upd('useThreshold',this.checked)"> Threshold (Поріг)</label>
                     ${lp.useThreshold ? sliderRow(0, 100, 1, lp.thresholdVal||50, 50, "upd('thresholdVal',this.value)") : ''}
@@ -10214,7 +10215,6 @@
                         <span>Repeat Edge Pixels / Clamp to Edge</span>
                     </label>
                 </div>
-                ${renderCurveWidgetHTML(false)}
             `;
 
             // Block: warps
