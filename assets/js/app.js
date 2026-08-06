@@ -10531,17 +10531,11 @@
 
                 <div style="background: rgba(255,255,255,0.03); border: 1px solid var(--border-color, #27272a); border-radius: 8px; padding: 10px; margin-bottom: 10px;">
                     <div style="font-weight:700; color:var(--primary-color, #3b82f6); font-size:11px; margin-bottom:8px;">🖼️ Накладання кольору (Color Overlay)</div>
-                    <div class="property-group grid-2">
-                        <div>
-                            <label class="property-label">Колір накладання</label>
-                            <input type="color" value="${g.globalColorOverlay || '#000000'}" oninput="state.global.globalColorOverlay=this.value; invalidateCaches(); requestRender();" onchange="commitHistorySnapshot();" style="width:100%; height:32px; background:none; border:1px solid var(--border-color); border-radius:4px; cursor:pointer;">
-                        </div>
-                        <div>
-                            <label class="property-label">Непрозорість (%)</label>
-                            <input type="number" class="num-input" min="0" max="100" value="${g.globalColorOverlayOpacity || 0}" oninput="state.global.globalColorOverlayOpacity=parseFloat(this.value); invalidateCaches(); requestRender();" onchange="commitHistorySnapshot();" style="width:100%; height:32px;">
-                        </div>
+                    <div class="property-group" style="margin-bottom:8px;">
+                        <label class="property-label">Колір накладання</label>
+                        <input type="color" value="${g.globalColorOverlay || '#000000'}" oninput="state.global.globalColorOverlay=this.value; invalidateCaches(); requestRender();" onchange="commitHistorySnapshot();" style="width:100%; height:32px; background:none; border:1px solid var(--border-color); border-radius:4px; cursor:pointer;">
                     </div>
-                    ${createSlider("Прозорість оверлею", "globalColorOverlayOpacity", 0, 100, 1, g.globalColorOverlayOpacity || 0, true, 0)}
+                    ${createSlider("Непрозорість оверлею (%)", "globalColorOverlayOpacity", 0, 100, 1, g.globalColorOverlayOpacity || 0, true, 0)}
                 </div>
 
                 <div class="property-group" style="margin-top:8px;">
