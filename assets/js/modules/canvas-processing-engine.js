@@ -81,7 +81,7 @@ export class CanvasProcessingEngine {
   /**
    * Helper: Directional Blur on Float32Array
    */
-  static directionalBlurFloatBuffer(buffer, width, height, radius, angle = 0) {
+  static directionalBlurFloatBuffer(buffer, width, height, radius, angle = 0, cometOptions = {}) {
     if (!radius || radius < 1) return buffer;
     const r = Math.floor(radius);
     const size = width * height;
@@ -89,28 +89,110 @@ export class CanvasProcessingEngine {
     const radAngle = (angle || 0) * Math.PI / 180;
     const dirX = Math.cos(radAngle);
     const dirY = Math.sin(radAngle);
-    const stepCount = r * 2 + 1;
-    const invSteps = 1 / stepCount;
+
+    const cStr = Math.max(0, Math.min(100, cometOptions.blurComet || 0)) / 100;
+
+    const kernelSamples = [];
+    let totalWeight = 0;
+
+    if (cStr <= 0) {
+      const steps = Math.min(17, Math.max(5, (r | 0) * 2 + 1));
+      const half = (steps - 1) / 2;
+      const stepLen = r / half;
+      for (let s = -half; s <= half; s++) {
+        const ox = s * stepLen * dirX;
+        const oy = s * stepLen * dirY;
+        const wt = Math.exp(-0.5 * Math.pow((s / half) * 2, 2));
+        kernelSamples.push({ ox, oy, w: wt });
+        totalWeight += wt;
+      }
+    } else {
+      const headSize = (cometOptions.cometHeadSize !== undefined ? cometOptions.cometHeadSize : 100) / 100;
+      const bulbWidth = (cometOptions.cometBulbWidth !== undefined ? cometOptions.cometBulbWidth : 100) / 100;
+      const tailDecay = (cometOptions.cometTailFade !== undefined ? cometOptions.cometTailFade : 50) / 100;
+      const asymSign = (cometOptions.cometAsymmetry !== undefined ? cometOptions.cometAsymmetry : 100) >= 0 ? 1 : -1;
+
+      const perpX = -dirY;
+      const perpY = dirX;
+
+      const tailSteps = Math.min(10, Math.max(5, Math.round(r * 0.4) | 1));
+      const headSteps = Math.min(4, Math.max(2, Math.round(r * 0.15 * headSize * cStr) | 1));
+
+      for (let i = 0; i <= tailSteps; i++) {
+        const t = i / tailSteps;
+        const sLong = asymSign * t * r * (1 + 0.3 * cStr);
+        const decayPow = 0.5 + tailDecay * 1.5;
+        const wtLong = Math.pow(1 - t, decayPow);
+        const bulbRadius = r * 0.35 * cStr * bulbWidth * headSize * Math.sqrt(Math.max(0, 1 - t * 0.85));
+
+        const ox = sLong * dirX;
+        const oy = sLong * dirY;
+        kernelSamples.push({ ox, oy, w: wtLong });
+        totalWeight += wtLong;
+
+        if (bulbRadius > 0.5) {
+          const wtCross = wtLong * 0.6;
+          kernelSamples.push({ ox: ox + perpX * bulbRadius, oy: oy + perpY * bulbRadius, w: wtCross });
+          kernelSamples.push({ ox: ox - perpX * bulbRadius, oy: oy - perpY * bulbRadius, w: wtCross });
+          totalWeight += wtCross * 2;
+        }
+      }
+
+      for (let i = 1; i <= headSteps; i++) {
+        const hFrac = i / headSteps;
+        const sLong = -asymSign * hFrac * r * 0.25 * headSize * cStr;
+        const headShape = Math.sqrt(Math.max(0, 1 - hFrac * hFrac));
+        const wtLong = headShape;
+        const bulbRadius = r * 0.35 * cStr * bulbWidth * headSize * headShape;
+
+        const ox = sLong * dirX;
+        const oy = sLong * dirY;
+        kernelSamples.push({ ox, oy, w: wtLong });
+        totalWeight += wtLong;
+
+        if (bulbRadius > 0.5) {
+          const wtCross = wtLong * 0.6;
+          kernelSamples.push({ ox: ox + perpX * bulbRadius, oy: oy + perpY * bulbRadius, w: wtCross });
+          kernelSamples.push({ ox: ox - perpX * bulbRadius, oy: oy - perpY * bulbRadius, w: wtCross });
+          totalWeight += wtCross * 2;
+        }
+      }
+    }
+
+    const invTotalWeight = totalWeight > 0 ? (1 / totalWeight) : 1;
+    const kLen = kernelSamples.length;
+    const smpOx = new Float32Array(kLen);
+    const smpOy = new Float32Array(kLen);
+    const smpW = new Float32Array(kLen);
+    for (let k = 0; k < kLen; k++) {
+      smpOx[k] = kernelSamples[k].ox;
+      smpOy[k] = kernelSamples[k].oy;
+      smpW[k] = kernelSamples[k].w * invTotalWeight;
+    }
 
     for (let y = 0; y < height; y++) {
+      const rowOffset = y * width;
       for (let x = 0; x < width; x++) {
         let sum = 0;
-        for (let s = -r; s <= r; s++) {
-          let sx = x + s * dirX;
-          let sy = y + s * dirY;
+        for (let k = 0; k < kLen; k++) {
+          const sx = x + smpOx[k];
+          const sy = y + smpOy[k];
+
           let x0 = (Math.floor(sx) % width + width) % width;
           let y0 = (Math.floor(sy) % height + height) % height;
           let x1 = (x0 + 1) % width;
           let y1 = (y0 + 1) % height;
-          let fx = sx - Math.floor(sx);
-          let fy = sy - Math.floor(sy);
-          let v00 = buffer[y0 * width + x0];
-          let v10 = buffer[y0 * width + x1];
-          let v01 = buffer[y1 * width + x0];
-          let v11 = buffer[y1 * width + x1];
-          sum += (1 - fx) * (1 - fy) * v00 + fx * (1 - fy) * v10 + (1 - fx) * fy * v01 + fx * fy * v11;
+          const fx = sx - Math.floor(sx);
+          const fy = sy - Math.floor(sy);
+
+          const v00 = buffer[y0 * width + x0];
+          const v10 = buffer[y0 * width + x1];
+          const v01 = buffer[y1 * width + x0];
+          const v11 = buffer[y1 * width + x1];
+
+          sum += ((1 - fx) * (1 - fy) * v00 + fx * (1 - fy) * v10 + (1 - fx) * fy * v01 + fx * fy * v11) * smpW[k];
         }
-        out[y * width + x] = sum * invSteps;
+        out[rowOffset + x] = sum;
       }
     }
     return out;

@@ -411,7 +411,12 @@
                 "Викривлення домену (Domain Warp)": "Domain Warp Strength",
                 "Фрактальні октави (Octaves)": "Fractal Octaves",
                 "Поворот сітки (°)": "Grid Rotation (°)",
-                "Сід випадковості (Seed)": "Random Seed"
+                "Сід випадковості (Seed)": "Random Seed",
+                "Сила комети (%)": "Comet Strength (%)",
+                "Розмір голівки (%)": "Head Size (%)",
+                "Форма капельки (Гулька %)": "Bulb / Droplet Shape (%)",
+                "Загасання хвоста (%)": "Tail Decay (%)",
+                "Асиметрія / Напрямок (%)": "Asymmetry / Direction (%)"
             }
         };
 
@@ -3975,7 +3980,7 @@
             }
         }
 
-        function applyDirectionalBlur(buf, tmp, w, h, rad, angle = 0, mode = 'wrap') {
+        function applyDirectionalBlur(buf, tmp, w, h, rad, angle = 0, mode = 'wrap', cometOptions = {}) {
             if (!rad || rad <= 0) return;
             let scaledRad = Math.max(1, Math.round(rad * (w / 512)));
             let effectiveMode = mode;
@@ -3988,26 +3993,105 @@
             let dirY = Math.sin(radAngle);
 
             let kSize = scaledRad;
-            let stepCount = kSize * 2 + 1;
-            let invSteps = 1 / stepCount;
+            let cStr = Math.max(0, Math.min(100, cometOptions.blurComet || 0)) / 100;
+
+            let kernelSamples = [];
+            let totalWeight = 0;
+
+            if (cStr <= 0) {
+                let steps = Math.min(17, Math.max(5, (kSize | 0) * 2 + 1));
+                let half = (steps - 1) / 2;
+                let stepLen = kSize / half;
+                for (let s = -half; s <= half; s++) {
+                    let ox = s * stepLen * dirX;
+                    let oy = s * stepLen * dirY;
+                    let wt = Math.exp(-0.5 * Math.pow((s / half) * 2, 2));
+                    kernelSamples.push({ ox, oy, w: wt });
+                    totalWeight += wt;
+                }
+            } else {
+                let headSize = (cometOptions.cometHeadSize !== undefined ? cometOptions.cometHeadSize : 100) / 100;
+                let bulbWidth = (cometOptions.cometBulbWidth !== undefined ? cometOptions.cometBulbWidth : 100) / 100;
+                let tailDecay = (cometOptions.cometTailFade !== undefined ? cometOptions.cometTailFade : 50) / 100;
+                let asymSign = (cometOptions.cometAsymmetry !== undefined ? cometOptions.cometAsymmetry : 100) >= 0 ? 1 : -1;
+
+                let perpX = -dirY;
+                let perpY = dirX;
+
+                let tailSteps = Math.min(10, Math.max(5, Math.round(kSize * 0.4) | 1));
+                let headSteps = Math.min(4, Math.max(2, Math.round(kSize * 0.15 * headSize * cStr) | 1));
+
+                for (let i = 0; i <= tailSteps; i++) {
+                    let t = i / tailSteps;
+                    let sLong = asymSign * t * kSize * (1 + 0.3 * cStr);
+                    let decayPow = 0.5 + tailDecay * 1.5;
+                    let wtLong = Math.pow(1 - t, decayPow);
+                    let bulbRadius = kSize * 0.35 * cStr * bulbWidth * headSize * Math.sqrt(Math.max(0, 1 - t * 0.85));
+
+                    let ox = sLong * dirX;
+                    let oy = sLong * dirY;
+                    kernelSamples.push({ ox, oy, w: wtLong });
+                    totalWeight += wtLong;
+
+                    if (bulbRadius > 0.5) {
+                        let wtCross = wtLong * 0.6;
+                        kernelSamples.push({ ox: ox + perpX * bulbRadius, oy: oy + perpY * bulbRadius, w: wtCross });
+                        kernelSamples.push({ ox: ox - perpX * bulbRadius, oy: oy - perpY * bulbRadius, w: wtCross });
+                        totalWeight += wtCross * 2;
+                    }
+                }
+
+                for (let i = 1; i <= headSteps; i++) {
+                    let hFrac = i / headSteps;
+                    let sLong = -asymSign * hFrac * kSize * 0.25 * headSize * cStr;
+                    let headShape = Math.sqrt(Math.max(0, 1 - hFrac * hFrac));
+                    let wtLong = headShape;
+                    let bulbRadius = kSize * 0.35 * cStr * bulbWidth * headSize * headShape;
+
+                    let ox = sLong * dirX;
+                    let oy = sLong * dirY;
+                    kernelSamples.push({ ox, oy, w: wtLong });
+                    totalWeight += wtLong;
+
+                    if (bulbRadius > 0.5) {
+                        let wtCross = wtLong * 0.6;
+                        kernelSamples.push({ ox: ox + perpX * bulbRadius, oy: oy + perpY * bulbRadius, w: wtCross });
+                        kernelSamples.push({ ox: ox - perpX * bulbRadius, oy: oy - perpY * bulbRadius, w: wtCross });
+                        totalWeight += wtCross * 2;
+                    }
+                }
+            }
+
+            let invTotalWeight = totalWeight > 0 ? (1 / totalWeight) : 1;
+            let kLen = kernelSamples.length;
+            let smpOx = new Float32Array(kLen);
+            let smpOy = new Float32Array(kLen);
+            let smpW = new Float32Array(kLen);
+            for (let k = 0; k < kLen; k++) {
+                smpOx[k] = kernelSamples[k].ox;
+                smpOy[k] = kernelSamples[k].oy;
+                smpW[k] = kernelSamples[k].w * invTotalWeight;
+            }
+
+            let isClamp = effectiveMode === 'clamp';
 
             for (let y = 0; y < h; y++) {
                 let rowOffset = y * w;
                 for (let x = 0; x < w; x++) {
                     let sum = 0;
-                    for (let s = -kSize; s <= kSize; s++) {
-                        let sx = x + s * dirX;
-                        let sy = y + s * dirY;
+                    for (let k = 0; k < kLen; k++) {
+                        let sx = x + smpOx[k];
+                        let sy = y + smpOy[k];
 
                         let x0 = Math.floor(sx), y0 = Math.floor(sy);
                         let x1 = x0 + 1, y1 = y0 + 1;
                         let fx = sx - x0, fy = sy - y0;
 
-                        if (effectiveMode === 'clamp') {
-                            x0 = Math.max(0, Math.min(w - 1, x0));
-                            x1 = Math.max(0, Math.min(w - 1, x1));
-                            y0 = Math.max(0, Math.min(h - 1, y0));
-                            y1 = Math.max(0, Math.min(h - 1, y1));
+                        if (isClamp) {
+                            if (x0 < 0) x0 = 0; else if (x0 >= w) x0 = w - 1;
+                            if (x1 < 0) x1 = 0; else if (x1 >= w) x1 = w - 1;
+                            if (y0 < 0) y0 = 0; else if (y0 >= h) y0 = h - 1;
+                            if (y1 < 0) y1 = 0; else if (y1 >= h) y1 = h - 1;
                         } else {
                             x0 = (x0 % w + w) % w;
                             x1 = (x1 % w + w) % w;
@@ -4021,9 +4105,9 @@
                         let v11 = buf[y1 * w + x1];
 
                         let val = (1 - fx) * (1 - fy) * v00 + fx * (1 - fy) * v10 + (1 - fx) * fy * v01 + fx * fy * v11;
-                        sum += val;
+                        sum += val * smpW[k];
                     }
-                    tmp[rowOffset + x] = sum * invSteps;
+                    tmp[rowOffset + x] = sum;
                 }
             }
 
@@ -5744,15 +5828,74 @@
                     let angRad = ((p.blurAngle || 0) * Math.PI) / 180;
                     let dirX = Math.cos(angRad) * rad;
                     let dirY = Math.sin(angRad) * rad;
-                    let numSteps = Math.max(9, Math.min(33, Math.round(bVal * 1.5) | 1));
-                    if (numSteps % 2 === 0) numSteps += 1;
-                    let halfSteps = (numSteps - 1) / 2;
-                    for (let k = -halfSteps; k <= halfSteps; k++) {
-                        let t = k / halfSteps;
-                        let wt = Math.exp(-2.0 * t * t);
-                        let pix = evalRawGeneratorPixel(type, tx + dirX * t, ty + dirY * t, sx, sy, p, activeCymaticsSources, lay, lutR, lutG, lutB);
-                        rSum += pix[0] * wt; gSum += pix[1] * wt; bSum += pix[2] * wt;
-                        wSum += wt;
+                    let cStr = (p.blurComet || 0) / 100;
+
+                    if (cStr > 0) {
+                        let headSize = (p.cometHeadSize !== undefined ? p.cometHeadSize : 100) / 100;
+                        let bulbWidth = (p.cometBulbWidth !== undefined ? p.cometBulbWidth : 100) / 100;
+                        let tailDecay = (p.cometTailFade !== undefined ? p.cometTailFade : 50) / 100;
+                        let asymSign = (p.cometAsymmetry !== undefined ? p.cometAsymmetry : 100) >= 0 ? 1 : -1;
+
+                        let perpX = -dirY;
+                        let perpY = dirX;
+
+                        let tailSteps = 6;
+                        let headSteps = 2;
+
+                        for (let i = 0; i <= tailSteps; i++) {
+                            let t = i / tailSteps;
+                            let sLong = asymSign * t * (1 + 0.3 * cStr);
+                            let decayPow = 0.5 + tailDecay * 1.5;
+                            let wtLong = Math.pow(1 - t, decayPow);
+                            let bulbRadius = 0.35 * cStr * bulbWidth * headSize * Math.sqrt(Math.max(0, 1 - t * 0.85));
+
+                            let pixMain = evalRawGeneratorPixel(type, tx + dirX * sLong, ty + dirY * sLong, sx, sy, p, activeCymaticsSources, lay, lutR, lutG, lutB);
+                            rSum += pixMain[0] * wtLong; gSum += pixMain[1] * wtLong; bSum += pixMain[2] * wtLong;
+                            wSum += wtLong;
+
+                            if (bulbRadius > 0.005) {
+                                let wtCross = wtLong * 0.5;
+                                let pixP1 = evalRawGeneratorPixel(type, tx + dirX * sLong + perpX * bulbRadius, ty + dirY * sLong + perpY * bulbRadius, sx, sy, p, activeCymaticsSources, lay, lutR, lutG, lutB);
+                                let pixP2 = evalRawGeneratorPixel(type, tx + dirX * sLong - perpX * bulbRadius, ty + dirY * sLong - perpY * bulbRadius, sx, sy, p, activeCymaticsSources, lay, lutR, lutG, lutB);
+                                rSum += (pixP1[0] + pixP2[0]) * wtCross;
+                                gSum += (pixP1[1] + pixP2[1]) * wtCross;
+                                bSum += (pixP1[2] + pixP2[2]) * wtCross;
+                                wSum += wtCross * 2;
+                            }
+                        }
+
+                        for (let i = 1; i <= headSteps; i++) {
+                            let hFrac = i / headSteps;
+                            let sLong = -asymSign * hFrac * 0.25 * headSize * cStr;
+                            let headShape = Math.sqrt(Math.max(0, 1 - hFrac * hFrac));
+                            let wtLong = headShape;
+                            let bulbRadius = 0.35 * cStr * bulbWidth * headSize * headShape;
+
+                            let pixMain = evalRawGeneratorPixel(type, tx + dirX * sLong, ty + dirY * sLong, sx, sy, p, activeCymaticsSources, lay, lutR, lutG, lutB);
+                            rSum += pixMain[0] * wtLong; gSum += pixMain[1] * wtLong; bSum += pixMain[2] * wtLong;
+                            wSum += wtLong;
+
+                            if (bulbRadius > 0.005) {
+                                let wtCross = wtLong * 0.5;
+                                let pixP1 = evalRawGeneratorPixel(type, tx + dirX * sLong + perpX * bulbRadius, ty + dirY * sLong + perpY * bulbRadius, sx, sy, p, activeCymaticsSources, lay, lutR, lutG, lutB);
+                                let pixP2 = evalRawGeneratorPixel(type, tx + dirX * sLong - perpX * bulbRadius, ty + dirY * sLong - perpY * bulbRadius, sx, sy, p, activeCymaticsSources, lay, lutR, lutG, lutB);
+                                rSum += (pixP1[0] + pixP2[0]) * wtCross;
+                                gSum += (pixP1[1] + pixP2[1]) * wtCross;
+                                bSum += (pixP1[2] + pixP2[2]) * wtCross;
+                                wSum += wtCross * 2;
+                            }
+                        }
+                    } else {
+                        let numSteps = Math.max(5, Math.min(13, Math.round(bVal * 0.6) | 1));
+                        if (numSteps % 2 === 0) numSteps += 1;
+                        let halfSteps = (numSteps - 1) / 2;
+                        for (let k = -halfSteps; k <= halfSteps; k++) {
+                            let t = k / halfSteps;
+                            let wt = Math.exp(-2.0 * t * t);
+                            let pix = evalRawGeneratorPixel(type, tx + dirX * t, ty + dirY * t, sx, sy, p, activeCymaticsSources, lay, lutR, lutG, lutB);
+                            rSum += pix[0] * wt; gSum += pix[1] * wt; bSum += pix[2] * wt;
+                            wSum += wt;
+                        }
                     }
                 } else if (bType === 'zoom') {
                     let zcx = p.zoomBlurCenterX !== undefined ? parseFloat(p.zoomBlurCenterX) : 0.5;
@@ -5947,9 +6090,9 @@
                         let blurMode = p.blurClampEdge ? 'clamp' : 'wrap';
                         let bType = p.blurType || 'gaussian';
                         if (bType === 'directional') {
-                            applyDirectionalBlur(unwarpedR, blurTempR, w, h, parseInt(p.blur), p.blurAngle || 0, blurMode);
-                            applyDirectionalBlur(unwarpedG, blurTempG, w, h, parseInt(p.blur), p.blurAngle || 0, blurMode);
-                            applyDirectionalBlur(unwarpedB, blurTempB, w, h, parseInt(p.blur), p.blurAngle || 0, blurMode);
+                            applyDirectionalBlur(unwarpedR, blurTempR, w, h, parseInt(p.blur), p.blurAngle || 0, blurMode, p);
+                            applyDirectionalBlur(unwarpedG, blurTempG, w, h, parseInt(p.blur), p.blurAngle || 0, blurMode, p);
+                            applyDirectionalBlur(unwarpedB, blurTempB, w, h, parseInt(p.blur), p.blurAngle || 0, blurMode, p);
                         } else if (bType === 'zoom') {
                             let zcx = p.zoomBlurCenterX !== undefined ? parseFloat(p.zoomBlurCenterX) : 0.5;
                             let zcy = p.zoomBlurCenterY !== undefined ? parseFloat(p.zoomBlurCenterY) : 0.5;
@@ -6687,9 +6830,9 @@
                         let blurMode = isTiled ? 'wrap' : (p.blurClampEdge ? 'clamp' : 'wrap');
                         let bType = p.blurType || 'gaussian';
                         if (bType === 'directional') {
-                            applyDirectionalBlur(layerBufferR, blurTempR, w, h, parseInt(p.blur), p.blurAngle || 0, blurMode);
-                            applyDirectionalBlur(layerBufferG, blurTempG, w, h, parseInt(p.blur), p.blurAngle || 0, blurMode);
-                            applyDirectionalBlur(layerBufferB, blurTempB, w, h, parseInt(p.blur), p.blurAngle || 0, blurMode);
+                            applyDirectionalBlur(layerBufferR, blurTempR, w, h, parseInt(p.blur), p.blurAngle || 0, blurMode, p);
+                            applyDirectionalBlur(layerBufferG, blurTempG, w, h, parseInt(p.blur), p.blurAngle || 0, blurMode, p);
+                            applyDirectionalBlur(layerBufferB, blurTempB, w, h, parseInt(p.blur), p.blurAngle || 0, blurMode, p);
                         } else if (bType === 'zoom') {
                             let zcx = p.zoomBlurCenterX !== undefined ? parseFloat(p.zoomBlurCenterX) : 0.5;
                             let zcy = p.zoomBlurCenterY !== undefined ? parseFloat(p.zoomBlurCenterY) : 0.5;
@@ -6937,9 +7080,9 @@
                 let globalBlurMode = (useGlobalPreTransformBlur || isGlobalTiled) ? 'wrap' : (state.global.blurClampEdge ? 'clamp' : 'wrap');
                 let gBType = state.global.blurType || 'gaussian';
                 if (gBType === 'directional') {
-                    applyDirectionalBlur(blendBufferR, blurTempR, w, h, parseInt(state.global.blur), state.global.blurAngle || 0, globalBlurMode);
-                    applyDirectionalBlur(blendBufferG, blurTempG, w, h, parseInt(state.global.blur), state.global.blurAngle || 0, globalBlurMode);
-                    applyDirectionalBlur(blendBufferB, blurTempB, w, h, parseInt(state.global.blur), state.global.blurAngle || 0, globalBlurMode);
+                    applyDirectionalBlur(blendBufferR, blurTempR, w, h, parseInt(state.global.blur), state.global.blurAngle || 0, globalBlurMode, state.global);
+                    applyDirectionalBlur(blendBufferG, blurTempG, w, h, parseInt(state.global.blur), state.global.blurAngle || 0, globalBlurMode, state.global);
+                    applyDirectionalBlur(blendBufferB, blurTempB, w, h, parseInt(state.global.blur), state.global.blurAngle || 0, globalBlurMode, state.global);
                 } else if (gBType === 'zoom') {
                     let zcx = state.global.zoomBlurCenterX !== undefined ? parseFloat(state.global.zoomBlurCenterX) : 0.5;
                     let zcy = state.global.zoomBlurCenterY !== undefined ? parseFloat(state.global.zoomBlurCenterY) : 0.5;
@@ -7545,7 +7688,7 @@
         // значення за замовчуванням через || / ?? у renderProps()/evalGenerator()
         // самі, щойно з'являються на екрані для свого типу генератора.
         function freshLayerParams() {
-            return { seamless:false, scale:10, scaleX:10, scaleY:10, lockScale:true, layerScale:1, contrast:1, brightness:1, angle:0, perspectiveV:0, perspectiveH:0, blur:0, blurType:'gaussian', blurAngle:0, blurClampEdge:false, blurWithTransform:false, zoomBlurCenterX:0.5, zoomBlurCenterY:0.5, zoomBlurStrength:100,
+            return { seamless:false, scale:10, scaleX:10, scaleY:10, lockScale:true, layerScale:1, contrast:1, brightness:1, angle:0, perspectiveV:0, perspectiveH:0, blur:0, blurType:'gaussian', blurAngle:0, blurComet:0, cometHeadSize:100, cometBulbWidth:100, cometTailFade:50, cometAsymmetry:100, blurClampEdge:false, blurWithTransform:false, zoomBlurCenterX:0.5, zoomBlurCenterY:0.5, zoomBlurStrength:100,
                 dotSize: 0.25, dotSoftness: 0.05, dotGrid: 'square', dotShape: 'circle',
                 pixelGap: 0.0, pixelGapValue: 0.0, pixelGapSoftness: 0.0,
                 pixelGridType: 'standard', pixelShape: 'square', pixelCornerRadius: 0.1,
@@ -7571,7 +7714,7 @@
                 vignetteHighlights: 0,
                 vignetteCenterX: 0.5,
                 vignetteCenterY: 0.5,
-                grain:10, blur:0, blurType:'gaussian', blurAngle:0, blurClampEdge:false, blurWithTransform:false, zoomBlurCenterX:0.5, zoomBlurCenterY:0.5, zoomBlurStrength:100,
+                grain:10, blur:0, blurType:'gaussian', blurAngle:0, blurComet:0, cometHeadSize:100, cometBulbWidth:100, cometTailFade:50, cometAsymmetry:100, blurClampEdge:false, blurWithTransform:false, zoomBlurCenterX:0.5, zoomBlurCenterY:0.5, zoomBlurStrength:100,
                 globalZoom:1, globalScaleX:1, globalScaleY:1, globalRotation:0, globalOffsetX:0, globalOffsetY:0,
                 globalPerspectiveV:0, globalPerspectiveH:0,
                 tileMode:'off', tileRepeatX:2, tileRepeatY:2, tileMirrorX:true, tileMirrorY:true,
@@ -9574,7 +9717,19 @@
                         <button onclick="upd('blurType','zoom'); renderProps();" class="gen-btn ${lp.blurType==='zoom'?'active':''}">Zoom (Радіальне)</button>
                     </div>
                 </div>
-                ${(lp.blurType === 'directional') ? createSlider("Кут розмиття (°)", "blurAngle", -180, 180, 1, lp.blurAngle||0, false, 0) : ''}
+                ${(lp.blurType === 'directional') ? `
+                    ${createSlider("Кут розмиття (°)", "blurAngle", -180, 180, 1, lp.blurAngle||0, false, 0)}
+                    <div style="background: rgba(255,255,255,0.03); border: 1px solid var(--border-color, #27272a); border-radius: 8px; padding: 10px; margin: 8px 0 10px 0;">
+                        <div style="font-weight:700; color:var(--primary-color, #3b82f6); font-size:11px; margin-bottom:6px; display:flex; align-items:center; gap:6px;">
+                            <span>☄️ Ефект Комети (Comet)</span>
+                        </div>
+                        ${createSlider("Сила комети (%)", "blurComet", 0, 100, 1, lp.blurComet || 0, false, 0)}
+                        ${createSlider("Розмір голівки (%)", "cometHeadSize", 10, 200, 1, lp.cometHeadSize !== undefined ? lp.cometHeadSize : 100, false, 100)}
+                        ${createSlider("Форма капельки (Гулька %)", "cometBulbWidth", 0, 200, 1, lp.cometBulbWidth !== undefined ? lp.cometBulbWidth : 100, false, 100)}
+                        ${createSlider("Загасання хвоста (%)", "cometTailFade", 0, 100, 1, lp.cometTailFade !== undefined ? lp.cometTailFade : 50, false, 50)}
+                        ${createSlider("Асиметрія / Напрямок (%)", "cometAsymmetry", -100, 100, 1, lp.cometAsymmetry !== undefined ? lp.cometAsymmetry : 100, false, 100)}
+                    </div>
+                ` : ''}
                 ${(lp.blurType === 'zoom') ? `
                     ${createSlider("Центр X Zoom", "zoomBlurCenterX", 0, 1, 0.01, lp.zoomBlurCenterX !== undefined ? lp.zoomBlurCenterX : 0.5, false, 0.5)}
                     ${createSlider("Центр Y Zoom", "zoomBlurCenterY", 0, 1, 0.01, lp.zoomBlurCenterY !== undefined ? lp.zoomBlurCenterY : 0.5, false, 0.5)}
@@ -9861,7 +10016,19 @@
                         <button onclick="upd('blurType','zoom',true); renderGlobal();" class="gen-btn ${g.blurType==='zoom'?'active':''}">Zoom (Радіальне)</button>
                     </div>
                 </div>
-                ${(g.blurType === 'directional') ? createSlider("Кут розмиття (°)", "blurAngle", -180, 180, 1, g.blurAngle||0, true, 0) : ''}
+                ${(g.blurType === 'directional') ? `
+                    ${createSlider("Кут розмиття (°)", "blurAngle", -180, 180, 1, g.blurAngle||0, true, 0)}
+                    <div style="background: rgba(255,255,255,0.03); border: 1px solid var(--border-color, #27272a); border-radius: 8px; padding: 10px; margin: 8px 0 10px 0;">
+                        <div style="font-weight:700; color:var(--primary-color, #3b82f6); font-size:11px; margin-bottom:6px; display:flex; align-items:center; gap:6px;">
+                            <span>☄️ Ефект Комети (Comet)</span>
+                        </div>
+                        ${createSlider("Сила комети (%)", "blurComet", 0, 100, 1, g.blurComet || 0, true, 0)}
+                        ${createSlider("Розмір голівки (%)", "cometHeadSize", 10, 200, 1, g.cometHeadSize !== undefined ? g.cometHeadSize : 100, true, 100)}
+                        ${createSlider("Форма капельки (Гулька %)", "cometBulbWidth", 0, 200, 1, g.cometBulbWidth !== undefined ? g.cometBulbWidth : 100, true, 100)}
+                        ${createSlider("Загасання хвоста (%)", "cometTailFade", 0, 100, 1, g.cometTailFade !== undefined ? g.cometTailFade : 50, true, 50)}
+                        ${createSlider("Асиметрія / Напрямок (%)", "cometAsymmetry", -100, 100, 1, g.cometAsymmetry !== undefined ? g.cometAsymmetry : 100, true, 100)}
+                    </div>
+                ` : ''}
                 ${(g.blurType === 'zoom') ? `
                     ${createSlider("Центр X Zoom", "zoomBlurCenterX", 0, 1, 0.01, g.zoomBlurCenterX !== undefined ? g.zoomBlurCenterX : 0.5, true, 0.5)}
                     ${createSlider("Центр Y Zoom", "zoomBlurCenterY", 0, 1, 0.01, g.zoomBlurCenterY !== undefined ? g.zoomBlurCenterY : 0.5, true, 0.5)}
@@ -12139,7 +12306,7 @@
                     state.global.vignetteAmount = -parsedVal * 100;
                 }
 
-                const COORD_PARAMS = ['globalZoom', 'globalScaleX', 'globalScaleY', 'globalRotation', 'globalOffsetX', 'globalOffsetY', 'globalPerspectiveV', 'globalPerspectiveH', 'tileRepeatX', 'tileRepeatY', 'tileSeamOffsetX', 'tileSeamOffsetY', 'forceSeamlessSoftness', 'blur', 'blurClampEdge', 'blurType', 'zoomBlurCenterX', 'zoomBlurCenterY', 'zoomBlurStrength'];
+                const COORD_PARAMS = ['globalZoom', 'globalScaleX', 'globalScaleY', 'globalRotation', 'globalOffsetX', 'globalOffsetY', 'globalPerspectiveV', 'globalPerspectiveH', 'tileRepeatX', 'tileRepeatY', 'tileSeamOffsetX', 'tileSeamOffsetY', 'forceSeamlessSoftness', 'blur', 'blurClampEdge', 'blurType', 'zoomBlurCenterX', 'zoomBlurCenterY', 'zoomBlurStrength', 'blurAngle', 'blurComet', 'cometHeadSize', 'cometBulbWidth', 'cometTailFade', 'cometAsymmetry'];
                 if (COORD_PARAMS.includes(k) || k.startsWith('tile')) {
                     invalidateCaches();
                 }
