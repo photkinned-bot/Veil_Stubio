@@ -401,7 +401,17 @@
                 "Випадковий розкид кута (Rotation Randomness)": "Char Rotation Randomness",
                 "Сила роз'їжджання цифр (Displacement Strength)": "Displacement Strength",
                 "Хаотичність роз'їжджання (Displacement Randomness)": "Displacement Randomness",
-                "Випадковий розмір символів (Size Randomness)": "Char Size Randomness"
+                "Випадковий розмір символів (Size Randomness)": "Char Size Randomness",
+                "Хаотичність розкиду (Jitter)": "Jitter / Irregularity",
+                "Ступінь Мінковського (Exp)": "Minkowski Exponent (P)",
+                "Товщина шва / межі": "Border / Seam Width",
+                "М'якість країв шва": "Seam Edge Softness",
+                "Ширина 3D фаски клітинки": "Cell 3D Bevel Width",
+                "Розкид тону / висоти (Cell Randomness)": "Cell Tone / Height Randomness",
+                "Викривлення домену (Domain Warp)": "Domain Warp Strength",
+                "Фрактальні октави (Octaves)": "Fractal Octaves",
+                "Поворот сітки (°)": "Grid Rotation (°)",
+                "Сід випадковості (Seed)": "Random Seed"
             }
         };
 
@@ -822,6 +832,8 @@
                 noise(x, y) { return rawNoise2D(x, y, 1337, 'quintic'); },
                 noise2D: rawNoise2D,
                 pnoise2D: rawPnoise2D,
+                rawNoise2D: rawNoise2D,
+                rawPnoise2D: rawPnoise2D,
                 eval: evalLayer
             };
         })();
@@ -1256,27 +1268,266 @@
         };
 
         const Voronoi = {
-            hash: (x, y) => {
-                let n = (x * 1597334677 ^ y * 3812015801) >>> 0;
-                n = (n ^ (n >>> 15)) * 1597334677;
-                n = (n ^ (n >>> 13)) * 3812015801;
+            hash: (x, y, seed = 0) => {
+                let n = (Math.imul(x, 1597334677) ^ Math.imul(y, 3812015801) ^ Math.imul(seed, 31337)) >>> 0;
+                n = Math.imul(n ^ (n >>> 15), 1597334677);
+                n = Math.imul(n ^ (n >>> 13), 3812015801);
                 return ((n ^ (n >>> 16)) >>> 0) / 4294967296;
             },
-            dist: (px,py,qx,qy,m,e) => {
-                let dx=Math.abs(px-qx), dy=Math.abs(py-qy);
-                if(m==='manhattan') return dx+dy; if(m==='chebyshev') return Math.max(dx,dy);
-                if(m==='minkowski') return Math.pow(Math.pow(dx,e)+Math.pow(dy,e),1/e);
-                return Math.sqrt(dx*dx+dy*dy);
+
+            hashX: (x, y, seed = 0) => {
+                let n = (Math.imul(x, 1597334677) ^ Math.imul(y, 3812015801) ^ Math.imul(seed, 31337)) >>> 0;
+                n = Math.imul(n ^ (n >>> 15), 1597334677);
+                n = Math.imul(n ^ (n >>> 13), 3812015801);
+                return ((n ^ (n >>> 16)) >>> 0) / 4294967296;
             },
-            noise(x,y,mode='f1',m='euclidean',e=2){
-                let ix=Math.floor(x), iy=Math.floor(y), fx=x-ix, fy=y-iy;
-                let d1=8, d2=8;
-                for(let j=-1;j<=1;j++) for(let i=-1;i<=1;i++){
-                    let px=i+this.hash(ix+i,iy+j), py=j+this.hash(ix+i+31,iy+j+47);
-                    let d = this.dist(fx,fy,px,py,m,e);
-                    if(d<d1){ d2=d1; d1=d; } else if(d<d2) d2=d;
+
+            hashY: (x, y, seed = 0) => {
+                let n = (Math.imul(x, 3812015801) ^ Math.imul(y, 1597334677) ^ Math.imul(seed, 1013)) >>> 0;
+                n = Math.imul(n ^ (n >>> 15), 3812015801);
+                n = Math.imul(n ^ (n >>> 13), 1597334677);
+                return ((n ^ (n >>> 16)) >>> 0) / 4294967296;
+            },
+
+            dist: (dx, dy, metric = 'euclidean', exp = 2.0) => {
+                let adx = Math.abs(dx), ady = Math.abs(dy);
+                switch (metric) {
+                    case 'manhattan':
+                        return adx + ady;
+                    case 'chebyshev':
+                        return Math.max(adx, ady);
+                    case 'minkowski': {
+                        let e = Math.max(0.1, exp || 2.0);
+                        return Math.pow(Math.pow(adx, e) + Math.pow(ady, e), 1.0 / e);
+                    }
+                    case 'euclidean_sq':
+                        return adx * adx + ady * ady;
+                    case 'quadratic':
+                        return adx * adx + ady * ady + adx * ady;
+                    case 'minkowski_star': {
+                        let sqrtX = Math.sqrt(adx), sqrtY = Math.sqrt(ady);
+                        let sum = sqrtX + sqrtY;
+                        return sum * sum;
+                    }
+                    case 'euclidean':
+                    default:
+                        return Math.sqrt(adx * adx + ady * ady);
                 }
-                return mode==='f2_minus_f1'?Math.abs(d2-d1):mode==='f2'?d2:d1;
+            },
+
+            noise(x, y, mode = 'f1', m = 'euclidean', e = 2) {
+                return this.eval(x, y, 1, 1, { mode, metric: m, minkowskiExp: e });
+            },
+
+            eval(tx, ty, sx = 10, sy = 10, p = {}) {
+                const validModes = ['f1', 'f2', 'f3', 'f2_minus_f1', 'f1_plus_f2', 'f1_times_f2', 'f1_div_f2', 'cell_id', 'cell_color_grad', 'borders', 'cracks', 'crystal'];
+                const validMetrics = ['euclidean', 'manhattan', 'chebyshev', 'minkowski', 'euclidean_sq', 'quadratic'];
+
+                let mode = validModes.includes(p.mode) ? p.mode : (validModes.includes(p.voronoiMode) ? p.voronoiMode : 'f1');
+                let metric = validMetrics.includes(p.metric) ? p.metric : 'euclidean';
+                let exp = p.minkowskiExp !== undefined ? p.minkowskiExp : (p.distExp !== undefined ? p.distExp : 2.0);
+                let jitter = p.jitter !== undefined ? Math.max(0, p.jitter) : 1.0;
+                let seed = (p.seed || 0) | 0;
+                let isSeamless = p.seamless !== false;
+                let isInvert = !!p.invert;
+
+                // Domain Warping
+                let warpStr = p.warpStrength || 0;
+                let warpFreq = p.warpFreq || 2.0;
+
+                let scaleFactorX = (sx !== undefined ? sx : 10);
+                let scaleFactorY = (sy !== undefined ? sy : 10);
+
+                let periodX = Math.max(1, Math.round(scaleFactorX));
+                let periodY = Math.max(1, Math.round(scaleFactorY));
+
+                let nx = tx * periodX;
+                let ny = ty * periodY;
+
+                if (p.angle) {
+                    let rad = (p.angle * Math.PI) / 180;
+                    let cosA = Math.cos(rad), sinA = Math.sin(rad);
+                    let cx = periodX * 0.5, cy = periodY * 0.5;
+                    let dx = nx - cx, dy = ny - cy;
+                    nx = cx + dx * cosA - dy * sinA;
+                    ny = cy + dx * sinA + dy * cosA;
+                }
+
+                if (warpStr > 0) {
+                    let wx = Perlin.rawNoise2D(nx * warpFreq + 13.5, ny * warpFreq + 27.1, seed + 101);
+                    let wy = Perlin.rawNoise2D(nx * warpFreq + 71.3, ny * warpFreq + 83.9, seed + 307);
+                    nx += wx * warpStr;
+                    ny += wy * warpStr;
+                }
+
+                let octaves = Math.max(1, Math.min(6, p.octaves || 1));
+                if (octaves === 1) {
+                    let v = this.evalSingleOctave(nx, ny, periodX, periodY, mode, metric, exp, jitter, seed, isSeamless, p);
+                    return isInvert ? 1 - Math.max(0, Math.min(1, v)) : Math.max(0, Math.min(1, v));
+                } else {
+                    let lacunarity = p.lacunarity || 2.0;
+                    let gain = p.gain || 0.5;
+                    let total = 0, amp = 1.0, maxAmp = 0, freq = 1.0;
+                    for (let o = 0; o < octaves; o++) {
+                        let v = this.evalSingleOctave(nx * freq, ny * freq, periodX * freq, periodY * freq, mode, metric, exp, jitter, seed + o * 131, isSeamless, p);
+                        total += v * amp;
+                        maxAmp += amp;
+                        amp *= gain;
+                        freq *= lacunarity;
+                    }
+                    let res = total / maxAmp;
+                    return isInvert ? 1 - Math.max(0, Math.min(1, res)) : Math.max(0, Math.min(1, res));
+                }
+            },
+
+            evalSingleOctave(nx, ny, scaleX, scaleY, mode, metric, exp, jitter, seed, isSeamless, p) {
+                let periodX = Math.max(1, Math.round(scaleX));
+                let periodY = Math.max(1, Math.round(scaleY));
+
+                let ix = Math.floor(nx);
+                let iy = Math.floor(ny);
+                let fx = nx - ix;
+                let fy = ny - iy;
+
+                let d1 = 999999.0, d2 = 999999.0, d3 = 999999.0;
+                let id1 = 0, id2 = 0;
+                let cellCenterX1 = 0, cellCenterY1 = 0;
+
+                let range = 2;
+
+                for (let j = -range; j <= range; j++) {
+                    for (let i = -range; i <= range; i++) {
+                        let curIx = ix + i;
+                        let curIy = iy + j;
+
+                        let wrappedIx = curIx;
+                        let wrappedIy = curIy;
+
+                        if (isSeamless) {
+                            wrappedIx = ((curIx % periodX) + periodX) % periodX;
+                            wrappedIy = ((curIy % periodY) + periodY) % periodY;
+                        }
+
+                        let rndX = this.hashX(wrappedIx, wrappedIy, seed);
+                        let rndY = this.hashY(wrappedIx, wrappedIy, seed);
+
+                        let px = i + rndX * jitter;
+                        let py = j + rndY * jitter;
+
+                        let dx = fx - px;
+                        let dy = fy - py;
+
+                        let distVal = this.dist(dx, dy, metric, exp);
+
+                        let cellId = this.hashX(wrappedIx * 173 + 11, wrappedIy * 919 + 37, seed);
+
+                        if (distVal < d1) {
+                            d3 = d2;
+                            d2 = d1;
+                            d1 = distVal;
+                            id2 = id1;
+                            id1 = cellId;
+                            cellCenterX1 = px;
+                            cellCenterY1 = py;
+                        } else if (distVal < d2) {
+                            d3 = d2;
+                            d2 = distVal;
+                            id2 = cellId;
+                        } else if (distVal < d3) {
+                            d3 = distVal;
+                        }
+                    }
+                }
+
+                let val = 0;
+
+                switch (mode) {
+                    case 'f2':
+                        val = Math.min(1.0, d2 * 0.7);
+                        break;
+                    case 'f3':
+                        val = Math.min(1.0, d3 * 0.5);
+                        break;
+                    case 'f2_minus_f1':
+                        val = Math.min(1.0, (d2 - d1) * 1.2);
+                        break;
+                    case 'f1_plus_f2':
+                        val = Math.min(1.0, (d1 + d2) * 0.5);
+                        break;
+                    case 'f1_times_f2':
+                        val = Math.min(1.0, d1 * d2);
+                        break;
+                    case 'f1_div_f2':
+                        val = d2 > 0.0001 ? Math.min(1.0, d1 / d2) : 0;
+                        break;
+                    case 'cell_id': {
+                        let randMod = p.cellRandomness !== undefined ? p.cellRandomness : 0.5;
+                        let baseVal = id1;
+                        if (randMod < 1.0) {
+                            baseVal = id1 * randMod + (1 - randMod) * 0.5;
+                        }
+                        val = baseVal;
+                        break;
+                    }
+                    case 'cell_color_grad': {
+                        let edgeDist = (d2 - d1) * 0.5;
+                        let normCenter = d1 / Math.max(0.001, d1 + edgeDist);
+                        val = 1.0 - Math.min(1.0, normCenter);
+                        break;
+                    }
+                    case 'borders':
+                    case 'cracks': {
+                        let edgeWidth = p.borderWidth !== undefined ? p.borderWidth : 0.08;
+                        let edgeSoft = p.borderSoftness !== undefined ? p.borderSoftness : 0.05;
+                        let diff = d2 - d1;
+                        if (edgeSoft <= 0.001) {
+                            val = diff < edgeWidth ? 1.0 : 0.0;
+                        } else {
+                            val = 1.0 - Math.max(0, Math.min(1, (diff - edgeWidth) / edgeSoft));
+                        }
+                        if (mode === 'cracks') {
+                            val = 1.0 - val;
+                        }
+                        break;
+                    }
+                    case 'crystal': {
+                        let dx = fx - cellCenterX1;
+                        let dy = fy - cellCenterY1;
+                        let angle = Math.atan2(dy, dx);
+                        val = (angle + Math.PI) / (2 * Math.PI);
+                        break;
+                    }
+                    case 'f1':
+                    default:
+                        val = Math.min(1.0, d1);
+                        break;
+                }
+
+                const validProfiles = ['flat', 'dome', 'cone', 'crater', 'beveled'];
+                let profile = validProfiles.includes(p.cellProfile) ? p.cellProfile : 'flat';
+
+                if (profile !== 'flat' && mode !== 'borders' && mode !== 'cracks') {
+                    let r = Math.max(0, Math.min(1, d1));
+                    switch (profile) {
+                        case 'dome':
+                            val *= Math.sqrt(Math.max(0, 1.0 - r * r));
+                            break;
+                        case 'cone':
+                            val *= (1.0 - r);
+                            break;
+                        case 'crater':
+                            val *= (r * r);
+                            break;
+                        case 'beveled': {
+                            let bw = p.cellBevelWidth || 0.2;
+                            let slope = Math.min(1.0, (d2 - d1) / Math.max(0.01, bw));
+                            val *= slope;
+                            break;
+                        }
+                    }
+                }
+
+                return Math.max(0, Math.min(1, val));
             }
         };
 
@@ -5107,7 +5358,7 @@
                 case 'cymatics': v = Cymatics.noise(tx, ty, p, cymaticsSources, sx, sy); break;
                 case 'simplex': v = Simplex.eval(tx, ty, sx, sy, p); break;
                 case 'perlin': v = Perlin.eval(tx, ty, sx, sy, p); break;
-                case 'voronoi': v=Voronoi.noise(tx*sx,ty*sy,p.mode||'f1',p.metric||'euclidean',p.distExp||2); break;
+                case 'voronoi': v = Voronoi.eval(tx, ty, sx, sy, p); break;
                 case 'fbm': v=fbm(tx*sx,ty*sy,p.octaves||3,p.lacunarity??2,p.gain??0.5,'simplex'); break;
                 case 'ridged': v=ridged(tx*sx,ty*sy,p.octaves||3,p.lacunarity??2,p.gain??0.5,p); break;
                 case 'sine': v = SinusoidGenerator.eval(tx, ty, sx, sy, p); break;
@@ -5412,7 +5663,8 @@
 
             function evalRawGeneratorPixel(type, tx0, ty0, sx0, sy0, p, activeCymaticsSources, lay, lutR, lutG, lutB) {
                 let v = 0;
-                if (p.seamless || gForceSeamless) {
+                let isSelfSeamlessGen = (type === 'voronoi' || type === 'sine' || type === 'hexagon');
+                if ((p.seamless && !isSelfSeamlessGen) || gForceSeamless) {
                     let tx00 = tx0 % 1.0; if (tx00 < 0) tx00 += 1.0;
                     let ty00 = ty0 % 1.0; if (ty00 < 0) ty00 += 1.0;
                     
@@ -6355,7 +6607,8 @@
                                 targetBufB[idx] = Math.max(0, Math.min(1, pb));
                             } else {
                                 let v = 0;
-                                if (p.seamless || gForceSeamless) {
+                                let isSelfSeamlessGen = (lay.generatorType === 'voronoi' || lay.generatorType === 'sine' || lay.generatorType === 'hexagon');
+                                if ((p.seamless && !isSelfSeamlessGen) || gForceSeamless) {
                                     let tx0 = tx % 1.0; if (tx0 < 0) tx0 += 1.0;
                                     let ty0 = ty % 1.0; if (ty0 < 0) ty0 += 1.0;
                                     
@@ -7521,10 +7774,14 @@
                 p.ridgeWarp = Math.random() < 0.4 ? parseFloat((Math.random() * 0.8).toFixed(2)) : 0;
             }
             if (lay.generatorType === 'voronoi') {
-                let metrics = ['euclidean', 'manhattan', 'chebyshev'];
-                let modes = ['f1', 'f2', 'f2_minus_f1'];
+                let metrics = ['euclidean', 'manhattan', 'chebyshev', 'minkowski', 'euclidean_sq', 'quadratic'];
+                let modes = ['f1', 'f2', 'f2_minus_f1', 'cell_id', 'borders', 'cracks', 'cell_color_grad'];
                 p.metric = metrics[Math.floor(Math.random() * metrics.length)];
                 p.mode = modes[Math.floor(Math.random() * modes.length)];
+                p.jitter = parseFloat((0.4 + Math.random() * 0.8).toFixed(2));
+                p.seed = Math.floor(Math.random() * 10000);
+                p.seamless = true;
+                p.cellProfile = 'flat';
             }
             if (lay.generatorType === 'sine') {
                 let modes = ['cross_add', 'grid_mult', 'horizontal', 'vertical', 'diagonal', 'radial', 'hex', 'cross_max', 'cross_diff'];
@@ -8945,7 +9202,95 @@
                     algoSpecificHTML += createSlider("Частота викривлення", "ridgeWarpFreq", 0.5, 10.0, 0.5, lp.ridgeWarpFreq || 2.0, false, 2.0);
                 }
             }
-            if(lay.generatorType==='voronoi') algoSpecificHTML+=`<div class="property-group grid-2"><div><label class="property-label">Метрика</label><select class="form-control" onchange="upd('metric',this.value)"><option value="euclidean" ${lp.metric==='euclidean'?'selected':''}>Euclidean</option><option value="manhattan" ${lp.metric==='manhattan'?'selected':''}>Manhattan</option><option value="chebyshev" ${lp.metric==='chebyshev'?'selected':''}>Chebyshev</option></select></div><div><label class="property-label">Режим</label><select class="form-control" onchange="upd('mode',this.value)"><option value="f1" ${lp.mode==='f1'?'selected':''}>F1</option><option value="f2" ${lp.mode==='f2'?'selected':''}>F2</option><option value="f2_minus_f1" ${lp.mode==='f2_minus_f1'?'selected':''}>F2-F1</option></select></div></div>`;
+            if (lay.generatorType === 'voronoi') {
+                algoSpecificHTML += `
+                <div class="section-title">Діаграма Вороного (Voronoi PRO & Cellular)</div>
+                <div class="property-group">
+                    <label class="property-label">Режим виводу (Output Mode)</label>
+                    <div class="gen-grid" style="grid-template-columns:repeat(3,1fr);">
+                        <button type="button" onclick="upd('mode','f1'); renderProps();" class="gen-btn ${(lp.mode||'f1')==='f1'?'active':''}">F1 (Центр)</button>
+                        <button type="button" onclick="upd('mode','f2'); renderProps();" class="gen-btn ${lp.mode==='f2'?'active':''}">F2 (2-га)</button>
+                        <button type="button" onclick="upd('mode','f3'); renderProps();" class="gen-btn ${lp.mode==='f3'?'active':''}">F3 (3-тя)</button>
+                        <button type="button" onclick="upd('mode','f2_minus_f1'); renderProps();" class="gen-btn ${lp.mode==='f2_minus_f1'?'active':''}">F2 - F1 (Межі)</button>
+                        <button type="button" onclick="upd('mode','f1_plus_f2'); renderProps();" class="gen-btn ${lp.mode==='f1_plus_f2'?'active':''}">F1 + F2</button>
+                        <button type="button" onclick="upd('mode','f1_times_f2'); renderProps();" class="gen-btn ${lp.mode==='f1_times_f2'?'active':''}">F1 × F2</button>
+                        <button type="button" onclick="upd('mode','f1_div_f2'); renderProps();" class="gen-btn ${lp.mode==='f1_div_f2'?'active':''}">F1 / F2</button>
+                        <button type="button" onclick="upd('mode','cell_id'); renderProps();" class="gen-btn ${lp.mode==='cell_id'?'active':''}">Cell ID (Плитки)</button>
+                        <button type="button" onclick="upd('mode','cell_color_grad'); renderProps();" class="gen-btn ${lp.mode==='cell_color_grad'?'active':''}">Cell Grad (Ядро)</button>
+                        <button type="button" onclick="upd('mode','borders'); renderProps();" class="gen-btn ${lp.mode==='borders'?'active':''}">Шви (Borders)</button>
+                        <button type="button" onclick="upd('mode','cracks'); renderProps();" class="gen-btn ${lp.mode==='cracks'?'active':''}">Тріщини (Cracks)</button>
+                        <button type="button" onclick="upd('mode','crystal'); renderProps();" class="gen-btn ${lp.mode==='crystal'?'active':''}">Кристал (Crystal)</button>
+                    </div>
+                </div>
+
+                <div class="property-group">
+                    <label class="property-label">Метрика відстані (Distance Metric)</label>
+                    <div class="gen-grid" style="grid-template-columns:repeat(3,1fr);">
+                        <button type="button" onclick="upd('metric','euclidean'); renderProps();" class="gen-btn ${(lp.metric||'euclidean')==='euclidean'?'active':''}">Euclidean</button>
+                        <button type="button" onclick="upd('metric','manhattan'); renderProps();" class="gen-btn ${lp.metric==='manhattan'?'active':''}">Manhattan</button>
+                        <button type="button" onclick="upd('metric','chebyshev'); renderProps();" class="gen-btn ${lp.metric==='chebyshev'?'active':''}">Chebyshev</button>
+                        <button type="button" onclick="upd('metric','minkowski'); renderProps();" class="gen-btn ${lp.metric==='minkowski'?'active':''}">Minkowski P</button>
+                        <button type="button" onclick="upd('metric','euclidean_sq'); renderProps();" class="gen-btn ${lp.metric==='euclidean_sq'?'active':''}">Euclid Sq</button>
+                        <button type="button" onclick="upd('metric','quadratic'); renderProps();" class="gen-btn ${lp.metric==='quadratic'?'active':''}">Quadratic</button>
+                    </div>
+                </div>
+
+                <div class="property-group">
+                    <label class="property-label">Профіль 3D рельєфу клітинок (Cell 3D Profile)</label>
+                    <div class="gen-grid" style="grid-template-columns:repeat(3,1fr);">
+                        <button type="button" onclick="upd('cellProfile','flat'); renderProps();" class="gen-btn ${(lp.cellProfile||'flat')==='flat'?'active':''}">Плоский (Flat)</button>
+                        <button type="button" onclick="upd('cellProfile','dome'); renderProps();" class="gen-btn ${lp.cellProfile==='dome'?'active':''}">Купол (Dome)</button>
+                        <button type="button" onclick="upd('cellProfile','cone'); renderProps();" class="gen-btn ${lp.cellProfile==='cone'?'active':''}">Конус (Cone)</button>
+                        <button type="button" onclick="upd('cellProfile','crater'); renderProps();" class="gen-btn ${lp.cellProfile==='crater'?'active':''}">Кратер (Crater)</button>
+                        <button type="button" onclick="upd('cellProfile','beveled'); renderProps();" class="gen-btn ${lp.cellProfile==='beveled'?'active':''}">Фаска (Bevel)</button>
+                    </div>
+                </div>
+                `;
+
+                algoSpecificHTML += createSlider("Хаотичність розкиду (Jitter)", "jitter", 0.0, 2.0, 0.05, lp.jitter !== undefined ? lp.jitter : 1.0, false, 1.0);
+
+                if (lp.metric === 'minkowski') {
+                    algoSpecificHTML += createSlider("Ступінь Мінковського (Exp)", "minkowskiExp", 0.2, 8.0, 0.1, lp.minkowskiExp !== undefined ? lp.minkowskiExp : 2.0, false, 2.0);
+                }
+
+                if (lp.mode === 'borders' || lp.mode === 'cracks') {
+                    algoSpecificHTML += createSlider("Товщина шва / межі", "borderWidth", 0.01, 0.4, 0.01, lp.borderWidth !== undefined ? lp.borderWidth : 0.08, false, 0.08);
+                    algoSpecificHTML += createSlider("М'якість країв шва", "borderSoftness", 0.0, 0.5, 0.01, lp.borderSoftness !== undefined ? lp.borderSoftness : 0.05, false, 0.05);
+                }
+
+                if (lp.cellProfile === 'beveled') {
+                    algoSpecificHTML += createSlider("Ширина 3D фаски клітинки", "cellBevelWidth", 0.05, 0.5, 0.01, lp.cellBevelWidth !== undefined ? lp.cellBevelWidth : 0.2, false, 0.2);
+                }
+
+                algoSpecificHTML += createSlider("Розкид тону / висоти (Cell Randomness)", "cellRandomness", 0.0, 1.0, 0.05, lp.cellRandomness !== undefined ? lp.cellRandomness : 0.5, false, 0.5);
+
+                algoSpecificHTML += createSlider("Викривлення домену (Domain Warp)", "warpStrength", 0.0, 3.0, 0.05, lp.warpStrength || 0, false, 0);
+                if ((lp.warpStrength || 0) > 0) {
+                    algoSpecificHTML += createSlider("Частота викривлення", "warpFreq", 0.5, 10.0, 0.5, lp.warpFreq || 2.0, false, 2.0);
+                }
+
+                algoSpecificHTML += createSlider("Фрактальні октави (Octaves)", "octaves", 1, 6, 1, lp.octaves || 1, false, 1);
+                if ((lp.octaves || 1) > 1) {
+                    algoSpecificHTML += createSlider("Лакунарність (Lacunarity)", "lacunarity", 1.2, 4.0, 0.1, lp.lacunarity !== undefined ? lp.lacunarity : 2.0, false, 2.0);
+                    algoSpecificHTML += createSlider("Загасання (Gain)", "gain", 0.1, 0.9, 0.05, lp.gain !== undefined ? lp.gain : 0.5, false, 0.5);
+                }
+
+                algoSpecificHTML += createSlider("Поворот сітки (°)", "angle", -180, 180, 1, lp.angle || 0, false, 0);
+                algoSpecificHTML += createSlider("Сід випадковості (Seed)", "seed", 0, 9999, 1, lp.seed !== undefined ? lp.seed : 1337, false, 1337);
+
+                algoSpecificHTML += `
+                <div class="property-group grid-2" style="margin-top:8px;">
+                    <label style="font-size:11px; cursor:pointer; display:flex; align-items:center; gap:6px;">
+                        <input type="checkbox" ${lp.seamless !== false ? 'checked' : ''} onchange="upd('seamless', this.checked); renderProps();">
+                        <span><strong>Безшовний тайлінг (Seamless)</strong></span>
+                    </label>
+                    <label style="font-size:11px; cursor:pointer; display:flex; align-items:center; gap:6px;">
+                        <input type="checkbox" ${lp.invert ? 'checked' : ''} onchange="upd('invert', this.checked); renderProps();">
+                        <span><strong>Інверсія (Invert)</strong></span>
+                    </label>
+                </div>
+                `;
+            }
             if (lay.generatorType === 'sine') {
                 algoSpecificHTML += `
                 <div class="section-title">Параметри синусоїди (Sine Waves PRO)</div>
@@ -9367,9 +9712,23 @@
                 return renderAccordionBlock('layer', key, meta.title, meta.icon, layerBlockContents[key]);
             }).join('');
 
+            let activeId = document.activeElement ? document.activeElement.id : null;
+            let activeSelectionStart = document.activeElement && typeof document.activeElement.selectionStart === 'number' ? document.activeElement.selectionStart : null;
+            let activeSelectionEnd = document.activeElement && typeof document.activeElement.selectionEnd === 'number' ? document.activeElement.selectionEnd : null;
+
             p.innerHTML = html;
             window.lay = lay;
             renderStickyHeader();
+
+            if (activeId) {
+                let activeEl = document.getElementById(activeId);
+                if (activeEl) {
+                    activeEl.focus();
+                    if (activeSelectionStart !== null && activeSelectionEnd !== null && activeEl.setSelectionRange) {
+                        try { activeEl.setSelectionRange(activeSelectionStart, activeSelectionEnd); } catch(e){}
+                    }
+                }
+            }
         }
 
         function renderGlobal() {
@@ -11800,6 +12159,16 @@
 
                 if (['visible', 'generatorType', 'name', 'opacity', 'blendMode'].includes(k)) {
                     lay[k] = val;
+                    if (k === 'generatorType' && val === 'voronoi') {
+                        const validModes = ['f1', 'f2', 'f3', 'f2_minus_f1', 'f1_plus_f2', 'f1_times_f2', 'f1_div_f2', 'cell_id', 'cell_color_grad', 'borders', 'cracks', 'crystal'];
+                        const validMetrics = ['euclidean', 'manhattan', 'chebyshev', 'minkowski', 'euclidean_sq', 'quadratic'];
+                        const validProfiles = ['flat', 'dome', 'cone', 'crater', 'beveled'];
+                        if (!validModes.includes(lay.params.mode)) lay.params.mode = 'f1';
+                        if (!validMetrics.includes(lay.params.metric)) lay.params.metric = 'euclidean';
+                        if (!validProfiles.includes(lay.params.cellProfile)) lay.params.cellProfile = 'flat';
+                        if (lay.params.jitter === undefined) lay.params.jitter = 1.0;
+                        if (lay.params.seed === undefined) lay.params.seed = 1337;
+                    }
                     if (['visible', 'generatorType', 'name'].includes(k)) { 
                         lay.isDirty = true;
                         renderProps(); 
@@ -11814,7 +12183,7 @@
                 } else {
                     lay.params[k] = val;
                     lay.isDirty = true;
-                    if (['seamless', 'useThreshold', 'useLevels', 'useFindEdges', 'usePosterize', 'brushTool', 'gradType', 'spreadMethod', 'sourceMode', 'metric', 'mode', 'perlinMode', 'simplexMode', 'perlinCurve', 'lockScale', 'blurClampEdge', 'enableRays', 'enableRings', 'blurType', 'colorMode', 'palettePreset', 'sineMode', 'sineProfile'].includes(k)) {
+                    if (['seamless', 'useThreshold', 'useLevels', 'useFindEdges', 'usePosterize', 'brushTool', 'gradType', 'spreadMethod', 'sourceMode', 'metric', 'mode', 'cellProfile', 'perlinMode', 'simplexMode', 'perlinCurve', 'lockScale', 'blurClampEdge', 'enableRays', 'enableRings', 'blurType', 'colorMode', 'palettePreset', 'sineMode', 'sineProfile'].includes(k)) {
                         renderProps();
                     }
                     if (String(k).startsWith('brush')) updateBrushPreview();
