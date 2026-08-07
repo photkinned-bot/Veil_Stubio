@@ -54,6 +54,14 @@
                 <button onclick="addLayer()" class="btn btn-primary" style="padding:4px 10px; font-size:11px;" data-i18n="btn_add_layer">+ Шар</button>
             </div>
             <div id="layersList" class="layers-list"></div>
+            <div class="active-users-bar" id="activeUsersBar" title="Кількість активних користувачів по всьому світу" data-i18n-title="active_users_tooltip">
+                <div class="active-users-status">
+                    <span class="active-users-pulse"></span>
+                    <span class="active-users-icon">🌐</span>
+                    <span class="active-users-label" data-i18n="active_users_label">Активні юзери у світі:</span>
+                </div>
+                <span class="active-users-count" id="activeUsersCount">1</span>
+            </div>
         </aside>
         <div class="resize-handle" id="resizeLeft"></div>
 

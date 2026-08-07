@@ -25,6 +25,8 @@
 
                 panel_layers: "Шари",
                 btn_add_layer: "+ Шар",
+                active_users_label: "Активні юзери у світі:",
+                active_users_tooltip: "Кількість активних користувачів по всьому світу",
                 res_label: "Роздільна здатність:",
                 render_label: "Рендер:",
                 fps_label: "FPS:",
@@ -224,6 +226,8 @@
 
                 panel_layers: "Layers",
                 btn_add_layer: "+ Layer",
+                active_users_label: "Active users worldwide:",
+                active_users_tooltip: "Number of active users worldwide",
                 res_label: "Resolution:",
                 render_label: "Render:",
                 fps_label: "FPS:",
@@ -14249,4 +14253,59 @@
                 requestAnimationFrame(fpsTick);
             }
             requestAnimationFrame(fpsTick);
+        })();
+
+        // --- Active Users Worldwide Tracker (Strict Real-time) ---
+        (function initActiveUsersTracker() {
+            let clientId = sessionStorage.getItem('veil_session_client_id');
+            if (!clientId) {
+                clientId = 'session_' + Math.random().toString(36).substring(2, 11) + Date.now().toString(36);
+                sessionStorage.setItem('veil_session_client_id', clientId);
+            }
+
+            const countEl = $('activeUsersCount');
+            if (!countEl) return;
+
+            let lastCount = 0;
+
+            function formatNumber(num) {
+                return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+            }
+
+            async function fetchActiveUsers() {
+                try {
+                    const res = await fetch(`/api/active-users?clientId=${encodeURIComponent(clientId)}`);
+                    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                    const data = await res.json();
+                    if (data && typeof data.activeUsers === 'number') {
+                        const newCount = data.activeUsers;
+                        countEl.textContent = formatNumber(newCount);
+                        
+                        if (lastCount !== 0 && lastCount !== newCount) {
+                            countEl.classList.add('updated');
+                            setTimeout(() => countEl.classList.remove('updated'), 600);
+                        }
+                        lastCount = newCount;
+                    }
+                } catch (err) {
+                    countEl.textContent = '1';
+                }
+            }
+
+            // Send leave signal on page unload or close
+            function sendLeaveSignal() {
+                const url = `/api/active-users/leave?clientId=${encodeURIComponent(clientId)}`;
+                if (navigator.sendBeacon) {
+                    navigator.sendBeacon(url);
+                } else {
+                    fetch(url, { method: 'POST', keepalive: true }).catch(() => {});
+                }
+            }
+
+            window.addEventListener('beforeunload', sendLeaveSignal);
+            window.addEventListener('pagehide', sendLeaveSignal);
+
+            fetchActiveUsers();
+            // Ping heartbeat every 5 seconds for live accuracy
+            setInterval(fetchActiveUsers, 5000);
         })();
