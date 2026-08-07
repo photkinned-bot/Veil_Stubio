@@ -253,8 +253,10 @@ export class MapGeneratorTabComponent {
 
               <div style="display:flex; align-items:center; gap:4px;">
                 <span style="color:var(--text-muted, #a1a1aa);">Якість прев'ю:</span>
+                <button class="res-btn-map ${this.targetResolution === 256 ? 'active' : ''}" data-res="256">256</button>
                 <button class="res-btn-map ${this.targetResolution === 512 ? 'active' : ''}" data-res="512">512</button>
                 <button class="res-btn-map ${this.targetResolution === 1024 ? 'active' : ''}" data-res="1024">1024</button>
+                <button class="res-btn-map ${this.targetResolution === 2048 ? 'active' : ''}" data-res="2048">2048</button>
               </div>
 
               <div style="width:1px; height:16px; background:rgba(255,255,255,0.15);"></div>

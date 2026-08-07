@@ -2127,6 +2127,106 @@
             },
 
             DYNAMIC_BITMAPS: new Map(),
+            CHAR_CACHE: new Map(),
+
+            getCharGridData(ch, style = 'pixel_5x7', font = 'sans-serif') {
+                if (!ch) ch = '0';
+                const cacheKey = `${ch}_${style}_${font}`;
+                if (this.CHAR_CACHE.has(cacheKey)) {
+                    return this.CHAR_CACHE.get(cacheKey);
+                }
+
+                let gridW = 5, gridH = 7, isSmooth = false;
+                if (style === 'pixel_3x5') { gridW = 3; gridH = 5; }
+                else if (style === 'pixel_5x7') { gridW = 5; gridH = 7; }
+                else if (style === 'pixel_8x12') { gridW = 8; gridH = 12; }
+                else if (style === 'pixel_12x18') { gridW = 12; gridH = 18; }
+                else if (style === 'pixel_16x24') { gridW = 16; gridH = 24; }
+                else if (style === 'hd_smooth_32x32') { gridW = 32; gridH = 32; isSmooth = true; }
+                else if (style === 'hd_smooth_64x64') { gridW = 64; gridH = 64; isSmooth = true; }
+
+                if (style === 'pixel_5x7' && font === 'monospace' && this.BITMAPS[ch]) {
+                    const bmp = this.BITMAPS[ch];
+                    const data = new Float32Array(35);
+                    for (let y = 0; y < 7; y++) {
+                        let rowMask = bmp[y];
+                        for (let x = 0; x < 5; x++) {
+                            if ((rowMask & (1 << (4 - x))) !== 0) {
+                                data[y * 5 + x] = 1.0;
+                            }
+                        }
+                    }
+                    const resObj = { gridW: 5, gridH: 7, data, isSmooth: false };
+                    this.CHAR_CACHE.set(cacheKey, resObj);
+                    return resObj;
+                }
+
+                // Dynamic high quality rasterization for custom characters, Ukrainian/Cyrillic letters, symbols and HD resolutions
+                const canvasW = gridW * 4;
+                const canvasH = gridH * 4;
+                const data = new Float32Array(gridW * gridH);
+
+                try {
+                    const offCanvas = document.createElement('canvas');
+                    offCanvas.width = canvasW;
+                    offCanvas.height = canvasH;
+                    const ctx = offCanvas.getContext('2d', { willReadFrequently: true });
+
+                    if (ctx) {
+                        ctx.fillStyle = '#000000';
+                        ctx.fillRect(0, 0, canvasW, canvasH);
+                        ctx.fillStyle = '#ffffff';
+
+                        const fontSize = Math.floor(canvasH * 0.82);
+                        let fontStack = 'sans-serif';
+                        if (font === 'serif') fontStack = 'Georgia, "Times New Roman", serif';
+                        else if (font === 'monospace') fontStack = 'Consolas, Monaco, "Courier New", monospace';
+                        else if (font === 'system-ui') fontStack = 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+                        else fontStack = '"Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif';
+
+                        ctx.font = `bold ${fontSize}px ${fontStack}`;
+                        ctx.textAlign = 'center';
+                        ctx.textBaseline = 'middle';
+                        ctx.fillText(ch, canvasW / 2, canvasH / 2);
+
+                        const imgData = ctx.getImageData(0, 0, canvasW, canvasH);
+                        const imgPixels = imgData.data;
+
+                        const scaleX = canvasW / gridW;
+                        const scaleY = canvasH / gridH;
+
+                        for (let gy = 0; gy < gridH; gy++) {
+                            for (let gx = 0; gx < gridW; gx++) {
+                                let startX = Math.floor(gx * scaleX);
+                                let startY = Math.floor(gy * scaleY);
+                                let endX = Math.floor((gx + 1) * scaleX);
+                                let endY = Math.floor((gy + 1) * scaleY);
+                                let sum = 0, count = 0;
+
+                                for (let py = startY; py < endY; py++) {
+                                    for (let px = startX; px < endX; px++) {
+                                        let idx = (py * canvasW + px) * 4;
+                                        sum += imgPixels[idx];
+                                        count++;
+                                    }
+                                }
+                                let avg = count > 0 ? (sum / (count * 255)) : 0;
+                                if (isSmooth) {
+                                    data[gy * gridW + gx] = avg;
+                                } else {
+                                    data[gy * gridW + gx] = avg > 0.32 ? 1.0 : 0.0;
+                                }
+                            }
+                        }
+                    }
+                } catch(e) {
+                    console.warn('Error rasterizing character grid:', ch, e);
+                }
+
+                const resObj = { gridW, gridH, data, isSmooth };
+                this.CHAR_CACHE.set(cacheKey, resObj);
+                return resObj;
+            },
 
             getCharBitmap(ch) {
                 if (!ch) ch = '0';
@@ -2147,53 +2247,19 @@
                     return this.BITMAPS[upper];
                 }
 
-                // High-precision normalized 10x14 -> 5x7 bitmap generator for any custom character
-                try {
-                    let offCanvas = document.createElement('canvas');
-                    offCanvas.width = 10;
-                    offCanvas.height = 14;
-                    let ctx = offCanvas.getContext('2d', { willReadFrequently: true });
-                    if (ctx) {
-                        ctx.fillStyle = '#000000';
-                        ctx.fillRect(0, 0, 10, 14);
-                        ctx.fillStyle = '#ffffff';
-                        ctx.font = 'bold 11px monospace, sans-serif';
-                        ctx.textAlign = 'center';
-                        ctx.textBaseline = 'middle';
-                        ctx.fillText(ch, 5, 7);
-
-                        let imgData = ctx.getImageData(0, 0, 10, 14);
-                        let data = imgData.data;
-                        let rows = new Array(7).fill(0);
-
-                        for (let y = 0; y < 7; y++) {
-                            let rowMask = 0;
-                            for (let x = 0; x < 5; x++) {
-                                let srcX = x * 2;
-                                let srcY = y * 2;
-                                let sum = 0;
-                                for (let dy = 0; dy < 2; dy++) {
-                                    for (let dx = 0; dx < 2; dx++) {
-                                        let idx = ((srcY + dy) * 10 + (srcX + dx)) * 4;
-                                        sum += data[idx];
-                                    }
-                                }
-                                if (sum > 140) {
-                                    rowMask |= (1 << (4 - x));
-                                }
-                            }
-                            rows[y] = rowMask;
+                let obj = this.getCharGridData(ch, 'pixel_5x7', 'monospace');
+                let rows = new Array(7).fill(0);
+                for (let y = 0; y < 7; y++) {
+                    let mask = 0;
+                    for (let x = 0; x < 5; x++) {
+                        if (obj.data[y * 5 + x] > 0.5) {
+                            mask |= (1 << (4 - x));
                         }
-                        this.DYNAMIC_BITMAPS.set(ch, rows);
-                        return rows;
                     }
-                } catch (e) {
-                    console.warn('Error generating dynamic char bitmap for:', ch, e);
+                    rows[y] = mask;
                 }
-
-                let fallback = this.BITMAPS['0'];
-                this.DYNAMIC_BITMAPS.set(ch, fallback);
-                return fallback;
+                this.DYNAMIC_BITMAPS.set(ch, rows);
+                return rows;
             },
 
             eval7Segment(cx, cy, digit, glow) {
@@ -2295,9 +2361,9 @@
 
                 let maxVal = 0.0;
 
-                // Range of neighboring candidate cells to check if displacement or size jitter allows cross-cell overlap
-                let rangeX = (displacement > 0.001 || digitScaleJitter > 0.2) ? 1 : 0;
-                let rangeY = (displacement > 0.001 || digitScaleJitter > 0.2) ? 1 : 0;
+                // Range of neighboring candidate cells to check if displacement, staggered grid, or size jitter allows cross-cell overlap
+                let rangeX = (displacement > 0.001 || digitScaleJitter > 0.01 || gridType === 'staggered_h' || charAngle !== 0 || charAngleJitter > 0) ? 1 : 0;
+                let rangeY = (displacement > 0.001 || digitScaleJitter > 0.01 || gridType === 'staggered_v' || charAngle !== 0 || charAngleJitter > 0) ? 1 : 0;
 
                 for (let dIy = -rangeY; dIy <= rangeY; dIy++) {
                     for (let dIx = -rangeX; dIx <= rangeX; dIx++) {
@@ -2414,23 +2480,30 @@
                         let cascadeMod = 1.0;
                         let isHead = false;
 
+                        let streamPrimary = (direction === 'left_right' || direction === 'right_left') ? nIx : iy;
+                        let streamSecondary = (direction === 'left_right' || direction === 'right_left') ? iy : nIx;
+
                         if (cascadeLen > 0) {
-                            let colStreamSeed = Voronoi.hash(secondaryCoord * 73 + seed * 991, 313);
+                            let colStreamSeed = Voronoi.hash(streamSecondary * 73 + seed * 991, 313);
                             let streamLen = Math.max(cascadeLen + 4, Math.floor(12 + colStreamSeed * 20));
-                            let headOffset = Math.floor(colStreamSeed * 1000 + colOffset);
-                            let curPrimary = (direction === 'left_right' || direction === 'right_left') ? nIx : nIyBase;
-                            let relativePrimary = streamSign > 0 ? (curPrimary - headOffset) : (headOffset - curPrimary);
+                            let headOffset = Math.floor(colStreamSeed * 1000);
+                            let relativePrimary = streamSign > 0 ? (streamPrimary - headOffset) : (headOffset - streamPrimary);
                             let streamPos = ((relativePrimary % streamLen) + streamLen) % streamLen;
 
                             if (streamPos === 0) {
                                 isHead = true;
-                                cascadeMod = 1.0 + headGlow * 2.0;
+                                cascadeMod = 1.0;
                             } else if (streamPos <= cascadeLen) {
                                 let tailFraction = streamPos / cascadeLen;
                                 let fade = Math.pow(1.0 - tailFraction, cascadeFade);
                                 cascadeMod = 0.05 + 0.95 * fade;
                             } else {
                                 cascadeMod = 0.03;
+                            }
+                        } else if (headGlow > 0) {
+                            let headHash = Voronoi.hash(nIx * 733 + seed * 53, iy * 919 + seed * 87);
+                            if (headHash < 0.12) {
+                                isHead = true;
                             }
                         }
 
@@ -2465,59 +2538,60 @@
                         if (digitStyle === 'digital_7seg') {
                             val = this.eval7Segment(cx, cy, ch, glow);
                         } else {
-                            let rows = this.getCharBitmap(ch);
-                            let gridW = 5;
-                            let gridH = 7;
-                            if (digitStyle === 'pixel_3x5') {
-                                gridW = 3;
-                                gridH = 5;
-                            }
+                            let charFont = p.matrixFontFamily || 'sans-serif';
+                            let charObj = this.getCharGridData(ch, digitStyle, charFont);
+                            let gridW = charObj.gridW;
+                            let gridH = charObj.gridH;
+                            let gridData = charObj.data;
 
                             let px = Math.floor(cx * gridW);
                             let py = Math.floor(cy * gridH);
 
-                            let isOn = false;
                             if (px >= 0 && px < gridW && py >= 0 && py < gridH) {
-                                let rowBitmask = rows[Math.min(rows.length - 1, Math.floor((py / gridH) * rows.length))];
-                                let bitIndex = 4 - Math.min(4, Math.floor((px / gridW) * 5));
-                                if ((rowBitmask & (1 << bitIndex)) !== 0) {
-                                    isOn = true;
+                                if (charObj.isSmooth) {
+                                    let sampleX = cx * gridW - 0.5;
+                                    let sampleY = cy * gridH - 0.5;
+                                    let x0 = Math.max(0, Math.min(gridW - 1, Math.floor(sampleX)));
+                                    let y0 = Math.max(0, Math.min(gridH - 1, Math.floor(sampleY)));
+                                    let x1 = Math.max(0, Math.min(gridW - 1, x0 + 1));
+                                    let y1 = Math.max(0, Math.min(gridH - 1, y0 + 1));
+                                    let fxS = sampleX - x0;
+                                    let fyS = sampleY - y0;
+
+                                    let v00 = gridData[y0 * gridW + x0];
+                                    let v10 = gridData[y0 * gridW + x1];
+                                    let v01 = gridData[y1 * gridW + x0];
+                                    let v11 = gridData[y1 * gridW + x1];
+
+                                    let top = v00 + fxS * (v10 - v00);
+                                    let bot = v01 + fxS * (v11 - v01);
+                                    val = top + fyS * (bot - top);
+                                } else {
+                                    val = gridData[py * gridW + px];
                                 }
                             }
 
-                            if (isOn) {
-                                val = 1.0;
-                            } else if (glow > 0.001) {
-                                let minDist = 999;
-                                for (let by = 0; by < gridH; by++) {
-                                    let rowBitmask = rows[Math.min(rows.length - 1, Math.floor((by / gridH) * rows.length))];
-                                    for (let bx = 0; bx < gridW; bx++) {
-                                        let bitIndex = 4 - Math.min(4, Math.floor((bx / gridW) * 5));
-                                        if ((rowBitmask & (1 << bitIndex)) !== 0) {
-                                            let bitMinX = bx / gridW;
-                                            let bitMaxX = (bx + 1) / gridW;
-                                            let bitMinY = by / gridH;
-                                            let bitMaxY = (by + 1) / gridH;
+                            if (val < 0.9 && glow > 0.001) {
+                                let searchR = gridW >= 32 ? 2 : 1;
+                                let cPx = Math.floor(cx * gridW);
+                                let cPy = Math.floor(cy * gridH);
+                                let maxNeigh = 0.0;
 
-                                            let dxB = 0;
-                                            if (cx < bitMinX) dxB = bitMinX - cx;
-                                            else if (cx > bitMaxX) dxB = cx - bitMaxX;
-
-                                            let dyB = 0;
-                                            if (cy < bitMinY) dyB = bitMinY - cy;
-                                            else if (cy > bitMaxY) dyB = cy - bitMaxY;
-
-                                            let d = Math.sqrt(dxB * dxB + dyB * dyB);
-                                            if (d < minDist) minDist = d;
-                                        }
+                                for (let dy = -searchR; dy <= searchR; dy++) {
+                                    let ny = cPy + dy;
+                                    if (ny < 0 || ny >= gridH) continue;
+                                    for (let dx = -searchR; dx <= searchR; dx++) {
+                                        let nx = cPx + dx;
+                                        if (nx < 0 || nx >= gridW) continue;
+                                        let nv = gridData[ny * gridW + nx];
+                                        if (nv > maxNeigh) maxNeigh = nv;
                                     }
                                 }
 
-                                if (minDist < 900) {
-                                    let sigma = 0.02 + 0.05 * Math.min(2.5, glow);
-                                    let gaussianGlow = Math.exp(-(minDist * minDist) / (2.0 * sigma * sigma));
-                                    val = gaussianGlow * Math.min(1.2, glow * 0.75);
-                                    if (val < 0.005) val = 0.0;
+                                if (maxNeigh > 0.02) {
+                                    let dist = Math.hypot(cx - 0.5, cy - 0.5);
+                                    let glowVal = maxNeigh * Math.exp(-dist * 3.5) * Math.min(1.2, glow * 0.75);
+                                    val = Math.max(val, glowVal);
                                 }
                             }
                         }
@@ -2534,9 +2608,10 @@
 
                         val *= brightnessMod;
 
-                        if (isHead && headGlow > 0) {
-                            let headCore = Math.exp(-((fx - 0.5) * (fx - 0.5) + (fy - 0.5) * (fy - 0.5)) * 8.0);
-                            val = Math.max(val, headCore * headGlow * 0.8);
+                        if (isHead && headGlow > 0 && val > 0.02) {
+                            let headCore = Math.exp(-((fx - 0.5) * (fx - 0.5) + (fy - 0.5) * (fy - 0.5)) * 6.0);
+                            let flash = headCore * headGlow * 1.2 * Math.min(1.0, val * 2.0);
+                            val += flash;
                         }
 
                         if (val > maxVal) {
@@ -9969,11 +10044,27 @@
                         </select>
                     </div>
                     <div>
-                        <label class="property-label">Стиль шрифту</label>
+                        <label class="property-label">Стиль та Роздільна здатність символів</label>
                         <select class="form-control" onchange="upd('matrixDigitStyle', this.value)">
-                            <option value="pixel_5x7" ${(lp.matrixDigitStyle||'pixel_5x7')==='pixel_5x7'?'selected':''}>👾 Піксельний 5x7</option>
-                            <option value="pixel_3x5" ${lp.matrixDigitStyle==='pixel_3x5'?'selected':''}>🕹️ Міні-піксель 3x5</option>
+                            <option value="pixel_3x5" ${lp.matrixDigitStyle==='pixel_3x5'?'selected':''}>🕹️ Міні-піксель 3×5 (Ретро)</option>
+                            <option value="pixel_5x7" ${(lp.matrixDigitStyle||'pixel_5x7')==='pixel_5x7'?'selected':''}>👾 Піксельний 5×7 (Класичний)</option>
+                            <option value="pixel_8x12" ${lp.matrixDigitStyle==='pixel_8x12'?'selected':''}>📺 Піксель 8×12 (Підвищена деталь)</option>
+                            <option value="pixel_12x18" ${lp.matrixDigitStyle==='pixel_12x18'?'selected':''}>📱 Піксель 12×18 (Висока чіткість)</option>
+                            <option value="pixel_16x24" ${lp.matrixDigitStyle==='pixel_16x24'?'selected':''}>💻 16×24 Ultra HD піксель</option>
+                            <option value="hd_smooth_32x32" ${lp.matrixDigitStyle==='hd_smooth_32x32'?'selected':''}>✨ 32×32 Ультра HD (Бездоганні власні символи)</option>
+                            <option value="hd_smooth_64x64" ${lp.matrixDigitStyle==='hd_smooth_64x64'?'selected':''}>💎 64×64 Векторний HD (Максимальна якість)</option>
                             <option value="digital_7seg" ${lp.matrixDigitStyle==='digital_7seg'?'selected':''}>⏰ 7-Сегментний LED</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="property-group grid-2">
+                    <div>
+                        <label class="property-label">Гарнітура / Шрифт символів</label>
+                        <select class="form-control" onchange="upd('matrixFontFamily', this.value)">
+                            <option value="sans-serif" ${(lp.matrixFontFamily||'sans-serif')==='sans-serif'?'selected':''}>Без засічок (Sans-Serif)</option>
+                            <option value="monospace" ${lp.matrixFontFamily==='monospace'?'selected':''}>Моноширинний (Monospace)</option>
+                            <option value="serif" ${lp.matrixFontFamily==='serif'?'selected':''}>З засічками (Serif)</option>
+                            <option value="system-ui" ${lp.matrixFontFamily==='system-ui'?'selected':''}>Системний (System UI)</option>
                         </select>
                     </div>
                 </div>`;
@@ -13669,7 +13760,7 @@
         window.setCanvasResolution = function(res) {
             canvasResolution = res;
             try { localStorage.setItem('veil_canvas_resolution', res); } catch(e) {}
-            ['512', '1024'].forEach(r => {
+            ['256', '512', '1024', '2048', '4096'].forEach(r => {
                 let btn = $('resBtn' + r);
                 if (btn) btn.classList.toggle('active', parseInt(r) === res);
             });
@@ -13803,7 +13894,7 @@
             if ($('rngBorderIntensity')) $('rngBorderIntensity').value = Math.round(canvasBorderIntensity * 100);
             if ($('borderIntensityValText')) $('borderIntensityValText').innerText = Math.round(canvasBorderIntensity * 100) + '%';
             applyCanvasBorderStyles();
-            ['512', '1024'].forEach(r => {
+            ['256', '512', '1024', '2048', '4096'].forEach(r => {
                 let btn = $('resBtn' + r);
                 if (btn) btn.classList.toggle('active', parseInt(r) === canvasResolution);
             });
