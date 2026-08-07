@@ -2637,6 +2637,7 @@
 
         let currentTab = 'layer', canvas, ctx;
         let canvasResolution = parseInt(localStorage.getItem('veil_canvas_resolution')) || 512;
+        if (canvasResolution > 1024) canvasResolution = 1024;
         let lowResOnEdit = (function() {
             try {
                 let saved = localStorage.getItem('veil_low_res_on_edit');
@@ -13760,7 +13761,7 @@
         window.setCanvasResolution = function(res) {
             canvasResolution = res;
             try { localStorage.setItem('veil_canvas_resolution', res); } catch(e) {}
-            ['256', '512', '1024', '2048', '4096'].forEach(r => {
+            ['256', '512', '1024'].forEach(r => {
                 let btn = $('resBtn' + r);
                 if (btn) btn.classList.toggle('active', parseInt(r) === res);
             });
@@ -13894,7 +13895,7 @@
             if ($('rngBorderIntensity')) $('rngBorderIntensity').value = Math.round(canvasBorderIntensity * 100);
             if ($('borderIntensityValText')) $('borderIntensityValText').innerText = Math.round(canvasBorderIntensity * 100) + '%';
             applyCanvasBorderStyles();
-            ['256', '512', '1024', '2048', '4096'].forEach(r => {
+            ['256', '512', '1024'].forEach(r => {
                 let btn = $('resBtn' + r);
                 if (btn) btn.classList.toggle('active', parseInt(r) === canvasResolution);
             });
