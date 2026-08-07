@@ -11,6 +11,18 @@
                 badge_pro: "PRO 1.0",
                 made_in_ukraine: "Зроблено в Україні",
                 made_in_ukraine_short: "UA",
+                btn_about: "ℹ️ Про додаток",
+                btn_about_title: "Короткий опис функціоналу та стан розробки",
+                about_title: "Про додаток Veil Studio",
+                about_dev_warning_title: "Додаток перебуває в активній розробці",
+                about_dev_warning_desc: "Деякі функції можуть працювати некоректно, бути нестабільними або змінюватися в майбутніх оновленнях. Дякуємо за тестування та зворотний зв'язок!",
+                about_desc_title: "⚡ Основний функціонал та можливості:",
+                about_feature_1: "Багатошарова композиція: підтримка додавання, групування, приховування та дублювання шарів.",
+                about_feature_2: "Процедурні генератори: Perlin, Simplex, Voronoi, Cell, Sine, Grid, Wave, Fiber та інші класичні алгоритми.",
+                about_feature_3: "Гнучкий блендинг та ефекти: 15+ режимів накладання, локальні та глобальні деформатори (Warps), розмиття, віньєтування, зернистість.",
+                about_feature_4: "Безшовний тайлінг PRO: алгоритми усунення швів, кастомні штампи, маски та імпорт власних фото для створення безшовних текстур.",
+                about_feature_5: "PBR Генератор карт: автоматичне запікання та генерація карт висот (Height), нормалей (Normal), Ambient Occlusion (AO) та Roughness/Gloss.",
+                about_feature_6: "Експорт та збереження: підтримка експорту в PNG (до 8K), збереження проєктів у форматі .veil та автозбереження в браузері.",
                 btn_reset: "↺ Скинути",
                 btn_reset_title: "Скинути весь проєкт до початкового стану",
                 btn_save: "💾 Зберегти .veil",
@@ -215,6 +227,18 @@
                 badge_pro: "PRO 1.0",
                 made_in_ukraine: "Made in Ukraine",
                 made_in_ukraine_short: "UA",
+                btn_about: "ℹ️ About App",
+                btn_about_title: "Brief functionality overview and development status",
+                about_title: "About Veil Studio",
+                about_dev_warning_title: "Application Under Active Development",
+                about_dev_warning_desc: "Some features may work incorrectly, be unstable, or change in future updates. Thank you for testing and providing feedback!",
+                about_desc_title: "⚡ Core Functionality & Features:",
+                about_feature_1: "Multi-layer composition: support for adding, organizing, hiding, and duplicating layers.",
+                about_feature_2: "Procedural generators: Perlin, Simplex, Voronoi, Cell, Sine, Grid, Wave, Fiber, and other classic algorithms.",
+                about_feature_3: "Flexible blending & effects: 15+ blend modes, local & global deformers (Warps), blur, vignette, grain.",
+                about_feature_4: "Seamless Tiling PRO: seam removal algorithms, custom stamps, masks, and photo import to make seamless textures.",
+                about_feature_5: "PBR Map Generator: automatic baking and generation of Height, Normal, Ambient Occlusion (AO), and Roughness/Gloss maps.",
+                about_feature_6: "Export & Persistence: PNG export (up to 8K), project saving in .veil format, and automatic browser draft autosave.",
                 btn_reset: "↺ Reset",
                 btn_reset_title: "Reset entire project to default state",
                 btn_save: "💾 Save .veil",
@@ -13839,7 +13863,12 @@
             }
         });
 
+        function openAboutModal() {
+            showModal('aboutModal');
+        }
+
         // Expose all state and action handlers to window globally
+        window.openAboutModal = openAboutModal;
         window.exportVeilFile = exportVeilFile;
         window.triggerVeilImport = triggerVeilImport;
         window.importProjectFile = importProjectFile;
