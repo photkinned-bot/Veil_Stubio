@@ -25,8 +25,8 @@
 
                 panel_layers: "Шари",
                 btn_add_layer: "+ Шар",
-                active_users_label: "Активні юзери у світі:",
-                active_users_tooltip: "Кількість активних користувачів по всьому світу",
+                active_users_label: "Зараз користуються:",
+                active_users_tooltip: "Кількість користувачів онлайн у цьому додатку",
                 res_label: "Роздільна здатність:",
                 render_label: "Рендер:",
                 fps_label: "FPS:",
@@ -226,8 +226,8 @@
 
                 panel_layers: "Layers",
                 btn_add_layer: "+ Layer",
-                active_users_label: "Active users worldwide:",
-                active_users_tooltip: "Number of active users worldwide",
+                active_users_label: "Active now:",
+                active_users_tooltip: "Number of users active now",
                 res_label: "Resolution:",
                 render_label: "Render:",
                 fps_label: "FPS:",
