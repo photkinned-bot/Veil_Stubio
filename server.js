@@ -16,21 +16,25 @@ app.use('/node_modules', express.static(path.join(__dirname, 'node_modules')));
 // Active users tracking state (real-time active sessions)
 const activeSessions = new Map();
 
-// Periodic cleanup of stale sessions (>20 seconds inactivity)
+// Periodic cleanup of stale sessions (>15 seconds inactivity)
 setInterval(() => {
   const now = Date.now();
   for (const [clientId, lastPing] of activeSessions.entries()) {
-    if (now - lastPing > 20000) {
+    if (now - lastPing > 15000) {
       activeSessions.delete(clientId);
     }
   }
-}, 5000);
+}, 4000);
 
 // API endpoint to report heartbeat and get real active user count
 app.get('/api/active-users', (req, res) => {
-  const clientId = req.query.clientId || req.ip || 'anonymous';
-  if (clientId) {
-    activeSessions.set(clientId, Date.now());
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+
+  const clientId = req.query.clientId;
+  if (clientId && typeof clientId === 'string' && clientId.trim().length > 0) {
+    activeSessions.set(clientId.trim(), Date.now());
   }
 
   const now = Date.now();
@@ -45,9 +49,10 @@ app.get('/api/active-users', (req, res) => {
 
 // Endpoint when tab closes or unloads
 app.post('/api/active-users/leave', express.json({ type: '*/*' }), (req, res) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
   const clientId = req.query.clientId || req.body?.clientId;
-  if (clientId) {
-    activeSessions.delete(clientId);
+  if (clientId && typeof clientId === 'string' && clientId.trim().length > 0) {
+    activeSessions.delete(clientId.trim());
   }
   res.json({ success: true, activeUsers: activeSessions.size });
 });

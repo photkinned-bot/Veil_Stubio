@@ -14263,11 +14263,11 @@
 
         // --- Active Users Worldwide Tracker (Strict Real-time) ---
         (function initActiveUsersTracker() {
-            let clientId = sessionStorage.getItem('veil_session_client_id');
-            if (!clientId) {
-                clientId = 'session_' + Math.random().toString(36).substring(2, 11) + Date.now().toString(36);
-                sessionStorage.setItem('veil_session_client_id', clientId);
+            // Generate a unique per-tab/device client ID in memory so tabs/devices never collide
+            if (!window.__veilClientId) {
+                window.__veilClientId = 'client_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 11);
             }
+            const clientId = window.__veilClientId;
 
             const countEl = $('activeUsersCount');
             if (!countEl) return;
@@ -14280,7 +14280,13 @@
 
             async function fetchActiveUsers() {
                 try {
-                    const res = await fetch(`/api/active-users?clientId=${encodeURIComponent(clientId)}`);
+                    const cacheBuster = Date.now();
+                    const res = await fetch(`/api/active-users?clientId=${encodeURIComponent(clientId)}&_t=${cacheBuster}`, {
+                        cache: 'no-store',
+                        headers: {
+                            'Cache-Control': 'no-cache, no-store'
+                        }
+                    });
                     if (!res.ok) throw new Error(`HTTP ${res.status}`);
                     const data = await res.json();
                     if (data && typeof data.activeUsers === 'number') {
@@ -14294,7 +14300,7 @@
                         lastCount = newCount;
                     }
                 } catch (err) {
-                    countEl.textContent = '1';
+                    // Retain current count on transient network issues
                 }
             }
 
@@ -14309,11 +14315,11 @@
             }
 
             window.addEventListener('beforeunload', sendLeaveSignal);
-            window.addEventListener('pagehide', sendLeaveSignal);
+            window.addEventListener('unload', sendLeaveSignal);
 
             fetchActiveUsers();
-            // Ping heartbeat every 5 seconds for live accuracy
-            setInterval(fetchActiveUsers, 5000);
+            // Ping heartbeat every 3 seconds for fast real-time accuracy
+            setInterval(fetchActiveUsers, 3000);
         })();
 
         // --- Feedback Email Copy Function ---
