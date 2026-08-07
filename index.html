@@ -54,13 +54,22 @@
                 <button onclick="addLayer()" class="btn btn-primary" style="padding:4px 10px; font-size:11px;" data-i18n="btn_add_layer">+ Шар</button>
             </div>
             <div id="layersList" class="layers-list"></div>
-            <div class="active-users-bar" id="activeUsersBar" title="Зараз користуються застосунком" data-i18n-title="active_users_tooltip">
-                <div class="active-users-status">
-                    <span class="active-users-pulse"></span>
-                    <span class="active-users-icon">🌐</span>
-                    <span class="active-users-label" data-i18n="active_users_label">Зараз користуються:</span>
+            <div class="sidebar-bottom-widgets">
+                <div class="active-users-bar" id="activeUsersBar" title="Зараз користуються застосунком" data-i18n-title="active_users_tooltip">
+                    <div class="active-users-status">
+                        <span class="active-users-pulse"></span>
+                        <span class="active-users-icon">🌐</span>
+                        <span class="active-users-label" data-i18n="active_users_label">Зараз користуються:</span>
+                    </div>
+                    <span class="active-users-count" id="activeUsersCount">1</span>
                 </div>
-                <span class="active-users-count" id="activeUsersCount">1</span>
+                <div class="feedback-bar" id="feedbackBar" title="Зворотний зв'язок" data-i18n-title="feedback_tooltip">
+                    <div class="feedback-status">
+                        <span class="feedback-icon">✉️</span>
+                        <span class="feedback-label" data-i18n="feedback_label">Зворотний зв'язок:</span>
+                    </div>
+                    <a href="mailto:photkin.ned@gmail.com" class="feedback-email" id="feedbackEmail" onclick="copyFeedbackEmail(event)" title="Натисніть, щоб скопіювати email" data-i18n-title="feedback_email_title">photkin.ned@gmail.com</a>
+                </div>
             </div>
         </aside>
         <div class="resize-handle" id="resizeLeft"></div>

@@ -27,6 +27,9 @@
                 btn_add_layer: "+ Шар",
                 active_users_label: "Зараз користуються:",
                 active_users_tooltip: "Кількість користувачів онлайн у цьому додатку",
+                feedback_label: "Зворотний зв'язок:",
+                feedback_tooltip: "Зворотний зв'язок та підтримка",
+                feedback_email_title: "Натисніть, щоб скопіювати email (photkin.ned@gmail.com)",
                 res_label: "Роздільна здатність:",
                 render_label: "Рендер:",
                 fps_label: "FPS:",
@@ -228,6 +231,9 @@
                 btn_add_layer: "+ Layer",
                 active_users_label: "Active now:",
                 active_users_tooltip: "Number of users active now",
+                feedback_label: "Feedback:",
+                feedback_tooltip: "Feedback & support",
+                feedback_email_title: "Click to copy email (photkin.ned@gmail.com)",
                 res_label: "Resolution:",
                 render_label: "Render:",
                 fps_label: "FPS:",
@@ -14309,3 +14315,23 @@
             // Ping heartbeat every 5 seconds for live accuracy
             setInterval(fetchActiveUsers, 5000);
         })();
+
+        // --- Feedback Email Copy Function ---
+        function copyFeedbackEmail(event) {
+            const email = 'photkin.ned@gmail.com';
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(email).then(() => {
+                    const el = document.getElementById('feedbackEmail');
+                    if (el) {
+                        const prevText = el.textContent;
+                        el.textContent = 'Скопійовано!';
+                        el.style.color = '#10b981';
+                        setTimeout(() => {
+                            el.textContent = prevText;
+                            el.style.color = '';
+                        }, 1800);
+                    }
+                }).catch(() => {});
+            }
+        }
+        window.copyFeedbackEmail = copyFeedbackEmail;
