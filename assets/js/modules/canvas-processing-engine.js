@@ -402,6 +402,153 @@ export class CanvasProcessingEngine {
   }
 
   /**
+   * Helper: Radial Blur with Influence Zone (Ring/Disk) and Edge Softness
+   */
+  static radialBlurFloatBuffer(buffer, width, height, radius, params = {}, mode = 'wrap') {
+    if (!radius || radius < 1) return buffer;
+    const size = width * height;
+    const out = new Float32Array(size);
+
+    const cx = params.radialBlurCenterX !== undefined ? parseFloat(params.radialBlurCenterX) : 0.5;
+    const cy = params.radialBlurCenterY !== undefined ? parseFloat(params.radialBlurCenterY) : 0.5;
+    const innerR = (params.radialBlurInnerRadius !== undefined ? parseFloat(params.radialBlurInnerRadius) : 0) / 100;
+    const widthR = (params.radialBlurWidth !== undefined ? parseFloat(params.radialBlurWidth) : 100) / 100;
+    const softness = (params.radialBlurSoftness !== undefined ? parseFloat(params.radialBlurSoftness) : 40) / 100;
+    const rMode = params.radialBlurMode || 'spin';
+    const spinAngle = (params.radialBlurAngle !== undefined ? parseFloat(params.radialBlurAngle) : 15) * Math.PI / 180;
+
+    const centerX = cx * width;
+    const centerY = cy * height;
+    const maxRadius = Math.sqrt(width * width + height * height) * 0.5;
+    const rIn = innerR * maxRadius;
+    const rOut = rIn + widthR * maxRadius;
+    const soft = Math.max(1, softness * maxRadius * 0.5);
+
+    const scaledRad = radius * (width / 512);
+    let numSteps = Math.max(5, Math.min(19, Math.round(scaledRad * 0.3) | 1));
+    if (numSteps % 2 === 0) numSteps += 1;
+    const halfSteps = (numSteps - 1) / 2;
+    const isClamp = (mode === 'clamp');
+
+    const stepsT = new Float32Array(numSteps);
+    const stepsW = new Float32Array(numSteps);
+    let totalWeightSum = 0;
+    for (let k = -halfSteps; k <= halfSteps; k++) {
+      const idx = k + halfSteps;
+      const t = k / halfSteps;
+      const wt = Math.exp(-2.0 * t * t);
+      stepsT[idx] = t;
+      stepsW[idx] = wt;
+      totalWeightSum += wt;
+    }
+
+    for (let y = 0; y < height; y++) {
+      const rowOffset = y * width;
+      const dy = y - centerY;
+      for (let x = 0; x < width; x++) {
+        const dx = x - centerX;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+
+        let mask = 1.0;
+        if (dist < rIn) {
+          if (innerR <= 0) {
+            mask = 1.0;
+          } else if (dist < rIn - soft) {
+            mask = 0.0;
+          } else {
+            const t = (dist - (rIn - soft)) / (2 * soft);
+            mask = t * t * (3 - 2 * t);
+          }
+        } else if (dist > rOut) {
+          if (dist > rOut + soft) {
+            mask = 0.0;
+          } else {
+            const t = (rOut + soft - dist) / (2 * soft);
+            mask = t * t * (3 - 2 * t);
+          }
+        } else {
+          let inFade = 1.0;
+          let outFade = 1.0;
+          if (innerR > 0 && (dist - rIn) < soft) {
+            const t = (dist - rIn + soft) / (2 * soft);
+            inFade = t * t * (3 - 2 * t);
+          }
+          if ((rOut - dist) < soft) {
+            const t = (rOut + soft - dist) / (2 * soft);
+            outFade = t * t * (3 - 2 * t);
+          }
+          mask = Math.min(inFade, outFade);
+        }
+
+        if (mask <= 0.001) {
+          out[rowOffset + x] = buffer[rowOffset + x];
+          continue;
+        }
+
+        const effAngle = spinAngle * mask;
+        const effZoom = (scaledRad / 100) * 0.25 * mask;
+
+        let sum = 0;
+        let wSum = 0;
+
+        for (let i = 0; i < numSteps; i++) {
+          const t = stepsT[i];
+          const wt = stepsW[i];
+
+          let sdx = dx;
+          let sdy = dy;
+
+          if (rMode === 'spin' || rMode === 'both') {
+            const ang = t * effAngle;
+            const ca = Math.cos(ang);
+            const sa = Math.sin(ang);
+            sdx = dx * ca - dy * sa;
+            sdy = dx * sa + dy * ca;
+          }
+
+          if (rMode === 'zoom' || rMode === 'both') {
+            const scale = 1.0 + t * effZoom;
+            sdx *= scale;
+            sdy *= scale;
+          }
+
+          let sx = centerX + sdx;
+          let sy = centerY + sdy;
+
+          let x0 = Math.floor(sx), y0 = Math.floor(sy);
+          let x1 = x0 + 1, y1 = y0 + 1;
+          const fx = sx - x0, fy = sy - y0;
+
+          if (isClamp) {
+            x0 = x0 < 0 ? 0 : (x0 >= width ? width - 1 : x0);
+            x1 = x1 < 0 ? 0 : (x1 >= width ? width - 1 : x1);
+            y0 = y0 < 0 ? 0 : (y0 >= height ? height - 1 : y0);
+            y1 = y1 < 0 ? 0 : (y1 >= height ? height - 1 : y1);
+          } else {
+            x0 = (x0 % width + width) % width;
+            x1 = (x1 % width + width) % width;
+            y0 = (y0 % height + height) % height;
+            y1 = (y1 % height + height) % height;
+          }
+
+          const v00 = buffer[y0 * width + x0];
+          const v10 = buffer[y0 * width + x1];
+          const v01 = buffer[y1 * width + x0];
+          const v11 = buffer[y1 * width + x1];
+
+          const val = (1 - fx) * (1 - fy) * v00 + fx * (1 - fy) * v10 + (1 - fx) * fy * v01 + fx * fy * v11;
+          sum += val * wt;
+          wSum += wt;
+        }
+
+        const blurredVal = sum / wSum;
+        out[rowOffset + x] = buffer[rowOffset + x] * (1 - mask) + blurredVal * mask;
+      }
+    }
+    return out;
+  }
+
+  /**
    * Helper: Sharpen kernel filter on Float32Array
    */
   static sharpenFloatBuffer(buffer, width, height, amount) {

@@ -4305,6 +4305,154 @@
             }
         }
 
+        function applyRadialBlur(buf, tmp, w, h, rad, params = {}, mode = 'wrap') {
+            if (!rad || rad <= 0) return;
+            if (window.CanvasProcessingEngine && window.CanvasProcessingEngine.radialBlurFloatBuffer) {
+                let res = CanvasProcessingEngine.radialBlurFloatBuffer(buf, w, h, rad, params, mode);
+                for (let i = 0; i < w * h; i++) {
+                    buf[i] = res[i];
+                }
+                return;
+            }
+            let cx = params.radialBlurCenterX !== undefined ? parseFloat(params.radialBlurCenterX) : 0.5;
+            let cy = params.radialBlurCenterY !== undefined ? parseFloat(params.radialBlurCenterY) : 0.5;
+            let innerR = (params.radialBlurInnerRadius !== undefined ? parseFloat(params.radialBlurInnerRadius) : 0) / 100;
+            let widthR = (params.radialBlurWidth !== undefined ? parseFloat(params.radialBlurWidth) : 100) / 100;
+            let softness = (params.radialBlurSoftness !== undefined ? parseFloat(params.radialBlurSoftness) : 40) / 100;
+            let rMode = params.radialBlurMode || 'spin';
+            let spinAngle = (params.radialBlurAngle !== undefined ? parseFloat(params.radialBlurAngle) : 15) * Math.PI / 180;
+
+            let centerX = cx * w;
+            let centerY = cy * h;
+            let maxRadius = Math.sqrt(w * w + h * h) * 0.5;
+            let rIn = innerR * maxRadius;
+            let rOut = rIn + widthR * maxRadius;
+            let soft = Math.max(1, softness * maxRadius * 0.5);
+
+            let scaledRad = rad * (w / 512);
+            let numSteps = Math.max(5, Math.min(19, Math.round(scaledRad * 0.3) | 1));
+            if (numSteps % 2 === 0) numSteps += 1;
+            let halfSteps = (numSteps - 1) / 2;
+            let isClamp = (mode === 'clamp');
+
+            let stepsT = new Float32Array(numSteps);
+            let stepsW = new Float32Array(numSteps);
+            for (let k = -halfSteps; k <= halfSteps; k++) {
+                let idx = k + halfSteps;
+                let t = k / halfSteps;
+                stepsT[idx] = t;
+                stepsW[idx] = Math.exp(-2.0 * t * t);
+            }
+
+            for (let y = 0; y < h; y++) {
+                let rowOffset = y * w;
+                let dy = y - centerY;
+                for (let x = 0; x < w; x++) {
+                    let dx = x - centerX;
+                    let dist = Math.sqrt(dx * dx + dy * dy);
+
+                    let mask = 1.0;
+                    if (dist < rIn) {
+                        if (innerR <= 0) {
+                            mask = 1.0;
+                        } else if (dist < rIn - soft) {
+                            mask = 0.0;
+                        } else {
+                            let t = (dist - (rIn - soft)) / (2 * soft);
+                            mask = t * t * (3 - 2 * t);
+                        }
+                    } else if (dist > rOut) {
+                        if (dist > rOut + soft) {
+                            mask = 0.0;
+                        } else {
+                            let t = (rOut + soft - dist) / (2 * soft);
+                            mask = t * t * (3 - 2 * t);
+                        }
+                    } else {
+                        let inFade = 1.0;
+                        let outFade = 1.0;
+                        if (innerR > 0 && (dist - rIn) < soft) {
+                            let t = (dist - rIn + soft) / (2 * soft);
+                            inFade = t * t * (3 - 2 * t);
+                        }
+                        if ((rOut - dist) < soft) {
+                            let t = (rOut + soft - dist) / (2 * soft);
+                            outFade = t * t * (3 - 2 * t);
+                        }
+                        mask = Math.min(inFade, outFade);
+                    }
+
+                    if (mask <= 0.001) {
+                        tmp[rowOffset + x] = buf[rowOffset + x];
+                        continue;
+                    }
+
+                    let effAngle = spinAngle * mask;
+                    let effZoom = (scaledRad / 100) * 0.25 * mask;
+
+                    let sum = 0;
+                    let wSum = 0;
+
+                    for (let i = 0; i < numSteps; i++) {
+                        let t = stepsT[i];
+                        let wt = stepsW[i];
+
+                        let sdx = dx;
+                        let sdy = dy;
+
+                        if (rMode === 'spin' || rMode === 'both') {
+                            let ang = t * effAngle;
+                            let ca = Math.cos(ang);
+                            let sa = Math.sin(ang);
+                            sdx = dx * ca - dy * sa;
+                            sdy = dx * sa + dy * ca;
+                        }
+
+                        if (rMode === 'zoom' || rMode === 'both') {
+                            let scale = 1.0 + t * effZoom;
+                            sdx *= scale;
+                            sdy *= scale;
+                        }
+
+                        let sx = centerX + sdx;
+                        let sy = centerY + sdy;
+
+                        let x0 = Math.floor(sx), y0 = Math.floor(sy);
+                        let x1 = x0 + 1, y1 = y0 + 1;
+                        let fx = sx - x0, fy = sy - y0;
+
+                        if (isClamp) {
+                            x0 = x0 < 0 ? 0 : (x0 >= w ? w - 1 : x0);
+                            x1 = x1 < 0 ? 0 : (x1 >= w ? w - 1 : x1);
+                            y0 = y0 < 0 ? 0 : (y0 >= h ? h - 1 : y0);
+                            y1 = y1 < 0 ? 0 : (y1 >= h ? h - 1 : y1);
+                        } else {
+                            x0 = (x0 % w + w) % w;
+                            x1 = (x1 % w + w) % w;
+                            y0 = (y0 % h + h) % h;
+                            y1 = (y1 % h + h) % h;
+                        }
+
+                        let v00 = buf[y0 * w + x0];
+                        let v10 = buf[y0 * w + x1];
+                        let v01 = buf[y1 * w + x0];
+                        let v11 = buf[y1 * w + x1];
+
+                        let val = (1 - fx) * (1 - fy) * v00 + fx * (1 - fy) * v10 + (1 - fx) * fy * v01 + fx * fy * v11;
+                        sum += val * wt;
+                        wSum += wt;
+                    }
+
+                    let blurredVal = sum / wSum;
+                    tmp[rowOffset + x] = buf[rowOffset + x] * (1 - mask) + blurredVal * mask;
+                }
+            }
+
+            for (let i = 0; i < w * h; i++) {
+                buf[i] = tmp[i];
+            }
+        }
+
         function applyEdgeDetection(buf, tmp, w, h) {
             let step = Math.max(1, Math.round(w / 512));
             for(let i=0;i<w*h;i++) tmp[i]=buf[i];
@@ -4558,6 +4706,16 @@
             return { lutR, lutG, lutB };
         }
 
+        function drawPaintImageToCtx(ctx, img, lay) {
+            ctx.clearRect(0, 0, 1024, 1024);
+            let crop = lay && lay.params ? lay.params.paintCrop : null;
+            if (crop && typeof crop.x === 'number') {
+                ctx.drawImage(img, crop.x, crop.y, crop.w, crop.h);
+            } else {
+                ctx.drawImage(img, 0, 0, 1024, 1024);
+            }
+        }
+
         function ensureLayerPaintCanvas(lay, forceReloadFromDataUrl = false) {
             if (!lay.paintCanvas || typeof lay.paintCanvas.getContext !== 'function') {
                 lay.paintCanvas = document.createElement('canvas');
@@ -4570,8 +4728,7 @@
                 if (lay.params && lay.params.paintDataUrl) {
                     let img = new Image();
                     img.onload = () => {
-                        ctx.clearRect(0, 0, 1024, 1024);
-                        ctx.drawImage(img, 0, 0);
+                        drawPaintImageToCtx(ctx, img, lay);
                         updatePaintBuffer(lay);
                         lay.isDirty = true;
                         invalidateCaches();
@@ -4579,8 +4736,7 @@
                     };
                     img.src = lay.params.paintDataUrl;
                     if (img.complete && img.naturalWidth) {
-                        ctx.clearRect(0, 0, 1024, 1024);
-                        ctx.drawImage(img, 0, 0);
+                        drawPaintImageToCtx(ctx, img, lay);
                         updatePaintBuffer(lay);
                         lay.isDirty = true;
                         invalidateCaches();
@@ -4594,8 +4750,7 @@
                 if (lay.params && lay.params.paintDataUrl) {
                     let img = new Image();
                     img.onload = () => {
-                        ctx.clearRect(0, 0, 1024, 1024);
-                        ctx.drawImage(img, 0, 0);
+                        drawPaintImageToCtx(ctx, img, lay);
                         updatePaintBuffer(lay);
                         lay.isDirty = true;
                         invalidateCaches();
@@ -4603,8 +4758,7 @@
                     };
                     img.src = lay.params.paintDataUrl;
                     if (img.complete && img.naturalWidth) {
-                        ctx.clearRect(0, 0, 1024, 1024);
-                        ctx.drawImage(img, 0, 0);
+                        drawPaintImageToCtx(ctx, img, lay);
                         updatePaintBuffer(lay);
                         lay.isDirty = true;
                         invalidateCaches();
@@ -4622,34 +4776,61 @@
             }
         }
 
-        function updatePaintBuffer(lay) {
+        function updatePaintBuffer(lay, dirtyRect = null) {
             if (!lay.paintCanvas) return;
-            let w = lay.paintCanvas.width;
-            let h = lay.paintCanvas.height;
-            let ctx = lay.paintCanvas.getContext('2d');
-            let imgData = ctx.getImageData(0, 0, w, h);
-            let data = imgData.data;
+            let w = lay.paintCanvas.width || 1024;
+            let h = lay.paintCanvas.height || 1024;
             if (!lay.paintBufferR || lay.paintBufferR.length !== w * h) {
                 lay.paintBufferR = new Float32Array(w * h);
                 lay.paintBufferG = new Float32Array(w * h);
                 lay.paintBufferB = new Float32Array(w * h);
+                dirtyRect = null;
             }
+            let ctx = lay.paintCanvas.getContext('2d');
+            if (dirtyRect && typeof dirtyRect.minX === 'number') {
+                let x0 = Math.max(0, Math.floor(dirtyRect.minX));
+                let y0 = Math.max(0, Math.floor(dirtyRect.minY));
+                let x1 = Math.min(w - 1, Math.ceil(dirtyRect.maxX));
+                let y1 = Math.min(h - 1, Math.ceil(dirtyRect.maxY));
+                let rw = x1 - x0 + 1;
+                let rh = y1 - y0 + 1;
+                if (rw > 0 && rh > 0) {
+                    let imgData = ctx.getImageData(x0, y0, rw, rh);
+                    let data = imgData.data;
+                    for (let y = 0; y < rh; y++) {
+                        let dstY = y0 + y;
+                        let srcRowIdx = y * rw;
+                        let dstRowIdx = dstY * w + x0;
+                        for (let x = 0; x < rw; x++) {
+                            let srcIdx = (srcRowIdx + x) * 4;
+                            let dstIdx = dstRowIdx + x;
+                            let a = data[srcIdx + 3] / 255;
+                            lay.paintBufferR[dstIdx] = (data[srcIdx] / 255) * a;
+                            lay.paintBufferG[dstIdx] = (data[srcIdx + 1] / 255) * a;
+                            lay.paintBufferB[dstIdx] = (data[srcIdx + 2] / 255) * a;
+                        }
+                    }
+                    return;
+                }
+            }
+            let imgData = ctx.getImageData(0, 0, w, h);
+            let data = imgData.data;
             for (let i = 0; i < w * h; i++) {
-                let r = data[i * 4] / 255;
-                let g = data[i * 4 + 1] / 255;
-                let b = data[i * 4 + 2] / 255;
                 let a = data[i * 4 + 3] / 255;
-                lay.paintBufferR[i] = r * a;
-                lay.paintBufferG[i] = g * a;
-                lay.paintBufferB[i] = b * a;
+                lay.paintBufferR[i] = (data[i * 4] / 255) * a;
+                lay.paintBufferG[i] = (data[i * 4 + 1] / 255) * a;
+                lay.paintBufferB[i] = (data[i * 4 + 2] / 255) * a;
             }
         }
 
         function drawBrushDot(lay, x, y, pressure = 1, targetCtx = null) {
             ensureLayerPaintCanvas(lay);
-            let lp = lay.params;
+            let lp = lay.params || {};
             let size = lp.brushSize || 20;
             let softness = lp.brushSoftness !== undefined ? lp.brushSoftness : 0.5;
+            let falloff = lp.brushFalloff !== undefined ? lp.brushFalloff : 1.0;
+            let angle = (lp.brushAngle || 0) * (Math.PI / 180);
+            let squash = lp.brushSquash !== undefined ? lp.brushSquash : 1.0;
             let tool = lp.brushTool || 'brush';
 
             const dynamicPressure = Math.pow(pressure, 0.5);
@@ -4658,19 +4839,33 @@
             let pCtx = targetCtx || lay.paintCanvas.getContext('2d');
 
             pCtx.save();
+            pCtx.translate(x, y);
+            if (angle !== 0) pCtx.rotate(angle);
+            if (squash !== 1.0) pCtx.scale(1, squash);
             pCtx.globalAlpha = 1.0;
 
             let color = tool === 'eraser' ? '#ffffff' : (lp.brushColor || '#ffffff');
-            pCtx.fillStyle = color;
 
             const effectiveSoftness = softness <= 0.05 ? 0 : softness;
             if (effectiveSoftness > 0) {
-                pCtx.shadowColor = color;
-                pCtx.shadowBlur = finalSize * effectiveSoftness;
+                let rgb = hexToRgb(color);
+                const innerRadius = Math.max(0.001, finalSize * (1 - effectiveSoftness));
+                const grad = pCtx.createRadialGradient(0, 0, innerRadius, 0, 0, finalSize);
+                grad.addColorStop(0, `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 1)`);
+                const steps = 5;
+                for (let j = 1; j < steps; j++) {
+                    const stepPos = j / steps;
+                    const stopOpacity = Math.pow(1 - stepPos, falloff);
+                    grad.addColorStop(stepPos, `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${stopOpacity.toFixed(3)})`);
+                }
+                grad.addColorStop(1, `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0)`);
+                pCtx.fillStyle = grad;
+            } else {
+                pCtx.fillStyle = color;
             }
 
             pCtx.beginPath();
-            pCtx.arc(x, y, finalSize, 0, Math.PI * 2);
+            pCtx.arc(0, 0, finalSize, 0, Math.PI * 2);
             pCtx.fill();
             pCtx.restore();
             
@@ -4679,7 +4874,31 @@
 
         function drawBrushLineSegment(lay, x0, y0, x1, y1, cpX, cpY, pressure = 1, targetCtx = null) {
             ensureLayerPaintCanvas(lay);
-            let lp = lay.params;
+            let lp = lay.params || {};
+            let angle = lp.brushAngle || 0;
+            let squash = lp.brushSquash !== undefined ? lp.brushSquash : 1.0;
+
+            if (angle !== 0 || squash !== 1.0) {
+                let dx = x1 - x0;
+                let dy = y1 - y0;
+                let dist = Math.hypot(dx, dy);
+                let size = lp.brushSize || 20;
+                let step = Math.max(1.0, size * (lp.brushSpacing !== undefined ? lp.brushSpacing / 100 : 0.1));
+                if (dist <= step) {
+                    drawBrushDot(lay, x1, y1, pressure, targetCtx);
+                } else {
+                    let steps = Math.ceil(dist / step);
+                    for (let i = 1; i <= steps; i++) {
+                        let t = i / steps;
+                        let sx = x0 + dx * t;
+                        let sy = y0 + dy * t;
+                        drawBrushDot(lay, sx, sy, pressure, targetCtx);
+                    }
+                }
+                lay.isDirty = true;
+                return;
+            }
+
             let size = lp.brushSize || 20;
             let softness = lp.brushSoftness !== undefined ? lp.brushSoftness : 0.5;
             let tool = lp.brushTool || 'brush';
@@ -4690,7 +4909,6 @@
             let pCtx = targetCtx || lay.paintCanvas.getContext('2d');
 
             pCtx.save();
-            
             pCtx.lineCap = 'round';
             pCtx.lineJoin = 'round';
             pCtx.globalAlpha = 1.0;
@@ -4698,7 +4916,7 @@
             let color = tool === 'eraser' ? '#ffffff' : (lp.brushColor || '#ffffff');
             
             pCtx.strokeStyle = color;
-            pCtx.lineWidth = finalSize * 2; // radius to diameter
+            pCtx.lineWidth = finalSize * 2;
 
             const effectiveSoftness = softness <= 0.05 ? 0 : softness;
             if (effectiveSoftness > 0) {
@@ -4954,58 +5172,14 @@
             }
         }
 
-        // --- Data Compression: Crop Paint Canvas to Bounding Box & Convert to WebP ---
+        // --- Data Compression: Convert Paint Canvas to WebP ---
         function compressPaintCanvas(canvas) {
             if (!canvas) return { dataUrl: null, crop: null };
-            let w = canvas.width, h = canvas.height;
-            let ctx = canvas.getContext('2d');
-            let imgData = ctx.getImageData(0, 0, w, h);
-            let data = imgData.data;
-
-            let minX = w, minY = h, maxX = -1, maxY = -1;
-            let hasPixels = false;
-
-            // 4px step scan for ultra-fast bounding box estimation
-            for (let y = 0; y < h; y += 4) {
-                for (let x = 0; x < w; x += 4) {
-                    let idx = (y * w + x) * 4;
-                    if (data[idx + 3] > 0 && (data[idx] > 2 || data[idx + 1] > 2 || data[idx + 2] > 2)) {
-                        hasPixels = true;
-                        if (x < minX) minX = x;
-                        if (x > maxX) maxX = x;
-                        if (y < minY) minY = y;
-                        if (y > maxY) maxY = y;
-                    }
-                }
-            }
-
-            if (!hasPixels) {
-                return { dataUrl: null, crop: null };
-            }
-
-            // Expand bounding box slightly to avoid cutting smooth brush anti-aliasing edges
-            minX = Math.max(0, minX - 4);
-            minY = Math.max(0, minY - 4);
-            maxX = Math.min(w - 1, maxX + 4);
-            maxY = Math.min(h - 1, maxY + 4);
-
-            let bw = maxX - minX + 1;
-            let bh = maxY - minY + 1;
-
-            let temp = document.createElement('canvas');
-            temp.width = bw;
-            temp.height = bh;
-            let tCtx = temp.getContext('2d');
-            tCtx.drawImage(canvas, minX, minY, bw, bh, 0, 0, bw, bh);
-
-            let dataUrl = temp.toDataURL('image/webp', 0.85);
+            let dataUrl = canvas.toDataURL('image/webp', 0.85);
             if (!dataUrl || !dataUrl.startsWith('data:image/webp')) {
-                dataUrl = temp.toDataURL('image/png');
+                dataUrl = canvas.toDataURL('image/png');
             }
-
-            let crop = (bw === w && bh === h && minX === 0 && minY === 0) ? null : { x: minX, y: minY, w: bw, h: bh };
-
-            return { dataUrl, crop };
+            return { dataUrl, crop: null };
         }
 
         function prepareStateForSerialization() {
@@ -5039,8 +5213,10 @@
             }
         }
 
-        function serializeState(s) {
-            prepareStateForSerialization();
+        function serializeState(s, forExport = false) {
+            if (forExport) {
+                prepareStateForSerialization();
+            }
             return JSON.stringify(s, (key, value) => {
                 if (key === 'paintCanvas' || key === 'paintBuffer' || key.startsWith('_')) {
                     return undefined;
@@ -5177,6 +5353,7 @@
         }
 
         let isPainting = false;
+        let activePaintPointerId = null;
         let lastPaintX = 0, lastPaintY = 0;
         let smoothedPressure = 1;
         let paintMoved = false;
@@ -5190,6 +5367,13 @@
 
         function cancelPainting() {
             clearTimeout(historyTimer);
+            if (activePaintPointerId !== null) {
+                let canvas = document.getElementById('mainCanvas') || document.getElementById('viewportCanvas') || document.querySelector('canvas');
+                if (canvas && typeof canvas.releasePointerCapture === 'function') {
+                    try { canvas.releasePointerCapture(activePaintPointerId); } catch(err){}
+                }
+                activePaintPointerId = null;
+            }
             isPainting = false;
             paintPoints = [];
             paintQueue = [];
@@ -5207,6 +5391,7 @@
                     let sCtx = getStrokeCanvas().getContext('2d');
                     sCtx.clearRect(0, 0, 1024, 1024);
                     if (lay.params) {
+                        delete lay.params.paintCrop;
                         lay.params.paintDataUrl = lay.paintCanvas.toDataURL();
                     }
                     updatePaintBuffer(lay);
@@ -5215,6 +5400,30 @@
                     requestRender();
                 }
             }
+        }
+
+        function finalizePaintingStroke() {
+            if (!isPainting) return;
+
+            // Flush remaining queue items if any
+            if (paintQueue.length > 0) {
+                processPaintQueue();
+            }
+
+            isPainting = false;
+            strokeBackupActive = false;
+
+            let lay = state.layers.find(l => l.id === state.selectedLayerId);
+            if (lay && lay.generatorType === 'paint') {
+                let lp = lay.params;
+                let opacity = (lp.brushOpacity !== undefined ? lp.brushOpacity : 100) / 100;
+                combineStrokeAndBackup(lay, opacity);
+                updatePaintBuffer(lay);
+            }
+
+            paintPoints = [];
+            paintQueue = [];
+            recordUserInteraction();
         }
 
         function getStrokeCanvas() {
@@ -5315,9 +5524,15 @@
                 return;
             }
 
+            recordUserInteraction();
+
             if (isPainting) {
-                cancelPainting();
-                return;
+                finalizePaintingStroke();
+            }
+
+            if (paintAnimationFrameId) {
+                cancelAnimationFrame(paintAnimationFrameId);
+                paintAnimationFrameId = null;
             }
 
             viewport.isDragging = false;
@@ -5325,6 +5540,13 @@
             isPainting = true;
             strokeBackupActive = true;
             paintMoved = false;
+
+            if (e.target && typeof e.target.setPointerCapture === 'function') {
+                try {
+                    e.target.setPointerCapture(e.pointerId);
+                    activePaintPointerId = e.pointerId;
+                } catch (err) {}
+            }
 
             ensureLayerPaintCanvas(lay);
 
@@ -5335,7 +5557,7 @@
             let rawPressure = (e.pointerType === 'pen' && e.pressure > 0) ? e.pressure : 1;
             smoothedPressure = rawPressure;
 
-            // Initialize point history with start point
+            // Completely reset point history for clean new stroke start
             paintPoints = [{ x: pos.x, y: pos.y, pressure: rawPressure }];
             paintQueue = [];
 
@@ -5362,9 +5584,7 @@
             requestRender();
 
             // Start processing the paint movement queue in animation frames
-            if (!paintAnimationFrameId) {
-                paintAnimationFrameId = requestAnimationFrame(processPaintQueue);
-            }
+            paintAnimationFrameId = requestAnimationFrame(processPaintQueue);
 
             e.stopPropagation();
             e.preventDefault();
@@ -5419,25 +5639,39 @@
                 return;
             }
 
-            let pos = getPaintCanvasCoordinates(e.clientX, e.clientY);
-            paintMoved = true;
-
-            let rawPressure = e.pointerType === 'pen' ? e.pressure : 1;
-            if (e.pointerType === 'pen' && rawPressure <= 0) rawPressure = 0.1;
-
-            // Smooth pressure values
-            smoothedPressure = smoothedPressure * 0.88 + rawPressure * 0.12;
-
-            // Push event into the queue to be processed on requestAnimationFrame
-            paintQueue.push({ x: pos.x, y: pos.y, pressure: smoothedPressure });
+            let events = (typeof e.getCoalescedEvents === 'function') ? e.getCoalescedEvents() : [e];
+            for (let evt of events) {
+                let pos = getPaintCanvasCoordinates(evt.clientX, evt.clientY);
+                let rawPressure = (evt.pointerType === 'pen' && evt.pressure > 0) ? evt.pressure : 1;
+                smoothedPressure = smoothedPressure * 0.85 + rawPressure * 0.15;
+                paintQueue.push({ x: pos.x, y: pos.y, pressure: smoothedPressure });
+            }
 
             e.stopPropagation();
             e.preventDefault();
         }
 
+        function addPaintPointToStroke(pt, lay, sCtx) {
+            paintPoints.push(pt);
+            if (paintPoints.length === 2) {
+                let p0 = paintPoints[0];
+                drawBrushLineSegment(lay, p0.x, p0.y, pt.x, pt.y, undefined, undefined, pt.pressure, sCtx);
+            } else if (paintPoints.length > 2) {
+                let p2 = pt;
+                let p1 = paintPoints[paintPoints.length - 2];
+                let p0 = paintPoints[paintPoints.length - 3];
+                let midX0 = (p0.x + p1.x) / 2;
+                let midY0 = (p0.y + p1.y) / 2;
+                let midX1 = (p1.x + p2.x) / 2;
+                let midY1 = (p1.y + p2.y) / 2;
+                drawBrushLineSegment(lay, midX0, midY0, midX1, midY1, p1.x, p1.y, p1.pressure, sCtx);
+            }
+        }
+
         function processPaintQueue() {
             if (!isPainting && paintQueue.length === 0) {
                 paintAnimationFrameId = null;
+                isInteracting = false;
                 return;
             }
 
@@ -5454,42 +5688,65 @@
 
             let updated = false;
             let sCtx = getStrokeCanvas().getContext('2d');
+            let minX = 1024, minY = 1024, maxX = 0, maxY = 0;
+            let brushRadius = ((lay.params.brushSize || 20) * 1.5) + 10;
+            let maxStep = Math.max(1.5, (lay.params.brushSize || 20) * 0.2);
 
             while (paintQueue.length > 0) {
                 let pt = paintQueue.shift();
                 let lastPt = paintPoints[paintPoints.length - 1];
 
-                // Ignore points that are extremely close to the last one
-                if (lastPt && Math.hypot(pt.x - lastPt.x, pt.y - lastPt.y) < 0.5) {
-                    continue;
+                if (lastPt) {
+                    let dist = Math.hypot(pt.x - lastPt.x, pt.y - lastPt.y);
+                    if (dist < 0.3) continue;
+
+                    // If distance is abnormally large (>100px), avoid drawing a giant line across the canvas
+                    if (dist > 100) {
+                        paintPoints = [pt];
+                        drawBrushDot(lay, pt.x, pt.y, pt.pressure, sCtx);
+                        minX = Math.min(minX, pt.x - brushRadius);
+                        minY = Math.min(minY, pt.y - brushRadius);
+                        maxX = Math.max(maxX, pt.x + brushRadius);
+                        maxY = Math.max(maxY, pt.y + brushRadius);
+                        updated = true;
+                        continue;
+                    }
+
+                    // Interpolate intermediate sub-steps for fast pointer/Apple Pencil moves
+                    if (dist > maxStep) {
+                        let steps = Math.min(15, Math.ceil(dist / maxStep));
+                        for (let s = 1; s <= steps; s++) {
+                            let t = s / steps;
+                            let subPt = {
+                                x: lastPt.x + (pt.x - lastPt.x) * t,
+                                y: lastPt.y + (pt.y - lastPt.y) * t,
+                                pressure: lastPt.pressure + (pt.pressure - lastPt.pressure) * t
+                            };
+                            addPaintPointToStroke(subPt, lay, sCtx);
+                            minX = Math.min(minX, subPt.x - brushRadius);
+                            minY = Math.min(minY, subPt.y - brushRadius);
+                            maxX = Math.max(maxX, subPt.x + brushRadius);
+                            maxY = Math.max(maxY, subPt.y + brushRadius);
+                            updated = true;
+                        }
+                        continue;
+                    }
                 }
 
-                paintPoints.push(pt);
+                addPaintPointToStroke(pt, lay, sCtx);
+                minX = Math.min(minX, pt.x - brushRadius);
+                minY = Math.min(minY, pt.y - brushRadius);
+                maxX = Math.max(maxX, pt.x + brushRadius);
+                maxY = Math.max(maxY, pt.y + brushRadius);
                 updated = true;
-
-                if (paintPoints.length === 2) {
-                    // Two points: simple line segment between first and second point
-                    drawBrushLineSegment(lay, lastPt.x, lastPt.y, pt.x, pt.y, undefined, undefined, pt.pressure, sCtx);
-                } else if (paintPoints.length > 2) {
-                    // Three or more points: draw smooth quadratic curve between midpoints
-                    let p2 = paintPoints[paintPoints.length - 1]; // current point
-                    let p1 = paintPoints[paintPoints.length - 2]; // control point
-                    let p0 = paintPoints[paintPoints.length - 3]; // previous point
-
-                    let midX0 = (p0.x + p1.x) / 2;
-                    let midY0 = (p0.y + p1.y) / 2;
-                    let midX1 = (p1.x + p2.x) / 2;
-                    let midY1 = (p1.y + p2.y) / 2;
-
-                    drawBrushLineSegment(lay, midX0, midY0, midX1, midY1, p1.x, p1.y, p1.pressure, sCtx);
-                }
             }
 
             if (updated) {
                 let lp = lay.params;
                 let opacity = (lp.brushOpacity !== undefined ? lp.brushOpacity : 100) / 100;
                 combineStrokeAndBackup(lay, opacity);
-                updatePaintBuffer(lay);
+                updatePaintBuffer(lay, { minX, minY, maxX, maxY });
+                isInteracting = true;
                 requestRender();
             }
 
@@ -5497,10 +5754,22 @@
                 paintAnimationFrameId = requestAnimationFrame(processPaintQueue);
             } else {
                 paintAnimationFrameId = null;
+                isInteracting = false;
+                requestRender();
             }
         }
 
         function handleCanvasPointerUp(e) {
+            if (activePaintPointerId !== null) {
+                let canvas = document.getElementById('mainCanvas') || document.getElementById('viewportCanvas') || document.querySelector('canvas');
+                if (e.target && typeof e.target.releasePointerCapture === 'function') {
+                    try { e.target.releasePointerCapture(activePaintPointerId); } catch(err) {}
+                } else if (canvas && typeof canvas.releasePointerCapture === 'function') {
+                    try { canvas.releasePointerCapture(activePaintPointerId); } catch(err) {}
+                }
+                activePaintPointerId = null;
+            }
+
             if (currentTab === 'tiling') {
                 if (isStamping) {
                     isStamping = false;
@@ -5524,30 +5793,8 @@
                 return;
             }
 
-            isPainting = false;
-            strokeBackupActive = false;
-            
-            let lay = state.layers.find(l => l.id === state.selectedLayerId);
-            if (lay && lay.generatorType === 'paint') {
-                let sCtx = getStrokeCanvas().getContext('2d');
-                // Connect the last midpoint to the final point to complete the line beautifully
-                if (paintPoints.length > 1) {
-                    let lastPt = paintPoints[paintPoints.length - 1];
-                    let prevPt = paintPoints[paintPoints.length - 2];
-                    let midX = (prevPt.x + lastPt.x) / 2;
-                    let midY = (prevPt.y + lastPt.y) / 2;
-                    drawBrushLineSegment(lay, midX, midY, lastPt.x, lastPt.y, undefined, undefined, lastPt.pressure, sCtx);
-                }
-                
-                let lp = lay.params;
-                let opacity = (lp.brushOpacity !== undefined ? lp.brushOpacity : 100) / 100;
-                combineStrokeAndBackup(lay, opacity);
-                updatePaintBuffer(lay);
-                commitHistorySnapshot();
-            }
-
-            paintPoints = [];
-            paintQueue = [];
+            finalizePaintingStroke();
+            commitHistorySnapshot();
         }
 
         function evalGenerator(type, tx, ty, sx, sy, p, cymaticsSources = null, lay = null) {
@@ -6056,6 +6303,104 @@
                         rSum += pix[0] * wt; gSum += pix[1] * wt; bSum += pix[2] * wt;
                         wSum += wt;
                     }
+                } else if (bType === 'radial') {
+                    let rcx = p.radialBlurCenterX !== undefined ? parseFloat(p.radialBlurCenterX) : 0.5;
+                    let rcy = p.radialBlurCenterY !== undefined ? parseFloat(p.radialBlurCenterY) : 0.5;
+                    let innerR = (p.radialBlurInnerRadius !== undefined ? parseFloat(p.radialBlurInnerRadius) : 0) / 100;
+                    let widthR = (p.radialBlurWidth !== undefined ? parseFloat(p.radialBlurWidth) : 100) / 100;
+                    let softness = (p.radialBlurSoftness !== undefined ? parseFloat(p.radialBlurSoftness) : 40) / 100;
+                    let rMode = p.radialBlurMode || 'spin';
+                    let spinAngle = (p.radialBlurAngle !== undefined ? parseFloat(p.radialBlurAngle) : 15) * Math.PI / 180;
+
+                    let dx = tx - rcx;
+                    let dy = ty - rcy;
+                    let dist = Math.sqrt(dx * dx + dy * dy);
+
+                    let maxRadius = 0.7071;
+                    let rIn = innerR * maxRadius;
+                    let rOut = rIn + widthR * maxRadius;
+                    let soft = Math.max(0.01, softness * maxRadius * 0.5);
+
+                    let mask = 1.0;
+                    if (dist < rIn) {
+                        if (innerR <= 0) {
+                            mask = 1.0;
+                        } else if (dist < rIn - soft) {
+                            mask = 0.0;
+                        } else {
+                            let t = (dist - (rIn - soft)) / (2 * soft);
+                            mask = t * t * (3 - 2 * t);
+                        }
+                    } else if (dist > rOut) {
+                        if (dist > rOut + soft) {
+                            mask = 0.0;
+                        } else {
+                            let t = (rOut + soft - dist) / (2 * soft);
+                            mask = t * t * (3 - 2 * t);
+                        }
+                    } else {
+                        let inFade = 1.0;
+                        let outFade = 1.0;
+                        if (innerR > 0 && (dist - rIn) < soft) {
+                            let t = (dist - rIn + soft) / (2 * soft);
+                            inFade = t * t * (3 - 2 * t);
+                        }
+                        if ((rOut - dist) < soft) {
+                            let t = (rOut + soft - dist) / (2 * soft);
+                            outFade = t * t * (3 - 2 * t);
+                        }
+                        mask = Math.min(inFade, outFade);
+                    }
+
+                    if (mask <= 0.001) {
+                        return evalRawGeneratorPixel(type, tx, ty, sx, sy, p, activeCymaticsSources, lay, lutR, lutG, lutB);
+                    }
+
+                    let effAngle = spinAngle * mask;
+                    let effZoom = (bVal / 100) * 0.25 * mask;
+
+                    let numSteps = Math.max(5, Math.min(15, Math.round(bVal * 0.3) | 1));
+                    if (numSteps % 2 === 0) numSteps += 1;
+                    let halfSteps = (numSteps - 1) / 2;
+
+                    for (let k = -halfSteps; k <= halfSteps; k++) {
+                        let t = k / halfSteps;
+                        let wt = Math.exp(-2.0 * t * t);
+
+                        let sdx = dx;
+                        let sdy = dy;
+
+                        if (rMode === 'spin' || rMode === 'both') {
+                            let ang = t * effAngle;
+                            let ca = Math.cos(ang);
+                            let sa = Math.sin(ang);
+                            sdx = dx * ca - dy * sa;
+                            sdy = dx * sa + dy * ca;
+                        }
+
+                        if (rMode === 'zoom' || rMode === 'both') {
+                            let scale = 1.0 + t * effZoom;
+                            sdx *= scale;
+                            sdy *= scale;
+                        }
+
+                        let stx = rcx + sdx;
+                        let sty = rcy + sdy;
+
+                        let pix = evalRawGeneratorPixel(type, stx, sty, sx, sy, p, activeCymaticsSources, lay, lutR, lutG, lutB);
+                        rSum += pix[0] * wt; gSum += pix[1] * wt; bSum += pix[2] * wt;
+                        wSum += wt;
+                    }
+
+                    if (wSum > 0) {
+                        let blurredPix = [rSum / wSum, gSum / wSum, bSum / wSum];
+                        let origPix = evalRawGeneratorPixel(type, tx, ty, sx, sy, p, activeCymaticsSources, lay, lutR, lutG, lutB);
+                        return [
+                            origPix[0] * (1 - mask) + blurredPix[0] * mask,
+                            origPix[1] * (1 - mask) + blurredPix[1] * mask,
+                            origPix[2] * (1 - mask) + blurredPix[2] * mask
+                        ];
+                    }
                 } else {
                     // Gaussian blur: multi-ring concentric sampling to cover the entire disk smoothly
                     let centerPix = evalRawGeneratorPixel(type, tx, ty, sx, sy, p, activeCymaticsSources, lay, lutR, lutG, lutB);
@@ -6104,7 +6449,7 @@
             for(let lIdx=state.layers.length-1; lIdx>=0; lIdx--){
                 let lay = state.layers[lIdx]; if(!lay.visible) continue;
                 let op = lay.opacity/100, bFn = Blend[lay.blendMode] || Blend.normal, p = lay.params;
-                let usePreTransformBlur = !!(p.blur > 0 && p.blurWithTransform);
+                let usePreTransformBlur = !!(p.blur > 0 && p.blurWithTransform && lay.generatorType === 'paint');
                 let lScale = p.layerScale || 1;
 
                 if (lay.generatorType === 'paint') {
@@ -6175,7 +6520,7 @@
                     let lrRad = -(p.angle || 0) * Math.PI / 180;
                     let cosLRot = p.angle ? Math.cos(lrRad) : 1, sinLRot = p.angle ? Math.sin(lrRad) : 0;
 
-                    if (usePreTransformBlur && lay.generatorType === 'paint') {
+                    if (usePreTransformBlur) {
                         const unwarpedR = getGlobalFloatBuffer('unwarpedR', w * h);
                         const unwarpedG = getGlobalFloatBuffer('unwarpedG', w * h);
                         const unwarpedB = getGlobalFloatBuffer('unwarpedB', w * h);
@@ -6190,37 +6535,82 @@
                                 let sx0 = p.scaleX || 10, sy0 = p.scaleY || 10;
 
                                 let pr = 0, pg = 0, pb = 0;
-                                if (lay.paintBufferR) {
-                                    let scaleFactorX = (sx0 || 10) / 10;
-                                    let scaleFactorY = (sy0 || 10) / 10;
-                                    let stx = (tx0 - 0.5) * scaleFactorX + 0.5;
-                                    let sty = (ty0 - 0.5) * scaleFactorY + 0.5;
-                                    let px = (stx % 1 + 1) % 1;
-                                    let py = (sty % 1 + 1) % 1;
-                                    let pw = 1024, ph = 1024;
-                                    let x = px * (pw - 1), y = py * (ph - 1);
-                                    let x0 = Math.floor(x), y0 = Math.floor(y);
-                                    let x1 = Math.min(pw - 1, x0 + 1), y1 = Math.min(ph - 1, y0 + 1);
-                                    let fx = x - x0, fy = y - y0;
-                                    
-                                    let r00 = lay.paintBufferR[y0 * pw + x0], r10 = lay.paintBufferR[y0 * pw + x1];
-                                    let r01 = lay.paintBufferR[y1 * pw + x0], r11 = lay.paintBufferR[y1 * pw + x1];
-                                    pr = (1 - fy) * ((1 - fx) * r00 + fx * r10) + fy * ((1 - fx) * r01 + fx * r11);
+                                if (lay.generatorType === 'paint') {
+                                    if (lay.paintBufferR) {
+                                        let scaleFactorX = (sx0 || 10) / 10;
+                                        let scaleFactorY = (sy0 || 10) / 10;
+                                        let stx = (tx0 - 0.5) * scaleFactorX + 0.5;
+                                        let sty = (ty0 - 0.5) * scaleFactorY + 0.5;
+                                        let px = (stx % 1 + 1) % 1;
+                                        let py = (sty % 1 + 1) % 1;
+                                        let pw = 1024, ph = 1024;
+                                        let x = px * (pw - 1), y = py * (ph - 1);
+                                        let x0 = Math.floor(x), y0 = Math.floor(y);
+                                        let x1 = Math.min(pw - 1, x0 + 1), y1 = Math.min(ph - 1, y0 + 1);
+                                        let fx = x - x0, fy = y - y0;
+                                        
+                                        let r00 = lay.paintBufferR[y0 * pw + x0], r10 = lay.paintBufferR[y0 * pw + x1];
+                                        let r01 = lay.paintBufferR[y1 * pw + x0], r11 = lay.paintBufferR[y1 * pw + x1];
+                                        pr = (1 - fy) * ((1 - fx) * r00 + fx * r10) + fy * ((1 - fx) * r01 + fx * r11);
 
-                                    let g00 = lay.paintBufferG[y0 * pw + x0], g10 = lay.paintBufferG[y0 * pw + x1];
-                                    let g01 = lay.paintBufferG[y1 * pw + x0], g11 = lay.paintBufferG[y1 * pw + x1];
-                                    pg = (1 - fy) * ((1 - fx) * g00 + fx * g10) + fy * ((1 - fx) * g01 + fx * g11);
+                                        let g00 = lay.paintBufferG[y0 * pw + x0], g10 = lay.paintBufferG[y0 * pw + x1];
+                                        let g01 = lay.paintBufferG[y1 * pw + x0], g11 = lay.paintBufferG[y1 * pw + x1];
+                                        pg = (1 - fy) * ((1 - fx) * g00 + fx * g10) + fy * ((1 - fx) * g01 + fx * g11);
 
-                                    let b00 = lay.paintBufferB[y0 * pw + x0], b10 = lay.paintBufferB[y0 * pw + x1];
-                                    let b01 = lay.paintBufferB[y1 * pw + x0], b11 = lay.paintBufferB[y1 * pw + x1];
-                                    pb = (1 - fy) * ((1 - fx) * b00 + fx * b10) + fy * ((1 - fx) * b01 + fx * b11);
+                                        let b00 = lay.paintBufferB[y0 * pw + x0], b10 = lay.paintBufferB[y0 * pw + x1];
+                                        let b01 = lay.paintBufferB[y1 * pw + x0], b11 = lay.paintBufferB[y1 * pw + x1];
+                                        pb = (1 - fy) * ((1 - fx) * b00 + fx * b10) + fy * ((1 - fx) * b01 + fx * b11);
+                                    }
+                                    if(p.brightness!==undefined) { pr*=p.brightness; pg*=p.brightness; pb*=p.brightness; }
+                                    if(p.contrast!==undefined) { pr=(pr-0.5)*p.contrast+0.5; pg=(pg-0.5)*p.contrast+0.5; pb=(pb-0.5)*p.contrast+0.5; }
+                                    if(p.invert) { pr=1-pr; pg=1-pg; pb=1-pb; }
+
+                                    if (p.useLevels) {
+                                        let min = (p.levelMin || 0) / 100, max = (p.levelMax || 100) / 100;
+                                        if (max > min) {
+                                            pr = (pr - min) / (max - min);
+                                            pg = (pg - min) / (max - min);
+                                            pb = (pb - min) / (max - min);
+                                        }
+                                    }
+                                    if (p.useThreshold) {
+                                        let th = (p.thresholdVal || 50) / 100;
+                                        pr = pr >= th ? 1 : 0;
+                                        pg = pg >= th ? 1 : 0;
+                                        pb = pb >= th ? 1 : 0;
+                                    }
+                                    if (p.usePosterize) {
+                                        let levels = Math.max(2, p.posterizeLevels || 4);
+                                        pr = Math.floor(Math.max(0, Math.min(1, pr)) * levels) / (levels - 1);
+                                        pg = Math.floor(Math.max(0, Math.min(1, pg)) * levels) / (levels - 1);
+                                        pb = Math.floor(Math.max(0, Math.min(1, pb)) * levels) / (levels - 1);
+                                    }
+
+                                    if (p.colorMode === 'tint' || p.colorMode === 'color_ramp') {
+                                        let lum = Math.max(0, Math.min(1, 0.2126 * pr + 0.7152 * pg + 0.0722 * pb));
+                                        let lIdx = (lum * 255.99) | 0;
+                                        if (lIdx < 0) lIdx = 0; else if (lIdx > 255) lIdx = 255;
+                                        pr = lutR[lIdx];
+                                        pg = lutG[lIdx];
+                                        pb = lutB[lIdx];
+                                    } else {
+                                        let rIdx = (Math.max(0, Math.min(1, pr)) * 255.99) | 0;
+                                        let gIdx = (Math.max(0, Math.min(1, pg)) * 255.99) | 0;
+                                        let bIdx = (Math.max(0, Math.min(1, pb)) * 255.99) | 0;
+                                        if (rIdx < 0) rIdx = 0; else if (rIdx > 255) rIdx = 255;
+                                        if (gIdx < 0) gIdx = 0; else if (gIdx > 255) gIdx = 255;
+                                        if (bIdx < 0) bIdx = 0; else if (bIdx > 255) bIdx = 255;
+                                        pr = lutR[rIdx];
+                                        pg = lutG[gIdx];
+                                        pb = lutB[bIdx];
+                                    }
+                                } else {
+                                    let pix = evalRawGeneratorPixel(lay.generatorType, tx0, ty0, sx0, sy0, p, activeCymaticsSources, lay, lutR, lutG, lutB);
+                                    pr = pix[0]; pg = pix[1]; pb = pix[2];
                                 }
-                                if(p.brightness!==undefined) { pr*=p.brightness; pg*=p.brightness; pb*=p.brightness; }
-                                if(p.contrast!==undefined) { pr=(pr-0.5)*p.contrast+0.5; pg=(pg-0.5)*p.contrast+0.5; pb=(pb-0.5)*p.contrast+0.5; }
-                                if(p.invert) { pr=1-pr; pg=1-pg; pb=1-pb; }
-                                unwarpedR[uIdx] = Math.max(0, Math.min(1, pr));
-                                unwarpedG[uIdx] = Math.max(0, Math.min(1, pg));
-                                unwarpedB[uIdx] = Math.max(0, Math.min(1, pb));
+                                unwarpedR[uIdx] = pr;
+                                unwarpedG[uIdx] = pg;
+                                unwarpedB[uIdx] = pb;
                             }
                         }
 
@@ -6243,6 +6633,10 @@
                             applyZoomBlur(unwarpedR, blurTempR, w, h, parseInt(p.blur), zcx, zcy, zstr, blurMode);
                             applyZoomBlur(unwarpedG, blurTempG, w, h, parseInt(p.blur), zcx, zcy, zstr, blurMode);
                             applyZoomBlur(unwarpedB, blurTempB, w, h, parseInt(p.blur), zcx, zcy, zstr, blurMode);
+                        } else if (bType === 'radial') {
+                            applyRadialBlur(unwarpedR, blurTempR, w, h, parseInt(p.blur), p, blurMode);
+                            applyRadialBlur(unwarpedG, blurTempG, w, h, parseInt(p.blur), p, blurMode);
+                            applyRadialBlur(unwarpedB, blurTempB, w, h, parseInt(p.blur), p, blurMode);
                         } else if (bType === 'box') {
                             applyBoxBlur(unwarpedR, blurTempR, w, h, parseInt(p.blur), blurMode);
                             applyBoxBlur(unwarpedG, blurTempG, w, h, parseInt(p.blur), blurMode);
@@ -6773,91 +7167,39 @@
                             let sx=p.scaleX||10, sy=p.scaleY||10;
 
                             if (usePreTransformBlur) {
-                                if (lay.generatorType === 'paint') {
-                                    const unwarpedR = getGlobalFloatBuffer('unwarpedR', w * h);
-                                    const unwarpedG = getGlobalFloatBuffer('unwarpedG', w * h);
-                                    const unwarpedB = getGlobalFloatBuffer('unwarpedB', w * h);
+                                const unwarpedR = getGlobalFloatBuffer('unwarpedR', w * h);
+                                const unwarpedG = getGlobalFloatBuffer('unwarpedG', w * h);
+                                const unwarpedB = getGlobalFloatBuffer('unwarpedB', w * h);
 
-                                    let isTiledLayer = (state.global.tileMode && state.global.tileMode !== 'off') || !!p.seamless;
-                                    if (nx >= 0 && nx <= 1 && ny >= 0 && ny <= 1) {
-                                        let px = nx, py = ny;
-                                        let sxSample = px * (w - 1);
-                                        let sySample = py * (h - 1);
-                                        let x0 = Math.floor(sxSample), y0 = Math.floor(sySample);
-                                        let x1 = Math.min(w - 1, x0 + 1), y1 = Math.min(h - 1, y0 + 1);
-                                        let fx = sxSample - x0, fy = sySample - y0;
-
-                                        let idx00 = y0 * w + x0, idx10 = y0 * w + x1;
-                                        let idx01 = y1 * w + x0, idx11 = y1 * w + x1;
-
-                                        let r00 = unwarpedR[idx00], r10 = unwarpedR[idx10];
-                                        let r01 = unwarpedR[idx01], r11 = unwarpedR[idx11];
-                                        targetBufR[idx] = (1 - fy) * ((1 - fx) * r00 + fx * r10) + fy * ((1 - fx) * r01 + fx * r11);
-
-                                        let g00 = unwarpedG[idx00], g10 = unwarpedG[idx10];
-                                        let g01 = unwarpedG[idx01], g11 = unwarpedG[idx11];
-                                        targetBufG[idx] = (1 - fy) * ((1 - fx) * g00 + fx * g10) + fy * ((1 - fx) * g01 + fx * g11);
-
-                                        let b00 = unwarpedB[idx00], b10 = unwarpedB[idx10];
-                                        let b01 = unwarpedB[idx01], b11 = unwarpedB[idx11];
-                                        targetBufB[idx] = (1 - fy) * ((1 - fx) * b00 + fx * b10) + fy * ((1 - fx) * b01 + fx * b11);
-                                    } else if (isTiledLayer) {
-                                        let px = (nx % 1.0 + 1.0) % 1.0;
-                                        let py = (ny % 1.0 + 1.0) % 1.0;
-                                        let sxSample = px * (w - 1);
-                                        let sySample = py * (h - 1);
-                                        let x0 = Math.floor(sxSample), y0 = Math.floor(sySample);
-                                        let x1 = Math.min(w - 1, x0 + 1), y1 = Math.min(h - 1, y0 + 1);
-                                        let fx = sxSample - x0, fy = sySample - y0;
-
-                                        let idx00 = y0 * w + x0, idx10 = y0 * w + x1;
-                                        let idx01 = y1 * w + x0, idx11 = y1 * w + x1;
-
-                                        let r00 = unwarpedR[idx00], r10 = unwarpedR[idx10];
-                                        let r01 = unwarpedR[idx01], r11 = unwarpedR[idx11];
-                                        targetBufR[idx] = (1 - fy) * ((1 - fx) * r00 + fx * r10) + fy * ((1 - fx) * r01 + fx * r11);
-
-                                        let g00 = unwarpedG[idx00], g10 = unwarpedG[idx10];
-                                        let g01 = unwarpedG[idx01], g11 = unwarpedG[idx11];
-                                        targetBufG[idx] = (1 - fy) * ((1 - fx) * g00 + fx * g10) + fy * ((1 - fx) * g01 + fx * g11);
-
-                                        let b00 = unwarpedB[idx00], b10 = unwarpedB[idx10];
-                                        let b01 = unwarpedB[idx01], b11 = unwarpedB[idx11];
-                                        targetBufB[idx] = (1 - fy) * ((1 - fx) * b00 + fx * b10) + fy * ((1 - fx) * b01 + fx * b11);
-                                    } else if (p.blurClampEdge) {
-                                        let px = Math.max(0, Math.min(1, nx));
-                                        let py = Math.max(0, Math.min(1, ny));
-                                        let sxSample = px * (w - 1);
-                                        let sySample = py * (h - 1);
-                                        let x0 = Math.floor(sxSample), y0 = Math.floor(sySample);
-                                        let x1 = Math.min(w - 1, x0 + 1), y1 = Math.min(h - 1, y0 + 1);
-                                        let fx = sxSample - x0, fy = sySample - y0;
-
-                                        let idx00 = y0 * w + x0, idx10 = y0 * w + x1;
-                                        let idx01 = y1 * w + x0, idx11 = y1 * w + x1;
-
-                                        let r00 = unwarpedR[idx00], r10 = unwarpedR[idx10];
-                                        let r01 = unwarpedR[idx01], r11 = unwarpedR[idx11];
-                                        targetBufR[idx] = (1 - fy) * ((1 - fx) * r00 + fx * r10) + fy * ((1 - fx) * r01 + fx * r11);
-
-                                        let g00 = unwarpedG[idx00], g10 = unwarpedG[idx10];
-                                        let g01 = unwarpedG[idx01], g11 = unwarpedG[idx11];
-                                        targetBufG[idx] = (1 - fy) * ((1 - fx) * g00 + fx * g10) + fy * ((1 - fx) * g01 + fx * g11);
-
-                                        let b00 = unwarpedB[idx00], b10 = unwarpedB[idx10];
-                                        let b01 = unwarpedB[idx01], b11 = unwarpedB[idx11];
-                                        targetBufB[idx] = (1 - fy) * ((1 - fx) * b00 + fx * b10) + fy * ((1 - fx) * b01 + fx * b11);
-                                    } else {
-                                        targetBufR[idx] = 0;
-                                        targetBufG[idx] = 0;
-                                        targetBufB[idx] = 0;
-                                    }
+                                let px, py;
+                                if (p.blurClampEdge) {
+                                    px = Math.max(0, Math.min(1, nx));
+                                    py = Math.max(0, Math.min(1, ny));
                                 } else {
-                                    let [pr, pg, pb] = sampleBlurredGenerator(lay.generatorType, tx, ty, sx, sy, p, activeCymaticsSources, lay, lutR, lutG, lutB, w);
-                                    targetBufR[idx] = pr;
-                                    targetBufG[idx] = pg;
-                                    targetBufB[idx] = pb;
+                                    px = (nx % 1.0 + 1.0) % 1.0;
+                                    py = (ny % 1.0 + 1.0) % 1.0;
                                 }
+
+                                let sxSample = px * (w - 1);
+                                let sySample = py * (h - 1);
+                                let x0 = Math.floor(sxSample), y0 = Math.floor(sySample);
+                                let x1 = Math.min(w - 1, x0 + 1), y1 = Math.min(h - 1, y0 + 1);
+                                let fx = sxSample - x0, fy = sySample - y0;
+
+                                let idx00 = y0 * w + x0, idx10 = y0 * w + x1;
+                                let idx01 = y1 * w + x0, idx11 = y1 * w + x1;
+
+                                let r00 = unwarpedR[idx00], r10 = unwarpedR[idx10];
+                                let r01 = unwarpedR[idx01], r11 = unwarpedR[idx11];
+                                targetBufR[idx] = (1 - fy) * ((1 - fx) * r00 + fx * r10) + fy * ((1 - fx) * r01 + fx * r11);
+
+                                let g00 = unwarpedG[idx00], g10 = unwarpedG[idx10];
+                                let g01 = unwarpedG[idx01], g11 = unwarpedG[idx11];
+                                targetBufG[idx] = (1 - fy) * ((1 - fx) * g00 + fx * g10) + fy * ((1 - fx) * g01 + fx * g11);
+
+                                let b00 = unwarpedB[idx00], b10 = unwarpedB[idx10];
+                                let b01 = unwarpedB[idx01], b11 = unwarpedB[idx11];
+                                targetBufB[idx] = (1 - fy) * ((1 - fx) * b00 + fx * b10) + fy * ((1 - fx) * b01 + fx * b11);
                             } else if (lay.generatorType === 'paint') {
                                 let pr = 0, pg = 0, pb = 0;
                                 if (lay.paintBufferR) {
@@ -6888,9 +7230,46 @@
                                 if(p.brightness!==undefined) { pr*=p.brightness; pg*=p.brightness; pb*=p.brightness; }
                                 if(p.contrast!==undefined) { pr=(pr-0.5)*p.contrast+0.5; pg=(pg-0.5)*p.contrast+0.5; pb=(pb-0.5)*p.contrast+0.5; }
                                 if(p.invert) { pr=1-pr; pg=1-pg; pb=1-pb; }
-                                targetBufR[idx] = Math.max(0, Math.min(1, pr));
-                                targetBufG[idx] = Math.max(0, Math.min(1, pg));
-                                targetBufB[idx] = Math.max(0, Math.min(1, pb));
+
+                                if (p.useLevels) {
+                                    let min = (p.levelMin || 0) / 100, max = (p.levelMax || 100) / 100;
+                                    if (max > min) {
+                                        pr = (pr - min) / (max - min);
+                                        pg = (pg - min) / (max - min);
+                                        pb = (pb - min) / (max - min);
+                                    }
+                                }
+                                if (p.useThreshold) {
+                                    let th = (p.thresholdVal || 50) / 100;
+                                    pr = pr >= th ? 1 : 0;
+                                    pg = pg >= th ? 1 : 0;
+                                    pb = pb >= th ? 1 : 0;
+                                }
+                                if (p.usePosterize) {
+                                    let levels = Math.max(2, p.posterizeLevels || 4);
+                                    pr = Math.floor(Math.max(0, Math.min(1, pr)) * levels) / (levels - 1);
+                                    pg = Math.floor(Math.max(0, Math.min(1, pg)) * levels) / (levels - 1);
+                                    pb = Math.floor(Math.max(0, Math.min(1, pb)) * levels) / (levels - 1);
+                                }
+
+                                if (p.colorMode === 'tint' || p.colorMode === 'color_ramp') {
+                                    let lum = Math.max(0, Math.min(1, 0.2126 * pr + 0.7152 * pg + 0.0722 * pb));
+                                    let lIdx = (lum * 255.99) | 0;
+                                    if (lIdx < 0) lIdx = 0; else if (lIdx > 255) lIdx = 255;
+                                    targetBufR[idx] = lutR[lIdx];
+                                    targetBufG[idx] = lutG[lIdx];
+                                    targetBufB[idx] = lutB[lIdx];
+                                } else {
+                                    let rIdx = (Math.max(0, Math.min(1, pr)) * 255.99) | 0;
+                                    let gIdx = (Math.max(0, Math.min(1, pg)) * 255.99) | 0;
+                                    let bIdx = (Math.max(0, Math.min(1, pb)) * 255.99) | 0;
+                                    if (rIdx < 0) rIdx = 0; else if (rIdx > 255) rIdx = 255;
+                                    if (gIdx < 0) gIdx = 0; else if (gIdx > 255) gIdx = 255;
+                                    if (bIdx < 0) bIdx = 0; else if (bIdx > 255) bIdx = 255;
+                                    targetBufR[idx] = lutR[rIdx];
+                                    targetBufG[idx] = lutG[gIdx];
+                                    targetBufB[idx] = lutB[bIdx];
+                                }
                             } else {
                                 let v = 0;
                                 let isSelfSeamlessGen = (lay.generatorType === 'voronoi' || lay.generatorType === 'sine' || lay.generatorType === 'hexagon');
@@ -6983,6 +7362,10 @@
                             applyZoomBlur(layerBufferR, blurTempR, w, h, parseInt(p.blur), zcx, zcy, zstr, blurMode);
                             applyZoomBlur(layerBufferG, blurTempG, w, h, parseInt(p.blur), zcx, zcy, zstr, blurMode);
                             applyZoomBlur(layerBufferB, blurTempB, w, h, parseInt(p.blur), zcx, zcy, zstr, blurMode);
+                        } else if (bType === 'radial') {
+                            applyRadialBlur(layerBufferR, blurTempR, w, h, parseInt(p.blur), p, blurMode);
+                            applyRadialBlur(layerBufferG, blurTempG, w, h, parseInt(p.blur), p, blurMode);
+                            applyRadialBlur(layerBufferB, blurTempB, w, h, parseInt(p.blur), p, blurMode);
                         } else if (bType === 'box') {
                             applyBoxBlur(layerBufferR, blurTempR, w, h, parseInt(p.blur), blurMode);
                             applyBoxBlur(layerBufferG, blurTempG, w, h, parseInt(p.blur), blurMode);
@@ -7233,6 +7616,10 @@
                     applyZoomBlur(blendBufferR, blurTempR, w, h, parseInt(state.global.blur), zcx, zcy, zstr, globalBlurMode);
                     applyZoomBlur(blendBufferG, blurTempG, w, h, parseInt(state.global.blur), zcx, zcy, zstr, globalBlurMode);
                     applyZoomBlur(blendBufferB, blurTempB, w, h, parseInt(state.global.blur), zcx, zcy, zstr, globalBlurMode);
+                } else if (gBType === 'radial') {
+                    applyRadialBlur(blendBufferR, blurTempR, w, h, parseInt(state.global.blur), state.global, globalBlurMode);
+                    applyRadialBlur(blendBufferG, blurTempG, w, h, parseInt(state.global.blur), state.global, globalBlurMode);
+                    applyRadialBlur(blendBufferB, blurTempB, w, h, parseInt(state.global.blur), state.global, globalBlurMode);
                 } else if (gBType === 'box') {
                     applyBoxBlur(blendBufferR, blurTempR, w, h, parseInt(state.global.blur), globalBlurMode);
                     applyBoxBlur(blendBufferG, blurTempG, w, h, parseInt(state.global.blur), globalBlurMode);
@@ -9456,6 +9843,15 @@
                     </div>
                 </div>
                 <div class="property-group">
+                    <label class="property-label">Вид курсора (індикатор пензля)</label>
+                    <select class="form-control" onchange="upd('brushCursorStyle', this.value)">
+                        <option value="circle_cross" ${(lp.brushCursorStyle||'circle_cross')==='circle_cross'?'selected':''}>⊙ Коло та перехрестя</option>
+                        <option value="circle" ${lp.brushCursorStyle==='circle'?'selected':''}>◯ Тільки коло</option>
+                        <option value="cross" ${lp.brushCursorStyle==='cross'?'selected':''}>┼ Тільки перехрестя</option>
+                        <option value="none" ${lp.brushCursorStyle==='none'?'selected':''}>✖ Вимкнено (Системний)</option>
+                    </select>
+                </div>
+                <div class="property-group">
                     <label class="property-label">Колір пензля (висота/маска)</label>
                     <input type="color" value="${lp.brushColor}" oninput="upd('brushColor', this.value)" style="width:100%; height:32px; background:none; border:1px solid var(--border-color); border-radius:4px; cursor:pointer;">
                 </div>
@@ -10306,11 +10702,12 @@
                 ${createSlider("Розмиття (px)", "blur", 0, 100, 1, lp.blur||0, false, 0)}
                 <div class="property-group" style="margin-top:-6px;">
                     <label class="property-label" style="font-size:11px; margin-bottom:4px;">Тип розмиття</label>
-                    <div class="gen-grid" style="grid-template-columns:repeat(2,1fr);">
-                        <button onclick="upd('blurType','gaussian'); renderProps();" class="gen-btn ${(lp.blurType||'gaussian')==='gaussian'?'active':''}">Гаус (Gaussian)</button>
-                        <button onclick="upd('blurType','box'); renderProps();" class="gen-btn ${lp.blurType==='box'?'active':''}">Бокс (Box)</button>
-                        <button onclick="upd('blurType','directional'); renderProps();" class="gen-btn ${lp.blurType==='directional'?'active':''}">За напрямком</button>
-                        <button onclick="upd('blurType','zoom'); renderProps();" class="gen-btn ${lp.blurType==='zoom'?'active':''}">Zoom (Радіальне)</button>
+                    <div class="gen-grid" style="grid-template-columns:repeat(3,1fr); gap:4px;">
+                        <button onclick="upd('blurType','gaussian'); renderProps();" class="gen-btn ${(lp.blurType||'gaussian')==='gaussian'?'active':''}">Гаус</button>
+                        <button onclick="upd('blurType','box'); renderProps();" class="gen-btn ${lp.blurType==='box'?'active':''}">Бокс</button>
+                        <button onclick="upd('blurType','directional'); renderProps();" class="gen-btn ${lp.blurType==='directional'?'active':''}">Напрямок</button>
+                        <button onclick="upd('blurType','zoom'); renderProps();" class="gen-btn ${lp.blurType==='zoom'?'active':''}">Zoom</button>
+                        <button onclick="upd('blurType','radial'); renderProps();" class="gen-btn ${lp.blurType==='radial'?'active':''}" style="grid-column: span 2;">🎯 Радіальне кільце</button>
                     </div>
                 </div>
                 ${(lp.blurType === 'directional') ? `
@@ -10330,6 +10727,27 @@
                     ${createSlider("Центр X Zoom", "zoomBlurCenterX", 0, 1, 0.01, lp.zoomBlurCenterX !== undefined ? lp.zoomBlurCenterX : 0.5, false, 0.5)}
                     ${createSlider("Центр Y Zoom", "zoomBlurCenterY", 0, 1, 0.01, lp.zoomBlurCenterY !== undefined ? lp.zoomBlurCenterY : 0.5, false, 0.5)}
                     ${createSlider("Сила Zoom (%)", "zoomBlurStrength", 0, 200, 1, lp.zoomBlurStrength !== undefined ? lp.zoomBlurStrength : 100, false, 100)}
+                ` : ''}
+                ${(lp.blurType === 'radial') ? `
+                    <div style="background: rgba(255,255,255,0.03); border: 1px solid var(--border-color, #27272a); border-radius: 8px; padding: 10px; margin: 8px 0 10px 0;">
+                        <div style="font-weight:700; color:var(--primary-color, #3b82f6); font-size:11px; margin-bottom:8px; display:flex; align-items:center; gap:6px;">
+                            <span>🎯 Радіальне розмиття (Зона впливу)</span>
+                        </div>
+                        <div class="property-group" style="margin-bottom:8px;">
+                            <label class="property-label" style="font-size:10px; margin-bottom:4px;">Режим радіального розмиття</label>
+                            <div class="gen-grid" style="grid-template-columns:repeat(3,1fr); gap:4px;">
+                                <button type="button" onclick="upd('radialBlurMode','spin'); renderProps();" class="gen-btn ${(lp.radialBlurMode||'spin')==='spin'?'active':''}">🌀 Кругове</button>
+                                <button type="button" onclick="upd('radialBlurMode','zoom'); renderProps();" class="gen-btn ${lp.radialBlurMode==='zoom'?'active':''}">🔍 Променеве</button>
+                                <button type="button" onclick="upd('radialBlurMode','both'); renderProps();" class="gen-btn ${lp.radialBlurMode==='both'?'active':''}">⚡ Суміш</button>
+                            </div>
+                        </div>
+                        ${createSlider("Центр X", "radialBlurCenterX", 0, 1, 0.01, lp.radialBlurCenterX !== undefined ? lp.radialBlurCenterX : 0.5, false, 0.5)}
+                        ${createSlider("Центр Y", "radialBlurCenterY", 0, 1, 0.01, lp.radialBlurCenterY !== undefined ? lp.radialBlurCenterY : 0.5, false, 0.5)}
+                        ${createSlider("Внутрішній радіус (%)", "radialBlurInnerRadius", 0, 100, 1, lp.radialBlurInnerRadius !== undefined ? lp.radialBlurInnerRadius : 0, false, 0)}
+                        ${createSlider("Ширина зони впливу (%)", "radialBlurWidth", 1, 100, 1, lp.radialBlurWidth !== undefined ? lp.radialBlurWidth : 50, false, 50)}
+                        ${createSlider("М'якість країв зони (%)", "radialBlurSoftness", 0, 100, 1, lp.radialBlurSoftness !== undefined ? lp.radialBlurSoftness : 30, false, 30)}
+                        ${createSlider("Сила / Кут обертання (°)", "radialBlurAngle", -180, 180, 1, lp.radialBlurAngle !== undefined ? lp.radialBlurAngle : 15, false, 15)}
+                    </div>
                 ` : ''}
                 <div class="property-group" style="margin-top:-6px; display:flex; flex-direction:column; gap:6px;">
                     <label class="checkbox-label" style="font-size:11px; display:flex; align-items:center; gap:6px;" title="Якщо увімкнено, розмиття є частиною генерування алгоритму і трансформується/масштабується разом із шаром">
@@ -10606,11 +11024,12 @@
                 ${createSlider("Глобальне розмиття", "blur", 0, 100, 1, g.blur||0, true, 0)}
                 <div class="property-group" style="margin-top:-6px;">
                     <label class="property-label" style="font-size:11px; margin-bottom:4px;">Тип розмиття</label>
-                    <div class="gen-grid" style="grid-template-columns:repeat(2,1fr);">
-                        <button onclick="upd('blurType','gaussian',true); renderGlobal();" class="gen-btn ${(g.blurType||'gaussian')==='gaussian'?'active':''}">Гаус (Gaussian)</button>
-                        <button onclick="upd('blurType','box',true); renderGlobal();" class="gen-btn ${g.blurType==='box'?'active':''}">Бокс (Box)</button>
-                        <button onclick="upd('blurType','directional',true); renderGlobal();" class="gen-btn ${g.blurType==='directional'?'active':''}">За напрямком</button>
-                        <button onclick="upd('blurType','zoom',true); renderGlobal();" class="gen-btn ${g.blurType==='zoom'?'active':''}">Zoom (Радіальне)</button>
+                    <div class="gen-grid" style="grid-template-columns:repeat(3,1fr); gap:4px;">
+                        <button onclick="upd('blurType','gaussian',true); renderGlobal();" class="gen-btn ${(g.blurType||'gaussian')==='gaussian'?'active':''}">Гаус</button>
+                        <button onclick="upd('blurType','box',true); renderGlobal();" class="gen-btn ${g.blurType==='box'?'active':''}">Бокс</button>
+                        <button onclick="upd('blurType','directional',true); renderGlobal();" class="gen-btn ${g.blurType==='directional'?'active':''}">Напрямок</button>
+                        <button onclick="upd('blurType','zoom',true); renderGlobal();" class="gen-btn ${g.blurType==='zoom'?'active':''}">Zoom</button>
+                        <button onclick="upd('blurType','radial',true); renderGlobal();" class="gen-btn ${g.blurType==='radial'?'active':''}" style="grid-column: span 2;">🎯 Радіальне кільце</button>
                     </div>
                 </div>
                 ${(g.blurType === 'directional') ? `
@@ -10630,6 +11049,27 @@
                     ${createSlider("Центр X Zoom", "zoomBlurCenterX", 0, 1, 0.01, g.zoomBlurCenterX !== undefined ? g.zoomBlurCenterX : 0.5, true, 0.5)}
                     ${createSlider("Центр Y Zoom", "zoomBlurCenterY", 0, 1, 0.01, g.zoomBlurCenterY !== undefined ? g.zoomBlurCenterY : 0.5, true, 0.5)}
                     ${createSlider("Сила Zoom (%)", "zoomBlurStrength", 0, 200, 1, g.zoomBlurStrength !== undefined ? g.zoomBlurStrength : 100, true, 100)}
+                ` : ''}
+                ${(g.blurType === 'radial') ? `
+                    <div style="background: rgba(255,255,255,0.03); border: 1px solid var(--border-color, #27272a); border-radius: 8px; padding: 10px; margin: 8px 0 10px 0;">
+                        <div style="font-weight:700; color:var(--primary-color, #3b82f6); font-size:11px; margin-bottom:8px; display:flex; align-items:center; gap:6px;">
+                            <span>🎯 Глобальне радіальне розмиття (Зона впливу)</span>
+                        </div>
+                        <div class="property-group" style="margin-bottom:8px;">
+                            <label class="property-label" style="font-size:10px; margin-bottom:4px;">Режим радіального розмиття</label>
+                            <div class="gen-grid" style="grid-template-columns:repeat(3,1fr); gap:4px;">
+                                <button type="button" onclick="upd('radialBlurMode','spin',true); renderGlobal();" class="gen-btn ${(g.radialBlurMode||'spin')==='spin'?'active':''}">🌀 Кругове</button>
+                                <button type="button" onclick="upd('radialBlurMode','zoom',true); renderGlobal();" class="gen-btn ${g.radialBlurMode==='zoom'?'active':''}">🔍 Променеве</button>
+                                <button type="button" onclick="upd('radialBlurMode','both',true); renderGlobal();" class="gen-btn ${g.radialBlurMode==='both'?'active':''}">⚡ Суміш</button>
+                            </div>
+                        </div>
+                        ${createSlider("Центр X", "radialBlurCenterX", 0, 1, 0.01, g.radialBlurCenterX !== undefined ? g.radialBlurCenterX : 0.5, true, 0.5)}
+                        ${createSlider("Центр Y", "radialBlurCenterY", 0, 1, 0.01, g.radialBlurCenterY !== undefined ? g.radialBlurCenterY : 0.5, true, 0.5)}
+                        ${createSlider("Внутрішній радіус (%)", "radialBlurInnerRadius", 0, 100, 1, g.radialBlurInnerRadius !== undefined ? g.radialBlurInnerRadius : 0, true, 0)}
+                        ${createSlider("Ширина зони впливу (%)", "radialBlurWidth", 1, 100, 1, g.radialBlurWidth !== undefined ? g.radialBlurWidth : 50, true, 50)}
+                        ${createSlider("М'якість країв зони (%)", "radialBlurSoftness", 0, 100, 1, g.radialBlurSoftness !== undefined ? g.radialBlurSoftness : 30, true, 30)}
+                        ${createSlider("Сила / Кут обертання (°)", "radialBlurAngle", -180, 180, 1, g.radialBlurAngle !== undefined ? g.radialBlurAngle : 15, true, 15)}
+                    </div>
                 ` : ''}
                 <div class="property-group" style="margin-top:-6px; display:flex; flex-direction:column; gap:6px;">
                     <label class="checkbox-label" style="font-size:11px; display:flex; align-items:center; gap:6px;" title="Якщо увімкнено, глобальне розмиття трансформується/масштабується разом із усіма глобальними трансформаціями">
@@ -12551,7 +12991,7 @@
         }
 
         // --- Історія (Undo/Redo) ---
-        let history = []; // Array of { snap: string, paintData: { [layerId]: ImageData } }
+        let history = []; // Array of { snap: string, paintData: { [layerId]: Canvas }, tilingData, pbrData }
         let historyIndex = -1;
         let historyTimer = null;
         let historyReady = false;
@@ -12566,11 +13006,12 @@
                     if (lay.generatorType === 'paint') {
                         ensureLayerPaintCanvas(lay);
                         if (lay.paintCanvas) {
-                            let pCtx = lay.paintCanvas.getContext('2d');
-                            data[lay.id] = pCtx.getImageData(0, 0, 1024, 1024);
-                            if (lay.params) {
-                                lay.params.paintDataUrl = lay.paintCanvas.toDataURL();
-                            }
+                            let off = document.createElement('canvas');
+                            off.width = 1024;
+                            off.height = 1024;
+                            let oCtx = off.getContext('2d');
+                            oCtx.drawImage(lay.paintCanvas, 0, 0);
+                            data[lay.id] = off;
                         }
                     }
                 });
@@ -12584,15 +13025,25 @@
                 if (lay.generatorType === 'paint') {
                     ensureLayerPaintCanvas(lay);
                     let pCtx = lay.paintCanvas.getContext('2d');
+                    if (lay.params) {
+                        delete lay.params.paintDataUrl;
+                        delete lay.params.paintCrop;
+                    }
                     if (entry.paintData && entry.paintData[lay.id]) {
-                        pCtx.putImageData(entry.paintData[lay.id], 0, 0);
+                        pCtx.clearRect(0, 0, 1024, 1024);
+                        let source = entry.paintData[lay.id];
+                        if (source instanceof HTMLCanvasElement || (source && source.width)) {
+                            pCtx.drawImage(source, 0, 0);
+                        } else if (source instanceof ImageData) {
+                            pCtx.putImageData(source, 0, 0);
+                        }
                         updatePaintBuffer(lay);
                         lay.isDirty = true;
                     } else if (lay.params && lay.params.paintDataUrl) {
                         let img = new Image();
                         img.onload = () => {
                             pCtx.clearRect(0, 0, 1024, 1024);
-                            pCtx.drawImage(img, 0, 0);
+                            pCtx.drawImage(img, 0, 0, 1024, 1024);
                             updatePaintBuffer(lay);
                             lay.isDirty = true;
                             invalidateCaches();
@@ -12608,28 +13059,36 @@
             });
         }
 
+        function cloneCanvasForHistory(c) {
+            if (!c || !c.width || c.width === 0) return null;
+            let off = document.createElement('canvas');
+            off.width = c.width;
+            off.height = c.height;
+            let octx = off.getContext('2d');
+            octx.drawImage(c, 0, 0);
+            return off;
+        }
+
+        function restoreCanvasFromHistory(dst, src) {
+            if (!dst || !src) return;
+            dst.width = src.width;
+            dst.height = src.height;
+            let ctx = dst.getContext('2d');
+            ctx.clearRect(0, 0, dst.width, dst.height);
+            if (src instanceof HTMLCanvasElement || (src && src.getContext)) {
+                ctx.drawImage(src, 0, 0);
+            } else if (src instanceof ImageData) {
+                ctx.putImageData(src, 0, 0);
+            }
+        }
+
         function captureTilingForHistory() {
             if (!tilingState) return null;
-            let stampImgData = null;
-            if (tilingStampCanvas && tilingStampCanvas.width > 0 && tilingStampCanvas.height > 0) {
-                let sctx = tilingStampCanvas.getContext('2d');
-                stampImgData = sctx.getImageData(0, 0, tilingStampCanvas.width, tilingStampCanvas.height);
-            }
-            let maskImgData = null;
-            if (tilingMaskCanvas && tilingMaskCanvas.width > 0 && tilingMaskCanvas.height > 0) {
-                let mctx = tilingMaskCanvas.getContext('2d');
-                maskImgData = mctx.getImageData(0, 0, tilingMaskCanvas.width, tilingMaskCanvas.height);
-            }
-            let origImgData = null;
-            if (tilingOriginalCanvas && tilingOriginalCanvas.width > 0 && tilingOriginalCanvas.height > 0) {
-                let octx = tilingOriginalCanvas.getContext('2d');
-                origImgData = octx.getImageData(0, 0, tilingOriginalCanvas.width, tilingOriginalCanvas.height);
-            }
             return {
                 tilingState: JSON.parse(JSON.stringify(tilingState)),
-                origImgData: origImgData,
-                stampImgData: stampImgData,
-                maskImgData: maskImgData
+                origImgData: cloneCanvasForHistory(tilingOriginalCanvas),
+                stampImgData: cloneCanvasForHistory(tilingStampCanvas),
+                maskImgData: cloneCanvasForHistory(tilingMaskCanvas)
             };
         }
 
@@ -12640,22 +13099,17 @@
                 tilingState = JSON.parse(JSON.stringify(td.tilingState));
                 if (td.origImgData) {
                     if (!tilingOriginalCanvas) tilingOriginalCanvas = document.createElement('canvas');
-                    tilingOriginalCanvas.width = td.origImgData.width;
-                    tilingOriginalCanvas.height = td.origImgData.height;
-                    let octx = tilingOriginalCanvas.getContext('2d');
-                    octx.putImageData(td.origImgData, 0, 0);
+                    restoreCanvasFromHistory(tilingOriginalCanvas, td.origImgData);
                 }
                 if (td.stampImgData) {
                     ensureTilingStampCanvas(td.stampImgData.width, td.stampImgData.height);
-                    let sctx = tilingStampCanvas.getContext('2d');
-                    sctx.putImageData(td.stampImgData, 0, 0);
+                    restoreCanvasFromHistory(tilingStampCanvas, td.stampImgData);
                 } else if (tilingStampCanvas) {
                     clearTilingStampCanvas();
                 }
                 if (td.maskImgData) {
                     ensureTilingMaskCanvas(td.maskImgData.width, td.maskImgData.height);
-                    let mctx = tilingMaskCanvas.getContext('2d');
-                    mctx.putImageData(td.maskImgData, 0, 0);
+                    restoreCanvasFromHistory(tilingMaskCanvas, td.maskImgData);
                 } else if (tilingMaskCanvas) {
                     clearTilingMaskCanvas();
                 }
@@ -12699,7 +13153,7 @@
         }
 
         function initHistory() {
-            let snap = serializeState(state);
+            let snap = serializeState(state, false);
             let paintData = capturePaintCanvasesForHistory();
             let tilingData = captureTilingForHistory();
             let pbrData = capturePbrForHistory();
@@ -12729,14 +13183,17 @@
         function commitHistorySnapshot() {
             if (!historyReady || isPainting || strokeBackupActive || isRestoringHistory) return;
             clearTimeout(historyTimer);
-            let snap = serializeState(state);
+            let snap = serializeState(state, false);
             let tilingData = captureTilingForHistory();
             let pbrData = capturePbrForHistory();
 
             let prevEntry = history[historyIndex];
             if (prevEntry) {
                 let snapSame = prevEntry.snap === snap;
-                let tilingSame = JSON.stringify(prevEntry.tilingData) === JSON.stringify(tilingData);
+                let tilingSame = (!prevEntry.tilingData && !tilingData) || (
+                    prevEntry.tilingData && tilingData && 
+                    JSON.stringify(prevEntry.tilingData.tilingState) === JSON.stringify(tilingData.tilingState)
+                );
                 let pbrSame = JSON.stringify(prevEntry.pbrData) === JSON.stringify(pbrData);
                 if (snapSame && tilingSame && pbrSame) return;
             }
@@ -12757,6 +13214,8 @@
         function undo() {
             if (!historyReady) return;
             clearTimeout(historyTimer);
+            clearTimeout(interactionTimer);
+            isInteracting = false;
             if (isPainting || strokeBackupActive) {
                 cancelPainting();
             }
@@ -12776,6 +13235,8 @@
         function redo() {
             if (!historyReady) return;
             clearTimeout(historyTimer);
+            clearTimeout(interactionTimer);
+            isInteracting = false;
             if (isPainting || strokeBackupActive) {
                 cancelPainting();
             }
@@ -12793,6 +13254,8 @@
         }
 
         function afterHistoryRestore() {
+            clearTimeout(interactionTimer);
+            isInteracting = false;
             if (!state.global) state.global = freshGlobalSettings();
             if (!state.global.warps) state.global.warps = [];
             if (!state.layers.find(l => l.id === state.selectedLayerId)) {
@@ -12941,7 +13404,7 @@
                 } else {
                     lay.params[k] = val;
                     lay.isDirty = true;
-                    if (['seamless', 'useThreshold', 'useLevels', 'useFindEdges', 'usePosterize', 'brushTool', 'gradType', 'spreadMethod', 'sourceMode', 'metric', 'mode', 'cellProfile', 'perlinMode', 'simplexMode', 'perlinCurve', 'lockScale', 'blurClampEdge', 'enableRays', 'enableRings', 'blurType', 'colorMode', 'palettePreset', 'sineMode', 'sineProfile'].includes(k)) {
+                    if (['seamless', 'useThreshold', 'useLevels', 'useFindEdges', 'usePosterize', 'brushTool', 'brushCursorStyle', 'gradType', 'spreadMethod', 'sourceMode', 'metric', 'mode', 'cellProfile', 'perlinMode', 'simplexMode', 'perlinCurve', 'lockScale', 'blurClampEdge', 'enableRays', 'enableRings', 'blurType', 'colorMode', 'palettePreset', 'sineMode', 'sineProfile'].includes(k)) {
                         renderProps();
                     }
                     if (String(k).startsWith('brush')) updateBrushPreview();
@@ -13251,8 +13714,13 @@
         // --- Безшовне фонове Автозбереження (Zero-Performance Impact) ---
         let autoSaveTimer = null;
         let isAutoSaving = false;
+        let lastUserInteractionTime = 0;
         const AUTOSAVE_DEBOUNCE_MS = 2500;
         const IDB_AUTOSAVE_KEY = 'autosave_draft';
+
+        function recordUserInteraction() {
+            lastUserInteractionTime = Date.now();
+        }
 
         function updateAutosaveUI(statusText, dotColor = '#10b981', title = '') {
             let elText = $('autosaveStatusText');
@@ -13272,68 +13740,63 @@
         }
 
         function requestAutoSaveIdle() {
-            if (isPainting || strokeBackupActive || isRestoringHistory) {
+            let now = Date.now();
+            if (isPainting || strokeBackupActive || isRestoringHistory || isInteracting || isAutoSaving || (now - lastUserInteractionTime < 3000)) {
                 if (autoSaveTimer) clearTimeout(autoSaveTimer);
                 autoSaveTimer = setTimeout(() => requestAutoSaveIdle(), 1500);
                 return;
             }
 
             if (typeof window.requestIdleCallback === 'function') {
-                window.requestIdleCallback(() => performAutoSave(), { timeout: 3000 });
+                window.requestIdleCallback(() => performAutoSave(), { timeout: 4000 });
             } else {
-                setTimeout(() => performAutoSave(), 50);
+                setTimeout(() => performAutoSave(), 100);
             }
         }
 
         async function performAutoSave() {
-            if (isAutoSaving || isPainting || strokeBackupActive || isRestoringHistory) return;
+            let now = Date.now();
+            if (isAutoSaving || isPainting || strokeBackupActive || isRestoringHistory || isInteracting || (now - lastUserInteractionTime < 2500)) return;
             isAutoSaving = true;
             updateAutosaveUI('Збереження...', '#3b82f6', 'Фонове автозбереження чернетки...');
 
             try {
                 const db = await openVeilIDB();
                 const paintBlobs = {};
-                const paintCrops = {};
 
                 if (state && state.layers) {
                     for (const lay of state.layers) {
                         if (lay.generatorType === 'paint') {
                             ensureLayerPaintCanvas(lay);
                             if (lay.paintCanvas) {
-                                const comp = compressPaintCanvas(lay.paintCanvas);
-                                if (comp.dataUrl) {
-                                    const blob = await canvasToBlobAsync(lay.paintCanvas);
-                                    if (blob) {
-                                        paintBlobs[lay.id] = blob;
-                                        paintCrops[lay.id] = comp.crop;
-                                    }
+                                const blob = await canvasToBlobAsync(lay.paintCanvas);
+                                if (blob) {
+                                    paintBlobs[lay.id] = blob;
                                 }
                             }
                         }
                     }
                 }
 
-                prepareStateForSerialization();
                 const stateClean = JSON.parse(JSON.stringify(state, (key, value) => {
-                    if (key === 'paintCanvas' || key === 'paintBuffer' || key === 'paintDataUrl') {
+                    if (key === 'paintCanvas' || key === 'paintBuffer' || key === 'paintDataUrl' || key.startsWith('_')) {
                         return undefined;
                     }
                     return value;
                 }));
 
-                const now = new Date();
-                const timeStr = now.toLocaleTimeString('uk-UA', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+                const nowDate = new Date();
+                const timeStr = nowDate.toLocaleTimeString('uk-UA', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
                 const record = {
                     id: IDB_AUTOSAVE_KEY,
                     name: '⚡ Автозбережена чернетка',
                     isAutoSave: true,
                     updatedAt: Date.now(),
-                    dateStr: `${now.toLocaleDateString('uk-UA')} ${timeStr}`,
+                    dateStr: `${nowDate.toLocaleDateString('uk-UA')} ${timeStr}`,
                     layerCount: state.layers ? state.layers.length : 0,
                     state: stateClean,
                     paintBlobs,
-                    paintCrops,
                     tilingState: (typeof tilingState !== 'undefined' && tilingState) ? JSON.parse(JSON.stringify(tilingState)) : null
                 };
 
@@ -13938,6 +14401,114 @@
                 let btn = $('resBtn' + r);
                 if (btn) btn.classList.toggle('active', parseInt(r) === canvasResolution);
             });
+            initBrushCursorOverlay();
+        }
+
+        function initBrushCursorOverlay() {
+            if (document.getElementById('brushCursorOverlay')) return;
+            let svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+            svg.id = 'brushCursorOverlay';
+            svg.style.cssText = 'position:fixed; top:0; left:0; width:100vw; height:100vh; pointer-events:none; z-index:999999; display:none; overflow:visible;';
+            document.body.appendChild(svg);
+
+            const onMove = (e) => {
+                recordUserInteraction();
+                updateBrushCursorPosition(e);
+            };
+
+            const onLeave = () => {
+                let overlay = document.getElementById('brushCursorOverlay');
+                if (overlay) overlay.style.display = 'none';
+            };
+
+            window.addEventListener('pointermove', onMove, { passive: true });
+            window.addEventListener('pointerdown', onMove, { passive: true });
+            window.addEventListener('mousemove', onMove, { passive: true });
+            window.addEventListener('touchmove', (e) => {
+                if (e.touches && e.touches[0]) onMove(e.touches[0]);
+            }, { passive: true });
+            document.addEventListener('pointerleave', onLeave, { passive: true });
+            window.addEventListener('pointerup', () => {
+                recordUserInteraction();
+            }, { passive: true });
+        }
+
+        function updateBrushCursorPosition(e) {
+            let overlay = document.getElementById('brushCursorOverlay');
+            if (!overlay) return;
+
+            if (typeof currentTab !== 'undefined' && (currentTab === 'tiling' || currentTab === 'maps')) {
+                overlay.style.display = 'none';
+                return;
+            }
+
+            let lay = state && state.layers ? state.layers.find(l => l.id === state.selectedLayerId) : null;
+            if (!lay || lay.generatorType !== 'paint' || !lay.visible) {
+                overlay.style.display = 'none';
+                return;
+            }
+
+            let lp = lay.params || {};
+            let cursorStyle = lp.brushCursorStyle || 'circle_cross';
+            if (cursorStyle === 'none') {
+                overlay.style.display = 'none';
+                return;
+            }
+
+            let canvas = document.getElementById('mainCanvas') || document.getElementById('viewportCanvas') || document.querySelector('canvas');
+            if (!canvas) {
+                overlay.style.display = 'none';
+                return;
+            }
+
+            let rect = canvas.getBoundingClientRect();
+            if (rect.width === 0 || rect.height === 0) {
+                overlay.style.display = 'none';
+                return;
+            }
+
+            if (e.clientX < rect.left - 30 || e.clientX > rect.right + 30 || e.clientY < rect.top - 30 || e.clientY > rect.bottom + 30) {
+                overlay.style.display = 'none';
+                return;
+            }
+
+            overlay.style.display = 'block';
+
+            let x = e.clientX;
+            let y = e.clientY;
+
+            let brushSize = lp.brushSize || 20;
+            let rawPressure = (e.pointerType === 'pen' && e.pressure > 0) ? e.pressure : 1;
+            let dynamicPressure = Math.pow(rawPressure, 0.5);
+            let finalSize = brushSize * (0.1 + 0.9 * dynamicPressure);
+
+            let screenRadius = Math.max(3, (finalSize / 2) * (rect.width / 1024));
+
+            let brushAngle = lp.brushAngle || 0;
+            let brushSquash = lp.brushSquash !== undefined ? lp.brushSquash : 1.0;
+            let ry = screenRadius * brushSquash;
+
+            let html = '';
+
+            if (cursorStyle === 'circle' || cursorStyle === 'circle_cross') {
+                if (brushSquash === 1.0 && brushAngle === 0) {
+                    html += `<circle cx="${x}" cy="${y}" r="${screenRadius}" fill="none" stroke="#000000" stroke-width="2.5" opacity="0.6"/>`;
+                    html += `<circle cx="${x}" cy="${y}" r="${screenRadius}" fill="none" stroke="#ffffff" stroke-width="1.5"/>`;
+                } else {
+                    html += `<ellipse cx="${x}" cy="${y}" rx="${screenRadius}" ry="${ry}" transform="rotate(${brushAngle} ${x} ${y})" fill="none" stroke="#000000" stroke-width="2.5" opacity="0.6"/>`;
+                    html += `<ellipse cx="${x}" cy="${y}" rx="${screenRadius}" ry="${ry}" transform="rotate(${brushAngle} ${x} ${y})" fill="none" stroke="#ffffff" stroke-width="1.5"/>`;
+                }
+            }
+
+            if (cursorStyle === 'cross' || cursorStyle === 'circle_cross') {
+                let chSize = Math.max(6, Math.min(14, screenRadius * 0.8));
+                html += `<line x1="${x - chSize}" y1="${y}" x2="${x + chSize}" y2="${y}" stroke="#000000" stroke-width="2.5" opacity="0.6"/>`;
+                html += `<line x1="${x}" y1="${y - chSize}" x2="${x}" y2="${y + chSize}" stroke="#000000" stroke-width="2.5" opacity="0.6"/>`;
+                html += `<line x1="${x - chSize}" y1="${y}" x2="${x + chSize}" y2="${y}" stroke="#ffffff" stroke-width="1.5"/>`;
+                html += `<line x1="${x}" y1="${y - chSize}" x2="${x}" y2="${y + chSize}" stroke="#ffffff" stroke-width="1.5"/>`;
+            }
+
+            overlay.innerHTML = html;
         }
 
         function initDragAndDrop() {
