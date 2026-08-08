@@ -5360,6 +5360,7 @@
         let paintPoints = []; // Stores raw pointer coordinates of the current stroke
         let paintQueue = [];  // Queue for processing inputs in requestAnimationFrame
         let paintAnimationFrameId = null;
+        let activeStrokeBoundingBox = null;
 
         let strokeCanvas = null;
         let strokeBackupCanvas = null;
@@ -5418,9 +5419,14 @@
                 let lp = lay.params;
                 let opacity = (lp.brushOpacity !== undefined ? lp.brushOpacity : 100) / 100;
                 combineStrokeAndBackup(lay, opacity);
-                updatePaintBuffer(lay);
+                if (activeStrokeBoundingBox && activeStrokeBoundingBox.minX <= activeStrokeBoundingBox.maxX) {
+                    updatePaintBuffer(lay, activeStrokeBoundingBox);
+                } else {
+                    updatePaintBuffer(lay);
+                }
             }
 
+            activeStrokeBoundingBox = null;
             paintPoints = [];
             paintQueue = [];
             recordUserInteraction();
@@ -5561,6 +5567,17 @@
             paintPoints = [{ x: pos.x, y: pos.y, pressure: rawPressure }];
             paintQueue = [];
 
+            let brushRadius = ((lay.params.brushSize || 20) * 1.5) + 10;
+            activeStrokeBoundingBox = {
+                minX: Math.max(0, pos.x - brushRadius),
+                minY: Math.max(0, pos.y - brushRadius),
+                maxX: Math.min(1024, pos.x + brushRadius),
+                maxY: Math.min(1024, pos.y + brushRadius)
+            };
+
+            // Immediately update cursor position overlay
+            updateBrushCursorPosition(e);
+
             // Prepare offscreen stroke canvases
             let sCanvas = getStrokeCanvas();
             let sCtx = sCanvas.getContext('2d');
@@ -5580,7 +5597,7 @@
             combineStrokeAndBackup(lay, opacity);
 
             // Queue immediate render of the dot
-            updatePaintBuffer(lay);
+            updatePaintBuffer(lay, activeStrokeBoundingBox);
             requestRender();
 
             // Start processing the paint movement queue in animation frames
@@ -5591,6 +5608,8 @@
         }
 
         function handleCanvasPointerMove(e) {
+            updateBrushCursorPosition(e);
+
             if (currentTab === 'tiling') {
                 if (!paintModule.isValidPointer(e) || (e.touches && e.touches.length > 1) || (typeof activeTouchCount !== 'undefined' && activeTouchCount > 1) || (touchGesture && touchGesture.maxTouches > 1)) {
                     cancelStamping();
@@ -5627,6 +5646,12 @@
             }
 
             if (!isPainting) return;
+
+            if (e.buttons === 0) {
+                // The pen/finger was lifted but pointerup missed or coalesced, end the stroke.
+                handleCanvasPointerUp(e);
+                return;
+            }
 
             if (!paintModule.isValidPointer(e)) {
                 cancelPainting();
@@ -5700,18 +5725,6 @@
                     let dist = Math.hypot(pt.x - lastPt.x, pt.y - lastPt.y);
                     if (dist < 0.3) continue;
 
-                    // If distance is abnormally large (>100px), avoid drawing a giant line across the canvas
-                    if (dist > 100) {
-                        paintPoints = [pt];
-                        drawBrushDot(lay, pt.x, pt.y, pt.pressure, sCtx);
-                        minX = Math.min(minX, pt.x - brushRadius);
-                        minY = Math.min(minY, pt.y - brushRadius);
-                        maxX = Math.max(maxX, pt.x + brushRadius);
-                        maxY = Math.max(maxY, pt.y + brushRadius);
-                        updated = true;
-                        continue;
-                    }
-
                     // Interpolate intermediate sub-steps for fast pointer/Apple Pencil moves
                     if (dist > maxStep) {
                         let steps = Math.min(15, Math.ceil(dist / maxStep));
@@ -5746,6 +5759,12 @@
                 let opacity = (lp.brushOpacity !== undefined ? lp.brushOpacity : 100) / 100;
                 combineStrokeAndBackup(lay, opacity);
                 updatePaintBuffer(lay, { minX, minY, maxX, maxY });
+                if (activeStrokeBoundingBox) {
+                    activeStrokeBoundingBox.minX = Math.min(activeStrokeBoundingBox.minX, minX);
+                    activeStrokeBoundingBox.minY = Math.min(activeStrokeBoundingBox.minY, minY);
+                    activeStrokeBoundingBox.maxX = Math.max(activeStrokeBoundingBox.maxX, maxX);
+                    activeStrokeBoundingBox.maxY = Math.max(activeStrokeBoundingBox.maxY, maxY);
+                }
                 isInteracting = true;
                 requestRender();
             }
@@ -5794,7 +5813,7 @@
             }
 
             finalizePaintingStroke();
-            commitHistorySnapshot();
+            scheduleHistorySnapshot();
         }
 
         function evalGenerator(type, tx, ty, sx, sy, p, cymaticsSources = null, lay = null) {
@@ -6514,7 +6533,37 @@
                     let activeLayerWarps = (p.warps || []).filter(w => w && w.type !== 'none' && w.visible !== false);
                     let hasLayerWarps = activeLayerWarps.length > 0;
 
-                    let grRad = -gRot * Math.PI / 180;
+                    let isSimplePaintLayer = (lay.generatorType === 'paint') &&
+                                             (!usePreTransformBlur) &&
+                                             (!hasGlobalTransform) &&
+                                             (!hasGlobalWarps) &&
+                                             (!hasLayerTransform) &&
+                                             (!hasLayerWarps) &&
+                                             (w === 1024 && h === 1024) &&
+                                             (!p.seed) &&
+                                             ((p.scaleX || 10) === 10) &&
+                                             ((p.scaleY || 10) === 10) &&
+                                             (!p.brightness || p.brightness === 1) &&
+                                             (!p.contrast || p.contrast === 1) &&
+                                             (!p.invert) &&
+                                             (!p.useLevels) &&
+                                             (!p.useThreshold) &&
+                                             (!p.usePosterize) &&
+                                             (!p.useFindEdges) &&
+                                             (!p.blur || p.blur === 0) &&
+                                             (!p.colorMode || p.colorMode === 'normal' || p.colorMode === 'default');
+
+                    if (isSimplePaintLayer && lay.paintBufferR) {
+                        targetBufR.set(lay.paintBufferR);
+                        targetBufG.set(lay.paintBufferG);
+                        targetBufB.set(lay.paintBufferB);
+                        if (useLayerCache) {
+                            layerBufferR.set(lay.paintBufferR);
+                            layerBufferG.set(lay.paintBufferG);
+                            layerBufferB.set(lay.paintBufferB);
+                        }
+                    } else {
+                        let grRad = -gRot * Math.PI / 180;
                     let cosGRot = gRot ? Math.cos(grRad) : 1, sinGRot = gRot ? Math.sin(grRad) : 0;
 
                     let lrRad = -(p.angle || 0) * Math.PI / 180;
@@ -7377,6 +7426,7 @@
                         }
                     }
                 }
+            }
 
                 let useBlendIf = !!p.useBlendIf;
                 let tb1 = (p.blendIfThisBlack1 !== undefined ? p.blendIfThisBlack1 : 0);
@@ -13180,7 +13230,7 @@
             }, HISTORY_DEBOUNCE_MS);
         }
 
-        function commitHistorySnapshot() {
+        function commitHistorySnapshot(force = false) {
             if (!historyReady || isPainting || strokeBackupActive || isRestoringHistory) return;
             clearTimeout(historyTimer);
             let snap = serializeState(state, false);
@@ -13188,7 +13238,7 @@
             let pbrData = capturePbrForHistory();
 
             let prevEntry = history[historyIndex];
-            if (prevEntry) {
+            if (prevEntry && !force) {
                 let snapSame = prevEntry.snap === snap;
                 let tilingSame = (!prevEntry.tilingData && !tilingData) || (
                     prevEntry.tilingData && tilingData && 
@@ -13715,7 +13765,7 @@
         let autoSaveTimer = null;
         let isAutoSaving = false;
         let lastUserInteractionTime = 0;
-        const AUTOSAVE_DEBOUNCE_MS = 2500;
+        const AUTOSAVE_DEBOUNCE_MS = 1000;
         const IDB_AUTOSAVE_KEY = 'autosave_draft';
 
         function recordUserInteraction() {
@@ -13741,9 +13791,9 @@
 
         function requestAutoSaveIdle() {
             let now = Date.now();
-            if (isPainting || strokeBackupActive || isRestoringHistory || isInteracting || isAutoSaving || (now - lastUserInteractionTime < 3000)) {
+            if (isPainting || strokeBackupActive || isRestoringHistory || isInteracting || isAutoSaving || (now - lastUserInteractionTime < 500)) {
                 if (autoSaveTimer) clearTimeout(autoSaveTimer);
-                autoSaveTimer = setTimeout(() => requestAutoSaveIdle(), 1500);
+                autoSaveTimer = setTimeout(() => requestAutoSaveIdle(), 500);
                 return;
             }
 
@@ -13756,7 +13806,7 @@
 
         async function performAutoSave() {
             let now = Date.now();
-            if (isAutoSaving || isPainting || strokeBackupActive || isRestoringHistory || isInteracting || (now - lastUserInteractionTime < 2500)) return;
+            if (isAutoSaving || isPainting || strokeBackupActive || isRestoringHistory || isInteracting || (now - lastUserInteractionTime < 500)) return;
             isAutoSaving = true;
             updateAutosaveUI('Збереження...', '#3b82f6', 'Фонове автозбереження чернетки...');
 
