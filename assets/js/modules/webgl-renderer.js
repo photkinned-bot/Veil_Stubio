@@ -4,96 +4,105 @@
  */
 
 export class WebGLRenderer {
-    constructor() {
-        this.canvas = document.createElement('canvas');
-        this.gl = this.canvas.getContext('webgl2', { preserveDrawingBuffer: true, alpha: true }) || 
-                  this.canvas.getContext('webgl', { preserveDrawingBuffer: true, alpha: true });
-        this.isSupported = !!this.gl;
+  constructor() {
+    this.canvas = document.createElement("canvas");
+    this.gl =
+      this.canvas.getContext("webgl2", {
+        preserveDrawingBuffer: true,
+        alpha: true,
+      }) ||
+      this.canvas.getContext("webgl", {
+        preserveDrawingBuffer: true,
+        alpha: true,
+      });
+    this.isSupported = !!this.gl;
+    this.webgpuSupported = false;
+    this.gpuAdapter = null;
+    this.gpuDevice = null;
+    this.programs = new Map();
+    this.textures = new Map();
+    this.buffers = {};
+
+    if (this.isSupported) {
+      this.initGL();
+    }
+    this.initWebGPU();
+  }
+
+  async initWebGPU() {
+    if (typeof navigator !== "undefined" && navigator.gpu) {
+      try {
+        this.gpuAdapter = await navigator.gpu.requestAdapter();
+        if (this.gpuAdapter) {
+          this.gpuDevice = await this.gpuAdapter.requestDevice();
+          this.webgpuSupported = !!this.gpuDevice;
+          if (this.webgpuSupported) {
+            console.log("⚡ Veil Studio: WebGPU hardware acceleration active!");
+          }
+        }
+      } catch (err) {
+        console.warn(
+          "WebGPU not available on this device/browser, falling back to WebGL2:",
+          err,
+        );
         this.webgpuSupported = false;
-        this.gpuAdapter = null;
-        this.gpuDevice = null;
-        this.programs = new Map();
-        this.textures = new Map();
-        this.buffers = {};
-
-        if (this.isSupported) {
-            this.initGL();
-        }
-        this.initWebGPU();
+      }
     }
+  }
 
-    async initWebGPU() {
-        if (typeof navigator !== 'undefined' && navigator.gpu) {
-            try {
-                this.gpuAdapter = await navigator.gpu.requestAdapter();
-                if (this.gpuAdapter) {
-                    this.gpuDevice = await this.gpuAdapter.requestDevice();
-                    this.webgpuSupported = !!this.gpuDevice;
-                    if (this.webgpuSupported) {
-                        console.log('⚡ Veil Studio: WebGPU hardware acceleration active!');
-                    }
-                }
-            } catch (err) {
-                console.warn('WebGPU not available on this device/browser, falling back to WebGL2:', err);
-                this.webgpuSupported = false;
-            }
-        }
+  initGL() {
+    const gl = this.gl;
+    if (!gl) return;
+
+    // Vertex quad positions
+    const positionBuffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+    gl.bufferData(
+      gl.ARRAY_BUFFER,
+      new Float32Array([
+        -1.0, -1.0, 1.0, -1.0, -1.0, 1.0, -1.0, 1.0, 1.0, -1.0, 1.0, 1.0,
+      ]),
+      gl.STATIC_DRAW,
+    );
+    this.buffers.position = positionBuffer;
+
+    this.initWarpProgram();
+    this.initBlendProgram();
+  }
+
+  createShader(gl, type, source) {
+    const shader = gl.createShader(type);
+    gl.shaderSource(shader, source);
+    gl.compileShader(shader);
+    if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+      console.warn("WebGL Shader compile error:", gl.getShaderInfoLog(shader));
+      gl.deleteShader(shader);
+      return null;
     }
+    return shader;
+  }
 
-    initGL() {
-        const gl = this.gl;
-        if (!gl) return;
-        
-        // Vertex quad positions
-        const positionBuffer = gl.createBuffer();
-        gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
-        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
-            -1.0, -1.0,
-             1.0, -1.0,
-            -1.0,  1.0,
-            -1.0,  1.0,
-             1.0, -1.0,
-             1.0,  1.0,
-        ]), gl.STATIC_DRAW);
-        this.buffers.position = positionBuffer;
+  createProgram(gl, vsSource, fsSource) {
+    const vs = this.createShader(gl, gl.VERTEX_SHADER, vsSource);
+    const fs = this.createShader(gl, gl.FRAGMENT_SHADER, fsSource);
+    if (!vs || !fs) return null;
 
-        this.initWarpProgram();
-        this.initBlendProgram();
+    const program = gl.createProgram();
+    gl.attachShader(program, vs);
+    gl.attachShader(program, fs);
+    gl.linkProgram(program);
+    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+      console.warn("WebGL Program link error:", gl.getProgramInfoLog(program));
+      return null;
     }
+    return program;
+  }
 
-    createShader(gl, type, source) {
-        const shader = gl.createShader(type);
-        gl.shaderSource(shader, source);
-        gl.compileShader(shader);
-        if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
-            console.warn('WebGL Shader compile error:', gl.getShaderInfoLog(shader));
-            gl.deleteShader(shader);
-            return null;
-        }
-        return shader;
-    }
+  initWarpProgram() {
+    const gl = this.gl;
+    if (!gl) return;
 
-    createProgram(gl, vsSource, fsSource) {
-        const vs = this.createShader(gl, gl.VERTEX_SHADER, vsSource);
-        const fs = this.createShader(gl, gl.FRAGMENT_SHADER, fsSource);
-        if (!vs || !fs) return null;
-
-        const program = gl.createProgram();
-        gl.attachShader(program, vs);
-        gl.attachShader(program, fs);
-        gl.linkProgram(program);
-        if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
-            console.warn('WebGL Program link error:', gl.getProgramInfoLog(program));
-            return null;
-        }
-        return program;
-    }
-
-    initWarpProgram() {
-        const gl = this.gl;
-        if (!gl) return;
-
-        const vs = `
+    const vs = `
             attribute vec2 a_position;
             varying vec2 v_texCoord;
             void main() {
@@ -102,8 +111,8 @@ export class WebGLRenderer {
             }
         `;
 
-        // GPU Deformation GLSL Shader
-        const fs = `
+    // GPU Deformation GLSL Shader
+    const fs = `
             precision mediump float;
             varying vec2 v_texCoord;
             uniform sampler2D u_image;
@@ -153,17 +162,17 @@ export class WebGLRenderer {
             }
         `;
 
-        const prog = this.createProgram(gl, vs, fs);
-        if (prog) {
-            this.programs.set('warp', prog);
-        }
+    const prog = this.createProgram(gl, vs, fs);
+    if (prog) {
+      this.programs.set("warp", prog);
     }
+  }
 
-    initBlendProgram() {
-        const gl = this.gl;
-        if (!gl) return;
+  initBlendProgram() {
+    const gl = this.gl;
+    if (!gl) return;
 
-        const vs = `
+    const vs = `
             attribute vec2 a_position;
             varying vec2 v_texCoord;
             void main() {
@@ -172,7 +181,7 @@ export class WebGLRenderer {
             }
         `;
 
-        const fs = `
+    const fs = `
             precision mediump float;
             varying vec2 v_texCoord;
             uniform sampler2D u_base;
@@ -201,62 +210,68 @@ export class WebGLRenderer {
             }
         `;
 
-        const prog = this.createProgram(gl, vs, fs);
-        if (prog) {
-            this.programs.set('blend', prog);
-        }
+    const prog = this.createProgram(gl, vs, fs);
+    if (prog) {
+      this.programs.set("blend", prog);
+    }
+  }
+
+  renderWarp(sourceCanvas, warpType, strength, freq) {
+    if (!this.isSupported) return null;
+    const gl = this.gl;
+    const prog = this.programs.get("warp");
+    if (!prog) return null;
+
+    const w = sourceCanvas.width;
+    const h = sourceCanvas.height;
+    if (this.canvas.width !== w || this.canvas.height !== h) {
+      this.canvas.width = w;
+      this.canvas.height = h;
+      gl.viewport(0, 0, w, h);
     }
 
-    renderWarp(sourceCanvas, warpType, strength, freq) {
-        if (!this.isSupported) return null;
-        const gl = this.gl;
-        const prog = this.programs.get('warp');
-        if (!prog) return null;
+    gl.useProgram(prog);
 
-        const w = sourceCanvas.width;
-        const h = sourceCanvas.height;
-        if (this.canvas.width !== w || this.canvas.height !== h) {
-            this.canvas.width = w;
-            this.canvas.height = h;
-            gl.viewport(0, 0, w, h);
-        }
-
-        gl.useProgram(prog);
-
-        // Upload texture
-        let tex = this.textures.get('warp_src');
-        if (!tex) {
-            tex = gl.createTexture();
-            this.textures.set('warp_src', tex);
-        }
-        gl.bindTexture(gl.TEXTURE_2D, tex);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, sourceCanvas);
-
-        // Position attribute
-        const posLoc = gl.getAttribLocation(prog, 'a_position');
-        gl.enableVertexAttribArray(posLoc);
-        gl.bindBuffer(gl.ARRAY_BUFFER, this.buffers.position);
-        gl.vertexAttribPointer(posLoc, 2, gl.FLOAT, false, 0, 0);
-
-        // Uniforms
-        gl.uniform2f(gl.getUniformLocation(prog, 'u_resolution'), w, h);
-        gl.uniform1i(gl.getUniformLocation(prog, 'u_warpType'), warpType);
-        gl.uniform1f(gl.getUniformLocation(prog, 'u_strength'), strength);
-        gl.uniform1f(gl.getUniformLocation(prog, 'u_freq'), freq);
-
-        gl.drawArrays(gl.TRIANGLES, 0, 6);
-        return this.canvas;
+    // Upload texture
+    let tex = this.textures.get("warp_src");
+    if (!tex) {
+      tex = gl.createTexture();
+      this.textures.set("warp_src", tex);
     }
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texImage2D(
+      gl.TEXTURE_2D,
+      0,
+      gl.RGBA,
+      gl.RGBA,
+      gl.UNSIGNED_BYTE,
+      sourceCanvas,
+    );
+
+    // Position attribute
+    const posLoc = gl.getAttribLocation(prog, "a_position");
+    gl.enableVertexAttribArray(posLoc);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.buffers.position);
+    gl.vertexAttribPointer(posLoc, 2, gl.FLOAT, false, 0, 0);
+
+    // Uniforms
+    gl.uniform2f(gl.getUniformLocation(prog, "u_resolution"), w, h);
+    gl.uniform1i(gl.getUniformLocation(prog, "u_warpType"), warpType);
+    gl.uniform1f(gl.getUniformLocation(prog, "u_strength"), strength);
+    gl.uniform1f(gl.getUniformLocation(prog, "u_freq"), freq);
+
+    gl.drawArrays(gl.TRIANGLES, 0, 6);
+    return this.canvas;
+  }
 }
 
 export const globalWebGLRenderer = new WebGLRenderer();
 
-if (typeof window !== 'undefined') {
-    window.WebGLRenderer = WebGLRenderer;
-    window.globalWebGLRenderer = globalWebGLRenderer;
+if (typeof window !== "undefined") {
+  window.WebGLRenderer = WebGLRenderer;
+  window.globalWebGLRenderer = globalWebGLRenderer;
 }
-

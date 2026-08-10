@@ -4,9 +4,9 @@
  * Interfaces CanvasProcessingEngine, Viewport3D, and SyncManager with Veil Studio's UI design system.
  */
 
-import { CanvasProcessingEngine } from './canvas-processing-engine.js';
-import { Viewport3D } from './viewport-3d.js';
-import { SyncManager } from './sync-manager.js';
+import { CanvasProcessingEngine } from "./canvas-processing-engine.js";
+import { Viewport3D } from "./viewport-3d.js";
+import { SyncManager } from "./sync-manager.js";
 
 export class MapGeneratorTabComponent {
   constructor(options = {}) {
@@ -15,8 +15,8 @@ export class MapGeneratorTabComponent {
     this.syncManager = new SyncManager();
     this.viewport3D = null;
 
-    this.activeView = '2d'; // '2d' | '3d'
-    this.selectedMapType = 'normal'; // 'normal' | 'displacement' | 'ao' | 'specular' | 'diffuse'
+    this.activeView = "2d"; // '2d' | '3d'
+    this.selectedMapType = "normal"; // 'normal' | 'displacement' | 'ao' | 'specular' | 'diffuse'
 
     this.sourceImageData = null;
 
@@ -36,7 +36,7 @@ export class MapGeneratorTabComponent {
     // Processing parameters
     this.params = {
       normal: {
-        algorithm: 'sobel', // 'sobel' | 'scharr' | 'prewitt'
+        algorithm: "sobel", // 'sobel' | 'scharr' | 'prewitt'
         strength: 2.5,
         level: 1.0,
         blur: 0,
@@ -44,11 +44,11 @@ export class MapGeneratorTabComponent {
         invert: false,
         invertR: false,
         invertG: false,
-        invertH: false
+        invertH: false,
       },
       displacement: {
         contrast: 1.0,
-        invert: false
+        invert: false,
       },
       ao: {
         strength: 1.8,
@@ -56,19 +56,19 @@ export class MapGeneratorTabComponent {
         blur: 1.0,
         sharp: 0,
         range: 8,
-        falloff: 'linear',
-        invert: false
+        falloff: "linear",
+        invert: false,
       },
       specular: {
         mean: 0.5,
         range: 1.0,
-        falloff: 'linear',
+        falloff: "linear",
         strength: 1.2,
         level: 1.0,
         blur: 0,
         sharp: 0,
-        invert: false
-      }
+        invert: false,
+      },
     };
 
     this.generatedMaps = {
@@ -76,7 +76,7 @@ export class MapGeneratorTabComponent {
       normal: null,
       displacement: null,
       ao: null,
-      specular: null
+      specular: null,
     };
 
     this.generatedImageDatas = {
@@ -84,7 +84,7 @@ export class MapGeneratorTabComponent {
       normal: null,
       displacement: null,
       ao: null,
-      specular: null
+      specular: null,
     };
 
     this.isProcessing = false;
@@ -113,7 +113,7 @@ export class MapGeneratorTabComponent {
    * Setup click handler for the PBR Maps button in the top header
    */
   setupHeaderButton() {
-    const btn = document.getElementById('btnMapGenHeader');
+    const btn = document.getElementById("btnMapGenHeader");
     if (btn) {
       btn.onclick = () => this.activateTab();
     }
@@ -123,16 +123,18 @@ export class MapGeneratorTabComponent {
    * Inject right panel tab button [🗺️ Карти]
    */
   injectRightTabButton() {
-    const tabContainer = document.querySelector('.panel-tabs') || document.querySelector('.right-panel-header');
-    if (!tabContainer || document.getElementById('btnTabMaps')) return;
+    const tabContainer =
+      document.querySelector(".panel-tabs") ||
+      document.querySelector(".right-panel-header");
+    if (!tabContainer || document.getElementById("btnTabMaps")) return;
 
-    const btn = document.createElement('button');
-    btn.id = 'btnTabMaps';
-    btn.className = 'btn btn-secondary';
-    btn.style.fontSize = '11px';
-    btn.style.padding = '4px 8px';
-    btn.innerHTML = '🗺️ Карти';
-    btn.title = 'Генератор PBR Карт (Normal, Displacement, AO, Specular)';
+    const btn = document.createElement("button");
+    btn.id = "btnTabMaps";
+    btn.className = "btn btn-secondary";
+    btn.style.fontSize = "11px";
+    btn.style.padding = "4px 8px";
+    btn.innerHTML = "🗺️ Карти";
+    btn.title = "Генератор PBR Карт (Normal, Displacement, AO, Specular)";
 
     btn.onclick = () => {
       this.activateTab();
@@ -145,7 +147,10 @@ export class MapGeneratorTabComponent {
    * Called whenever Veil Studio re-renders canvas (real-time sync)
    */
   onCanvasUpdated() {
-    if (window.isPbrModeActive || (window.state && window.state.currentRightTab === 'maps')) {
+    if (
+      window.isPbrModeActive ||
+      (window.state && window.state.currentRightTab === "maps")
+    ) {
       this.syncManager.pullCanvasData();
     }
   }
@@ -156,19 +161,19 @@ export class MapGeneratorTabComponent {
   activateTab() {
     window.isPbrModeActive = true;
     if (window.switchRightTab) {
-      window.switchRightTab('maps');
+      window.switchRightTab("maps");
     }
 
     // Update tab button highlights
-    ['btnTabLayer', 'btnTabGlobal', 'btnTabTiling'].forEach(id => {
+    ["btnTabLayer", "btnTabGlobal", "btnTabTiling"].forEach((id) => {
       const el = document.getElementById(id);
-      if (el) el.className = 'btn btn-secondary';
+      if (el) el.className = "btn btn-secondary";
     });
-    const mapsTabBtn = document.getElementById('btnTabMaps');
-    if (mapsTabBtn) mapsTabBtn.className = 'btn btn-primary';
+    const mapsTabBtn = document.getElementById("btnTabMaps");
+    if (mapsTabBtn) mapsTabBtn.className = "btn btn-primary";
 
-    const headerTitle = document.getElementById('rightPanelTitle');
-    if (headerTitle) headerTitle.innerText = 'PBR Map Generator';
+    const headerTitle = document.getElementById("rightPanelTitle");
+    if (headerTitle) headerTitle.innerText = "PBR Map Generator";
 
     // Ensure central viewport is mounted
     this.renderUnifiedViewportContainer();
@@ -184,14 +189,17 @@ export class MapGeneratorTabComponent {
    * Render main central Viewport Container (2D / 3D switcher + Controls)
    */
   renderUnifiedViewportContainer() {
-    let container = document.getElementById('mapGenViewportContainer');
-    const mainArea = document.querySelector('main') || document.getElementById('canvasWrapper')?.parentNode;
+    let container = document.getElementById("mapGenViewportContainer");
+    const mainArea =
+      document.querySelector("main") ||
+      document.getElementById("canvasWrapper")?.parentNode;
 
     if (!container && mainArea) {
-      container = document.createElement('div');
-      container.id = 'mapGenViewportContainer';
-      container.className = 'map-gen-viewport-container';
-      container.style.cssText = 'position:absolute; inset:0; z-index:20; background:var(--bg-color, #121214); display:flex; flex-direction:column; overflow:hidden;';
+      container = document.createElement("div");
+      container.id = "mapGenViewportContainer";
+      container.className = "map-gen-viewport-container";
+      container.style.cssText =
+        "position:absolute; inset:0; z-index:20; background:var(--bg-color, #121214); display:flex; flex-direction:column; overflow:hidden;";
 
       container.innerHTML = `
         <div class="viewport-header" style="display:flex; justify-content:space-between; align-items:center; padding:8px 16px; background:rgba(0,0,0,0.5); border-bottom:1px solid var(--border-color, rgba(255,255,255,0.1)); flex-wrap:wrap; gap:8px;">
@@ -253,16 +261,16 @@ export class MapGeneratorTabComponent {
 
               <div style="display:flex; align-items:center; gap:4px;">
                 <span style="color:var(--text-muted, #a1a1aa);">Якість прев'ю:</span>
-                <button class="res-btn-map ${this.targetResolution === 256 ? 'active' : ''}" data-res="256">256</button>
-                <button class="res-btn-map ${this.targetResolution === 512 ? 'active' : ''}" data-res="512">512</button>
-                <button class="res-btn-map ${this.targetResolution === 1024 ? 'active' : ''}" data-res="1024">1024</button>
-                <button class="res-btn-map ${this.targetResolution === 2048 ? 'active' : ''}" data-res="2048">2048</button>
+                <button class="res-btn-map ${this.targetResolution === 256 ? "active" : ""}" data-res="256">256</button>
+                <button class="res-btn-map ${this.targetResolution === 512 ? "active" : ""}" data-res="512">512</button>
+                <button class="res-btn-map ${this.targetResolution === 1024 ? "active" : ""}" data-res="1024">1024</button>
+                <button class="res-btn-map ${this.targetResolution === 2048 ? "active" : ""}" data-res="2048">2048</button>
               </div>
 
               <div style="width:1px; height:16px; background:rgba(255,255,255,0.15);"></div>
 
               <label style="display:flex; align-items:center; gap:4px; cursor:pointer;" title="Тимчасово знижувати якість до 256x256 при регулюванні повзунків">
-                <input type="checkbox" id="chkFastPreviewMap" ${this.fastPreview ? 'checked' : ''}> ⚡ Швидкий прев'ю
+                <input type="checkbox" id="chkFastPreviewMap" ${this.fastPreview ? "checked" : ""}> ⚡ Швидкий прев'ю
               </label>
             </div>
 
@@ -310,7 +318,7 @@ export class MapGeneratorTabComponent {
       mainArea.appendChild(container);
       this.bindViewportEvents();
     } else if (container) {
-      container.style.display = 'flex';
+      container.style.display = "flex";
     }
   }
 
@@ -318,30 +326,30 @@ export class MapGeneratorTabComponent {
    * Bind event listeners for Viewport controls (Zoom, Touch Pan, Pinch-Zoom, Rotation, Resolution, Fast Preview)
    */
   bindViewportEvents() {
-    const btn2D = document.getElementById('btnView2D');
-    const btn3D = document.getElementById('btnView3D');
-    const stage2D = document.getElementById('view2DStage');
-    const stage3D = document.getElementById('view3DStage');
+    const btn2D = document.getElementById("btnView2D");
+    const btn3D = document.getElementById("btnView3D");
+    const stage2D = document.getElementById("view2DStage");
+    const stage3D = document.getElementById("view3DStage");
 
     if (btn2D && btn3D && stage2D && stage3D) {
       btn2D.onclick = () => {
-        this.activeView = '2d';
-        btn2D.className = 'btn btn-primary';
-        btn3D.className = 'btn btn-secondary';
-        stage2D.style.display = 'flex';
-        stage3D.style.display = 'none';
+        this.activeView = "2d";
+        btn2D.className = "btn btn-primary";
+        btn3D.className = "btn btn-secondary";
+        stage2D.style.display = "flex";
+        stage3D.style.display = "none";
         this.render2DPreview();
       };
 
       btn3D.onclick = () => {
-        this.activeView = '3d';
-        btn3D.className = 'btn btn-primary';
-        btn2D.className = 'btn btn-secondary';
-        stage2D.style.display = 'none';
-        stage3D.style.display = 'flex';
+        this.activeView = "3d";
+        btn3D.className = "btn btn-primary";
+        btn2D.className = "btn btn-secondary";
+        stage2D.style.display = "none";
+        stage3D.style.display = "flex";
 
         if (!this.viewport3D) {
-          const threeContainer = document.getElementById('threeContainer');
+          const threeContainer = document.getElementById("threeContainer");
           this.viewport3D = new Viewport3D(threeContainer);
         }
         this.update3DTextures();
@@ -350,7 +358,7 @@ export class MapGeneratorTabComponent {
     }
 
     // Map type switcher tabs
-    document.querySelectorAll('.map-type-btn').forEach(btn => {
+    document.querySelectorAll(".map-type-btn").forEach((btn) => {
       btn.onclick = (e) => {
         const targetBtn = e.currentTarget || e.target;
         const mapType = targetBtn.dataset.map;
@@ -361,18 +369,18 @@ export class MapGeneratorTabComponent {
     });
 
     // Close button
-    const btnClose = document.getElementById('btnCloseMapGen');
+    const btnClose = document.getElementById("btnCloseMapGen");
     if (btnClose) {
       btnClose.onclick = () => {
         window.isPbrModeActive = false;
-        const container = document.getElementById('mapGenViewportContainer');
-        if (container) container.style.display = 'none';
-        if (window.switchRightTab) window.switchRightTab('layer');
+        const container = document.getElementById("mapGenViewportContainer");
+        if (container) container.style.display = "none";
+        if (window.switchRightTab) window.switchRightTab("layer");
       };
     }
 
     // 2D Zoom, Pan & Touch Gestures (iPad & Mobile support)
-    const stageContainer = document.getElementById('stage2DContainer');
+    const stageContainer = document.getElementById("stage2DContainer");
     if (stageContainer) {
       stageContainer.onwheel = (e) => {
         e.preventDefault();
@@ -387,11 +395,11 @@ export class MapGeneratorTabComponent {
           this.isDragging2D = true;
           this.dragStartX = e.clientX - this.panX;
           this.dragStartY = e.clientY - this.panY;
-          stageContainer.style.cursor = 'grabbing';
+          stageContainer.style.cursor = "grabbing";
         }
       };
 
-      window.addEventListener('mousemove', (e) => {
+      window.addEventListener("mousemove", (e) => {
         if (this.isDragging2D) {
           this.panX = e.clientX - this.dragStartX;
           this.panY = e.clientY - this.dragStartY;
@@ -399,10 +407,10 @@ export class MapGeneratorTabComponent {
         }
       });
 
-      window.addEventListener('mouseup', () => {
+      window.addEventListener("mouseup", () => {
         if (this.isDragging2D) {
           this.isDragging2D = false;
-          if (stageContainer) stageContainer.style.cursor = 'grab';
+          if (stageContainer) stageContainer.style.cursor = "grab";
         }
       });
 
@@ -413,54 +421,71 @@ export class MapGeneratorTabComponent {
       let initialScale = 1.0;
       let initialRot = 0;
 
-      const getDistance = (p1, p2) => Math.hypot(p2.clientX - p1.clientX, p2.clientY - p1.clientY);
-      const getAngle = (p1, p2) => Math.atan2(p2.clientY - p1.clientY, p2.clientX - p1.clientX) * (180 / Math.PI);
-      const getCenter = (p1, p2) => ({ x: (p1.clientX + p2.clientX) / 2, y: (p1.clientY + p2.clientY) / 2 });
+      const getDistance = (p1, p2) =>
+        Math.hypot(p2.clientX - p1.clientX, p2.clientY - p1.clientY);
+      const getAngle = (p1, p2) =>
+        Math.atan2(p2.clientY - p1.clientY, p2.clientX - p1.clientX) *
+        (180 / Math.PI);
+      const getCenter = (p1, p2) => ({
+        x: (p1.clientX + p2.clientX) / 2,
+        y: (p1.clientY + p2.clientY) / 2,
+      });
 
-      stageContainer.addEventListener('touchstart', (e) => {
-        if (e.touches.length === 1) {
-          this.isDragging2D = true;
-          this.dragStartX = e.touches[0].clientX - this.panX;
-          this.dragStartY = e.touches[0].clientY - this.panY;
-        } else if (e.touches.length === 2) {
-          this.isDragging2D = false;
-          touchActive = true;
-          startDist = getDistance(e.touches[0], e.touches[1]);
-          startAngle = getAngle(e.touches[0], e.touches[1]);
-          initialScale = this.zoomScale;
-          initialRot = this.rotationAngle || 0;
-          const center = getCenter(e.touches[0], e.touches[1]);
-          this.dragStartX = center.x - this.panX;
-          this.dragStartY = center.y - this.panY;
-        }
-      }, { passive: false });
-
-      stageContainer.addEventListener('touchmove', (e) => {
-        if (e.touches.length === 1 && this.isDragging2D) {
-          e.preventDefault();
-          this.panX = e.touches[0].clientX - this.dragStartX;
-          this.panY = e.touches[0].clientY - this.dragStartY;
-          this.update2DTransform();
-        } else if (e.touches.length === 2 && touchActive) {
-          e.preventDefault();
-          const currentDist = getDistance(e.touches[0], e.touches[1]);
-          const currentAngle = getAngle(e.touches[0], e.touches[1]);
-          const center = getCenter(e.touches[0], e.touches[1]);
-
-          if (startDist > 0) {
-            const scaleFactor = currentDist / startDist;
-            this.zoomScale = Math.min(4.0, Math.max(0.2, initialScale * scaleFactor));
+      stageContainer.addEventListener(
+        "touchstart",
+        (e) => {
+          if (e.touches.length === 1) {
+            this.isDragging2D = true;
+            this.dragStartX = e.touches[0].clientX - this.panX;
+            this.dragStartY = e.touches[0].clientY - this.panY;
+          } else if (e.touches.length === 2) {
+            this.isDragging2D = false;
+            touchActive = true;
+            startDist = getDistance(e.touches[0], e.touches[1]);
+            startAngle = getAngle(e.touches[0], e.touches[1]);
+            initialScale = this.zoomScale;
+            initialRot = this.rotationAngle || 0;
+            const center = getCenter(e.touches[0], e.touches[1]);
+            this.dragStartX = center.x - this.panX;
+            this.dragStartY = center.y - this.panY;
           }
+        },
+        { passive: false },
+      );
 
-          const angleDiff = currentAngle - startAngle;
-          this.rotationAngle = (initialRot + angleDiff) % 360;
+      stageContainer.addEventListener(
+        "touchmove",
+        (e) => {
+          if (e.touches.length === 1 && this.isDragging2D) {
+            e.preventDefault();
+            this.panX = e.touches[0].clientX - this.dragStartX;
+            this.panY = e.touches[0].clientY - this.dragStartY;
+            this.update2DTransform();
+          } else if (e.touches.length === 2 && touchActive) {
+            e.preventDefault();
+            const currentDist = getDistance(e.touches[0], e.touches[1]);
+            const currentAngle = getAngle(e.touches[0], e.touches[1]);
+            const center = getCenter(e.touches[0], e.touches[1]);
 
-          this.panX = center.x - this.dragStartX;
-          this.panY = center.y - this.dragStartY;
+            if (startDist > 0) {
+              const scaleFactor = currentDist / startDist;
+              this.zoomScale = Math.min(
+                4.0,
+                Math.max(0.2, initialScale * scaleFactor),
+              );
+            }
 
-          this.update2DTransform();
-        }
-      }, { passive: false });
+            const angleDiff = currentAngle - startAngle;
+            this.rotationAngle = (initialRot + angleDiff) % 360;
+
+            this.panX = center.x - this.dragStartX;
+            this.panY = center.y - this.dragStartY;
+
+            this.update2DTransform();
+          }
+        },
+        { passive: false },
+      );
 
       const handleTouchEnd = (e) => {
         if (e.touches.length === 0) {
@@ -474,72 +499,78 @@ export class MapGeneratorTabComponent {
         }
       };
 
-      stageContainer.addEventListener('touchend', handleTouchEnd);
-      stageContainer.addEventListener('touchcancel', handleTouchEnd);
+      stageContainer.addEventListener("touchend", handleTouchEnd);
+      stageContainer.addEventListener("touchcancel", handleTouchEnd);
     }
 
     // 2D Toolbar buttons
-    const btnUndoPbr = document.getElementById('btnUndoPbr');
-    if (btnUndoPbr) btnUndoPbr.onclick = () => {
-      if (typeof window.undo === 'function') window.undo();
-    };
+    const btnUndoPbr = document.getElementById("btnUndoPbr");
+    if (btnUndoPbr)
+      btnUndoPbr.onclick = () => {
+        if (typeof window.undo === "function") window.undo();
+      };
 
-    const btnRedoPbr = document.getElementById('btnRedoPbr');
-    if (btnRedoPbr) btnRedoPbr.onclick = () => {
-      if (typeof window.redo === 'function') window.redo();
-    };
+    const btnRedoPbr = document.getElementById("btnRedoPbr");
+    if (btnRedoPbr)
+      btnRedoPbr.onclick = () => {
+        if (typeof window.redo === "function") window.redo();
+      };
 
-    if (typeof window.updateHistoryButtons === 'function') {
+    if (typeof window.updateHistoryButtons === "function") {
       window.updateHistoryButtons();
     }
 
-    const btnZoomIn = document.getElementById('btnZoomIn2D');
-    if (btnZoomIn) btnZoomIn.onclick = () => {
-      this.zoomScale = Math.min(4.0, this.zoomScale + 0.2);
-      this.update2DTransform();
-    };
+    const btnZoomIn = document.getElementById("btnZoomIn2D");
+    if (btnZoomIn)
+      btnZoomIn.onclick = () => {
+        this.zoomScale = Math.min(4.0, this.zoomScale + 0.2);
+        this.update2DTransform();
+      };
 
-    const btnZoomOut = document.getElementById('btnZoomOut2D');
-    if (btnZoomOut) btnZoomOut.onclick = () => {
-      this.zoomScale = Math.max(0.2, this.zoomScale - 0.2);
-      this.update2DTransform();
-    };
+    const btnZoomOut = document.getElementById("btnZoomOut2D");
+    if (btnZoomOut)
+      btnZoomOut.onclick = () => {
+        this.zoomScale = Math.max(0.2, this.zoomScale - 0.2);
+        this.update2DTransform();
+      };
 
-    const btnReset = document.getElementById('btnReset2D');
-    if (btnReset) btnReset.onclick = () => {
-      this.zoomScale = 1.0;
-      this.panX = 0;
-      this.panY = 0;
-      this.rotationAngle = 0;
-      this.update2DTransform();
-    };
+    const btnReset = document.getElementById("btnReset2D");
+    if (btnReset)
+      btnReset.onclick = () => {
+        this.zoomScale = 1.0;
+        this.panX = 0;
+        this.panY = 0;
+        this.rotationAngle = 0;
+        this.update2DTransform();
+      };
 
-    const btnRotate = document.getElementById('btnRotate2D');
-    if (btnRotate) btnRotate.onclick = () => {
-      this.rotationAngle = ((this.rotationAngle || 0) + 90) % 360;
-      this.update2DTransform();
-    };
+    const btnRotate = document.getElementById("btnRotate2D");
+    if (btnRotate)
+      btnRotate.onclick = () => {
+        this.rotationAngle = ((this.rotationAngle || 0) + 90) % 360;
+        this.update2DTransform();
+      };
 
     // Resolution switcher
     const updateResButtons = () => {
-      document.querySelectorAll('.res-btn-map').forEach(btn => {
+      document.querySelectorAll(".res-btn-map").forEach((btn) => {
         const resVal = parseInt(btn.dataset.res, 10);
         if (resVal === this.targetResolution) {
-          btn.classList.add('active');
+          btn.classList.add("active");
         } else {
-          btn.classList.remove('active');
+          btn.classList.remove("active");
         }
       });
     };
 
-    document.querySelectorAll('.res-btn-map').forEach(btn => {
+    document.querySelectorAll(".res-btn-map").forEach((btn) => {
       btn.onclick = (e) => {
         const targetBtn = e.currentTarget || e.target;
         const res = parseInt(targetBtn.dataset.res, 10);
         if (!isNaN(res)) {
           this.targetResolution = res;
           updateResButtons();
-          if (this.syncManager && this.syncManager.sourceType === 'composite') {
+          if (this.syncManager && this.syncManager.sourceType === "composite") {
             this.syncManager.pullCanvasData();
           } else {
             this.reprocess();
@@ -551,11 +582,11 @@ export class MapGeneratorTabComponent {
 
     updateResButtons();
 
-    const chkFast = document.getElementById('chkFastPreviewMap');
+    const chkFast = document.getElementById("chkFastPreviewMap");
     if (chkFast) {
       chkFast.onchange = (e) => {
         this.fastPreview = e.target.checked;
-        if (this.syncManager && this.syncManager.sourceType === 'composite') {
+        if (this.syncManager && this.syncManager.sourceType === "composite") {
           this.syncManager.pullCanvasData();
         } else {
           this.reprocess();
@@ -565,32 +596,34 @@ export class MapGeneratorTabComponent {
     }
 
     // 3D Toolbar controls
-    const selShape = document.getElementById('sel3DShape');
+    const selShape = document.getElementById("sel3DShape");
     if (selShape) {
       selShape.onchange = (e) => {
         if (this.viewport3D) this.viewport3D.createGeometry(e.target.value);
       };
     }
 
-    const rngRepeat = document.getElementById('rng3DRepeat');
-    const txtRepeat = document.getElementById('txt3DRepeat');
+    const rngRepeat = document.getElementById("rng3DRepeat");
+    const txtRepeat = document.getElementById("txt3DRepeat");
     if (rngRepeat) {
       rngRepeat.oninput = (e) => {
         const val = parseInt(e.target.value, 10);
         if (txtRepeat) txtRepeat.textContent = `${val}x`;
-        if (this.viewport3D) this.viewport3D.setMaterialParams({ repeatX: val, repeatY: val });
+        if (this.viewport3D)
+          this.viewport3D.setMaterialParams({ repeatX: val, repeatY: val });
       };
     }
 
-    const rngDisp = document.getElementById('rng3DDisp');
+    const rngDisp = document.getElementById("rng3DDisp");
     if (rngDisp) {
       rngDisp.oninput = (e) => {
         const val = parseFloat(e.target.value);
-        if (this.viewport3D) this.viewport3D.setMaterialParams({ displacementScale: val });
+        if (this.viewport3D)
+          this.viewport3D.setMaterialParams({ displacementScale: val });
       };
     }
 
-    const chkAutoRot = document.getElementById('chk3DAutoRotate');
+    const chkAutoRot = document.getElementById("chk3DAutoRotate");
     if (chkAutoRot) {
       chkAutoRot.onchange = (e) => {
         if (this.viewport3D) this.viewport3D.toggleAutoRotate(e.target.checked);
@@ -602,15 +635,15 @@ export class MapGeneratorTabComponent {
    * Update 2D Canvas Wrapper Transform for Zoom, Pan & Rotation
    */
   update2DTransform() {
-    const wrapper = document.getElementById('canvas2DWrapper');
-    const txtInfo = document.getElementById('txtZoomInfo');
+    const wrapper = document.getElementById("canvas2DWrapper");
+    const txtInfo = document.getElementById("txtZoomInfo");
     const rot = Math.round(this.rotationAngle || 0);
 
     if (wrapper) {
       wrapper.style.transform = `translate(${this.panX}px, ${this.panY}px) scale(${this.zoomScale}) rotate(${rot}deg)`;
     }
     if (txtInfo) {
-      txtInfo.textContent = `${Math.round(this.zoomScale * 100)}%${rot !== 0 ? ` | ${rot}°` : ''}`;
+      txtInfo.textContent = `${Math.round(this.zoomScale * 100)}%${rot !== 0 ? ` | ${rot}°` : ""}`;
     }
   }
 
@@ -621,21 +654,21 @@ export class MapGeneratorTabComponent {
     this.selectedMapType = mapType;
 
     // Update viewport top bar buttons
-    document.querySelectorAll('.map-type-btn').forEach(btn => {
-      btn.classList.toggle('active', btn.dataset.map === mapType);
+    document.querySelectorAll(".map-type-btn").forEach((btn) => {
+      btn.classList.toggle("active", btn.dataset.map === mapType);
     });
 
     // Ensure right panel mode is switched to 'maps' so PBR map controls appear in right properties panel
-    if (typeof window.switchRightTab === 'function') {
-      window.switchRightTab('maps');
+    if (typeof window.switchRightTab === "function") {
+      window.switchRightTab("maps");
     } else {
       this.renderRightPanelControls();
     }
 
     // Re-render active viewport preview
-    if (this.activeView === '2d') {
+    if (this.activeView === "2d") {
       this.render2DPreview();
-    } else if (this.activeView === '3d' && this.viewport3D) {
+    } else if (this.activeView === "3d" && this.viewport3D) {
       this.update3DTextures();
     }
   }
@@ -644,14 +677,18 @@ export class MapGeneratorTabComponent {
    * Render Right Control Panel for Map Generator
    */
   renderRightPanelControls() {
-    const rightPanel = document.getElementById('propertiesPanel') || document.getElementById('rightPanelBody') || document.querySelector('.right-panel-content') || document.querySelector('.panel-content');
+    const rightPanel =
+      document.getElementById("propertiesPanel") ||
+      document.getElementById("rightPanelBody") ||
+      document.querySelector(".right-panel-content") ||
+      document.querySelector(".panel-content");
     if (!rightPanel) return;
 
-    const currentMap = this.selectedMapType || 'normal';
+    const currentMap = this.selectedMapType || "normal";
 
-    let mapContextualHtml = '';
+    let mapContextualHtml = "";
 
-    if (currentMap === 'normal') {
+    if (currentMap === "normal") {
       mapContextualHtml = `
         <div class="accordion-block" style="background:rgba(59,130,246,0.03); border:1px solid rgba(59,130,246,0.3); border-radius:8px; padding:12px;">
           <div style="font-weight:700; font-size:12px; margin-bottom:10px; color:#3b82f6; display:flex; align-items:center; justify-content:space-between;">
@@ -663,9 +700,9 @@ export class MapGeneratorTabComponent {
           <div style="margin-bottom:8px;">
             <label class="property-label" style="font-size:10px; margin-bottom:2px; display:block;">Фільтр (Filter Selection)</label>
             <select id="selNormFilter" class="form-control" style="font-size:11px; height:26px;">
-              <option value="sobel" ${this.params.normal.algorithm === 'sobel' ? 'selected' : ''}>Sobel (Стандартний 3x3)</option>
-              <option value="scharr" ${this.params.normal.algorithm === 'scharr' ? 'selected' : ''}>Scharr (Висока чіткість)</option>
-              <option value="prewitt" ${this.params.normal.algorithm === 'prewitt' ? 'selected' : ''}>Prewitt (Плавний градієнт)</option>
+              <option value="sobel" ${this.params.normal.algorithm === "sobel" ? "selected" : ""}>Sobel (Стандартний 3x3)</option>
+              <option value="scharr" ${this.params.normal.algorithm === "scharr" ? "selected" : ""}>Scharr (Висока чіткість)</option>
+              <option value="prewitt" ${this.params.normal.algorithm === "prewitt" ? "selected" : ""}>Prewitt (Плавний градієнт)</option>
             </select>
           </div>
 
@@ -720,7 +757,7 @@ export class MapGeneratorTabComponent {
           <!-- Invert -->
           <div style="margin-bottom:8px; padding-top:4px;">
             <label style="font-size:11px; cursor:pointer; display:flex; align-items:center; gap:6px;">
-              <input type="checkbox" id="chkNormInvert" ${this.params.normal.invert ? 'checked' : ''}>
+              <input type="checkbox" id="chkNormInvert" ${this.params.normal.invert ? "checked" : ""}>
               <span>Інвертувати геометрію (Invert)</span>
             </label>
           </div>
@@ -729,14 +766,14 @@ export class MapGeneratorTabComponent {
           <div style="border-top:1px solid rgba(255,255,255,0.08); padding-top:8px; margin-top:8px;">
             <label class="property-label" style="font-size:10px; margin-bottom:4px; display:block;">Перемикачі каналів (Channels)</label>
             <div style="display:flex; gap:10px; flex-wrap:wrap; font-size:10px;">
-              <label style="cursor:pointer;"><input type="checkbox" id="chkNormInvR" ${this.params.normal.invertR ? 'checked' : ''}> Інверт R (X)</label>
-              <label style="cursor:pointer;"><input type="checkbox" id="chkNormInvG" ${this.params.normal.invertG ? 'checked' : ''}> Інверт G (Y)</label>
-              <label style="cursor:pointer;"><input type="checkbox" id="chkNormInvH" ${this.params.normal.invertH ? 'checked' : ''}> Інверт Height (H)</label>
+              <label style="cursor:pointer;"><input type="checkbox" id="chkNormInvR" ${this.params.normal.invertR ? "checked" : ""}> Інверт R (X)</label>
+              <label style="cursor:pointer;"><input type="checkbox" id="chkNormInvG" ${this.params.normal.invertG ? "checked" : ""}> Інверт G (Y)</label>
+              <label style="cursor:pointer;"><input type="checkbox" id="chkNormInvH" ${this.params.normal.invertH ? "checked" : ""}> Інверт Height (H)</label>
             </div>
           </div>
         </div>
       `;
-    } else if (currentMap === 'displacement') {
+    } else if (currentMap === "displacement") {
       mapContextualHtml = `
         <div class="accordion-block" style="background:rgba(16,185,129,0.03); border:1px solid rgba(16,185,129,0.3); border-radius:8px; padding:12px;">
           <div style="font-weight:700; font-size:12px; margin-bottom:10px; color:#10b981; display:flex; align-items:center; justify-content:space-between;">
@@ -759,13 +796,13 @@ export class MapGeneratorTabComponent {
           <!-- Invert -->
           <div style="margin-top:8px;">
             <label style="font-size:11px; cursor:pointer; display:flex; align-items:center; gap:6px;">
-              <input type="checkbox" id="chkDispInvert" ${this.params.displacement.invert ? 'checked' : ''}>
+              <input type="checkbox" id="chkDispInvert" ${this.params.displacement.invert ? "checked" : ""}>
               <span>Інвертувати карту висот (Invert)</span>
             </label>
           </div>
         </div>
       `;
-    } else if (currentMap === 'ao') {
+    } else if (currentMap === "ao") {
       mapContextualHtml = `
         <div class="accordion-block" style="background:rgba(245,158,11,0.03); border:1px solid rgba(245,158,11,0.3); border-radius:8px; padding:12px;">
           <div style="font-weight:700; font-size:12px; margin-bottom:10px; color:#f59e0b; display:flex; align-items:center; justify-content:space-between;">
@@ -824,13 +861,13 @@ export class MapGeneratorTabComponent {
           <!-- Invert -->
           <div style="margin-top:8px;">
             <label style="font-size:11px; cursor:pointer; display:flex; align-items:center; gap:6px;">
-              <input type="checkbox" id="chkAOInvert" ${this.params.ao.invert ? 'checked' : ''}>
+              <input type="checkbox" id="chkAOInvert" ${this.params.ao.invert ? "checked" : ""}>
               <span>Інвертувати затінення (Invert)</span>
             </label>
           </div>
         </div>
       `;
-    } else if (currentMap === 'specular') {
+    } else if (currentMap === "specular") {
       mapContextualHtml = `
         <div class="accordion-block" style="background:rgba(236,72,153,0.03); border:1px solid rgba(236,72,153,0.3); border-radius:8px; padding:12px;">
           <div style="font-weight:700; font-size:12px; margin-bottom:10px; color:#ec4899; display:flex; align-items:center; justify-content:space-between;">
@@ -866,9 +903,9 @@ export class MapGeneratorTabComponent {
           <div style="margin-bottom:8px;">
             <label class="property-label" style="font-size:10px; margin-bottom:2px; display:block;">Спад градієнта (Falloff)</label>
             <select id="selSpecFalloff" class="form-control" style="font-size:11px; height:26px;">
-              <option value="none" ${this.params.specular.falloff === 'none' ? 'selected' : ''}>Немає (None)</option>
-              <option value="linear" ${this.params.specular.falloff === 'linear' ? 'selected' : ''}>Лінійне (Linear)</option>
-              <option value="square" ${this.params.specular.falloff === 'square' ? 'selected' : ''}>Квадратичне (Square)</option>
+              <option value="none" ${this.params.specular.falloff === "none" ? "selected" : ""}>Немає (None)</option>
+              <option value="linear" ${this.params.specular.falloff === "linear" ? "selected" : ""}>Лінійне (Linear)</option>
+              <option value="square" ${this.params.specular.falloff === "square" ? "selected" : ""}>Квадратичне (Square)</option>
             </select>
           </div>
         </div>
@@ -897,12 +934,12 @@ export class MapGeneratorTabComponent {
           </div>
 
           <select id="selMapSourceType" class="form-control" style="font-size:11px; height:28px; margin-bottom:6px;">
-            <option value="composite" ${this.syncManager.sourceType === 'composite' ? 'selected' : ''}>🎨 Полотно Veil Studio (Всі шари)</option>
-            <option value="active_layer" ${this.syncManager.sourceType === 'active_layer' ? 'selected' : ''}>🥞 Активний шар</option>
-            <option value="manual" ${this.syncManager.sourceType === 'manual' ? 'selected' : ''}>📁 Власне фото / Файл</option>
+            <option value="composite" ${this.syncManager.sourceType === "composite" ? "selected" : ""}>🎨 Полотно Veil Studio (Всі шари)</option>
+            <option value="active_layer" ${this.syncManager.sourceType === "active_layer" ? "selected" : ""}>🥞 Активний шар</option>
+            <option value="manual" ${this.syncManager.sourceType === "manual" ? "selected" : ""}>📁 Власне фото / Файл</option>
           </select>
 
-          <div id="dropzoneManual" style="display:${this.syncManager.sourceType === 'manual' ? 'block' : 'none'}; border:2px dashed rgba(59,130,246,0.4); border-radius:6px; padding:10px; text-align:center; font-size:11px; color:var(--text-muted, #a1a1aa); cursor:pointer; background:rgba(59,130,246,0.04); margin-bottom:6px;">
+          <div id="dropzoneManual" style="display:${this.syncManager.sourceType === "manual" ? "block" : "none"}; border:2px dashed rgba(59,130,246,0.4); border-radius:6px; padding:10px; text-align:center; font-size:11px; color:var(--text-muted, #a1a1aa); cursor:pointer; background:rgba(59,130,246,0.04); margin-bottom:6px;">
             Перетягніть фото сюди або <u>виберіть файл</u>
             <input type="file" id="fileManualInput" accept="image/*" style="display:none;">
           </div>
@@ -921,11 +958,11 @@ export class MapGeneratorTabComponent {
         </div>
 
         <div style="display:flex; gap:3px; background:rgba(0,0,0,0.3); padding:3px; border-radius:6px; border:1px solid var(--border-color, rgba(255,255,255,0.1));">
-          <button class="pbr-subtab-btn ${currentMap === 'normal' ? 'active' : ''}" data-submap="normal" style="flex:1; min-width:45px; padding:4px 2px; font-size:10px; border-radius:4px;">Normal</button>
-          <button class="pbr-subtab-btn ${currentMap === 'displacement' ? 'active' : ''}" data-submap="displacement" style="flex:1; min-width:45px; padding:4px 2px; font-size:10px; border-radius:4px;">Disp</button>
-          <button class="pbr-subtab-btn ${currentMap === 'ao' ? 'active' : ''}" data-submap="ao" style="flex:1; min-width:32px; padding:4px 2px; font-size:10px; border-radius:4px;">AO</button>
-          <button class="pbr-subtab-btn ${currentMap === 'specular' ? 'active' : ''}" data-submap="specular" style="flex:1; min-width:48px; padding:4px 2px; font-size:10px; border-radius:4px;">Specular</button>
-          <button class="pbr-subtab-btn ${currentMap === 'diffuse' ? 'active' : ''}" data-submap="diffuse" style="flex:1; min-width:40px; padding:4px 2px; font-size:10px; border-radius:4px;">Diffuse</button>
+          <button class="pbr-subtab-btn ${currentMap === "normal" ? "active" : ""}" data-submap="normal" style="flex:1; min-width:45px; padding:4px 2px; font-size:10px; border-radius:4px;">Normal</button>
+          <button class="pbr-subtab-btn ${currentMap === "displacement" ? "active" : ""}" data-submap="displacement" style="flex:1; min-width:45px; padding:4px 2px; font-size:10px; border-radius:4px;">Disp</button>
+          <button class="pbr-subtab-btn ${currentMap === "ao" ? "active" : ""}" data-submap="ao" style="flex:1; min-width:32px; padding:4px 2px; font-size:10px; border-radius:4px;">AO</button>
+          <button class="pbr-subtab-btn ${currentMap === "specular" ? "active" : ""}" data-submap="specular" style="flex:1; min-width:48px; padding:4px 2px; font-size:10px; border-radius:4px;">Specular</button>
+          <button class="pbr-subtab-btn ${currentMap === "diffuse" ? "active" : ""}" data-submap="diffuse" style="flex:1; min-width:40px; padding:4px 2px; font-size:10px; border-radius:4px;">Diffuse</button>
         </div>
 
         <!-- Dynamic Contextual Panel Area -->
@@ -967,7 +1004,7 @@ export class MapGeneratorTabComponent {
       targetResolution: this.targetResolution,
       fastPreview: this.fastPreview,
       selectedMapType: this.selectedMapType,
-      sourceType: this.syncManager ? this.syncManager.sourceType : 'composite'
+      sourceType: this.syncManager ? this.syncManager.sourceType : "composite",
     };
   }
 
@@ -979,10 +1016,10 @@ export class MapGeneratorTabComponent {
     if (pbrState.params) {
       this.params = JSON.parse(JSON.stringify(pbrState.params));
     }
-    if (typeof pbrState.targetResolution === 'number') {
+    if (typeof pbrState.targetResolution === "number") {
       this.targetResolution = pbrState.targetResolution;
     }
-    if (typeof pbrState.fastPreview === 'boolean') {
+    if (typeof pbrState.fastPreview === "boolean") {
       this.fastPreview = pbrState.fastPreview;
     }
     if (pbrState.selectedMapType) {
@@ -991,7 +1028,10 @@ export class MapGeneratorTabComponent {
     if (pbrState.sourceType && this.syncManager) {
       this.syncManager.setSourceType(pbrState.sourceType);
     }
-    if (window.isPbrModeActive || (typeof currentTab !== 'undefined' && currentTab === 'maps')) {
+    if (
+      window.isPbrModeActive ||
+      (typeof currentTab !== "undefined" && currentTab === "maps")
+    ) {
       this.renderRightPanelControls();
       this.reprocess();
     }
@@ -1012,12 +1052,16 @@ export class MapGeneratorTabComponent {
    * Bind event handlers for control panel sliders, checkboxes, selects, and buttons
    */
   bindRightPanelEvents() {
-    const rightPanel = document.getElementById('propertiesPanel') || document.getElementById('rightPanelBody') || document.querySelector('.right-panel-content') || document.querySelector('.panel-content');
+    const rightPanel =
+      document.getElementById("propertiesPanel") ||
+      document.getElementById("rightPanelBody") ||
+      document.querySelector(".right-panel-content") ||
+      document.querySelector(".panel-content");
 
     if (rightPanel) {
       // Delegate fast preview behavior on slider interactions for instant 256px resolution feedback
       const handleSliderStart = (e) => {
-        if (e.target && e.target.type === 'range') {
+        if (e.target && e.target.type === "range") {
           if (this.fastPreview) {
             this.isInteractingWithSliders = true;
             this.reprocess();
@@ -1038,16 +1082,18 @@ export class MapGeneratorTabComponent {
         }
       };
 
-      rightPanel.addEventListener('pointerdown', handleSliderStart);
-      rightPanel.addEventListener('touchstart', handleSliderStart, { passive: true });
+      rightPanel.addEventListener("pointerdown", handleSliderStart);
+      rightPanel.addEventListener("touchstart", handleSliderStart, {
+        passive: true,
+      });
 
-      rightPanel.addEventListener('pointerup', handleSliderRelease);
-      rightPanel.addEventListener('touchend', handleSliderRelease);
-      rightPanel.addEventListener('change', handleSliderRelease);
+      rightPanel.addEventListener("pointerup", handleSliderRelease);
+      rightPanel.addEventListener("touchend", handleSliderRelease);
+      rightPanel.addEventListener("change", handleSliderRelease);
     }
 
     // Sub-tab switcher handler
-    document.querySelectorAll('.pbr-subtab-btn').forEach(btn => {
+    document.querySelectorAll(".pbr-subtab-btn").forEach((btn) => {
       btn.onclick = (e) => {
         const submap = e.target.dataset.submap;
         if (submap) {
@@ -1057,14 +1103,15 @@ export class MapGeneratorTabComponent {
     });
 
     // Source switcher
-    const selSource = document.getElementById('selMapSourceType');
-    const dropzone = document.getElementById('dropzoneManual');
-    const fileInput = document.getElementById('fileManualInput');
+    const selSource = document.getElementById("selMapSourceType");
+    const dropzone = document.getElementById("dropzoneManual");
+    const fileInput = document.getElementById("fileManualInput");
 
     if (selSource) {
       selSource.onchange = (e) => {
         const val = e.target.value;
-        if (dropzone) dropzone.style.display = val === 'manual' ? 'block' : 'none';
+        if (dropzone)
+          dropzone.style.display = val === "manual" ? "block" : "none";
         this.syncManager.setSourceType(val);
         this.onSettingsChanged();
       };
@@ -1081,14 +1128,14 @@ export class MapGeneratorTabComponent {
 
       dropzone.ondragover = (e) => {
         e.preventDefault();
-        dropzone.style.borderColor = '#3b82f6';
+        dropzone.style.borderColor = "#3b82f6";
       };
       dropzone.ondragleave = () => {
-        dropzone.style.borderColor = 'rgba(59,130,246,0.4)';
+        dropzone.style.borderColor = "rgba(59,130,246,0.4)";
       };
       dropzone.ondrop = (e) => {
         e.preventDefault();
-        dropzone.style.borderColor = 'rgba(59,130,246,0.4)';
+        dropzone.style.borderColor = "rgba(59,130,246,0.4)";
         if (e.dataTransfer.files && e.dataTransfer.files[0]) {
           this.syncManager.loadManualFile(e.dataTransfer.files[0]);
           this.onSettingsChanged();
@@ -1096,17 +1143,17 @@ export class MapGeneratorTabComponent {
       };
     }
 
-    const btnResync = document.getElementById('btnResyncCanvas');
+    const btnResync = document.getElementById("btnResyncCanvas");
     if (btnResync) {
       btnResync.onclick = () => {
         const originalText = btnResync.innerHTML;
-        btnResync.innerHTML = '⌛ Оновлення...';
+        btnResync.innerHTML = "⌛ Оновлення...";
         btnResync.disabled = true;
 
         setTimeout(() => {
           this.syncManager.pullCanvasData();
           this.onSettingsChanged();
-          btnResync.innerHTML = '✅ Оновлено з полотна';
+          btnResync.innerHTML = "✅ Оновлено з полотна";
           setTimeout(() => {
             btnResync.innerHTML = originalText;
             btnResync.disabled = false;
@@ -1138,7 +1185,7 @@ export class MapGeneratorTabComponent {
     };
 
     // Normal Map Controls
-    const selNormFilter = document.getElementById('selNormFilter');
+    const selNormFilter = document.getElementById("selNormFilter");
     if (selNormFilter) {
       selNormFilter.onchange = (e) => {
         this.params.normal.algorithm = e.target.value;
@@ -1147,27 +1194,32 @@ export class MapGeneratorTabComponent {
       };
     }
 
-    linkInput('rngNormStrength', 'numNormStrength', 'valNormStrengthText', (val) => {
-      this.params.normal.strength = val;
-      this.reprocess();
-    });
+    linkInput(
+      "rngNormStrength",
+      "numNormStrength",
+      "valNormStrengthText",
+      (val) => {
+        this.params.normal.strength = val;
+        this.reprocess();
+      },
+    );
 
-    linkInput('rngNormLevel', 'numNormLevel', 'valNormLevelText', (val) => {
+    linkInput("rngNormLevel", "numNormLevel", "valNormLevelText", (val) => {
       this.params.normal.level = val;
       this.reprocess();
     });
 
-    linkInput('rngNormBlur', 'numNormBlur', 'valNormBlurText', (val) => {
+    linkInput("rngNormBlur", "numNormBlur", "valNormBlurText", (val) => {
       this.params.normal.blur = val;
       this.reprocess();
     });
 
-    linkInput('rngNormSharp', 'numNormSharp', 'valNormSharpText', (val) => {
+    linkInput("rngNormSharp", "numNormSharp", "valNormSharpText", (val) => {
       this.params.normal.sharp = val;
       this.reprocess();
     });
 
-    const chkNormInvert = document.getElementById('chkNormInvert');
+    const chkNormInvert = document.getElementById("chkNormInvert");
     if (chkNormInvert) {
       chkNormInvert.onchange = (e) => {
         this.params.normal.invert = e.target.checked;
@@ -1176,7 +1228,7 @@ export class MapGeneratorTabComponent {
       };
     }
 
-    ['chkNormInvR', 'chkNormInvG', 'chkNormInvH'].forEach((id, idx) => {
+    ["chkNormInvR", "chkNormInvG", "chkNormInvH"].forEach((id, idx) => {
       const el = document.getElementById(id);
       if (el) {
         el.onchange = (e) => {
@@ -1190,12 +1242,17 @@ export class MapGeneratorTabComponent {
     });
 
     // Displacement Map Controls
-    linkInput('rngDispContrast', 'numDispContrast', 'valDispContrastText', (val) => {
-      this.params.displacement.contrast = val;
-      this.reprocess();
-    });
+    linkInput(
+      "rngDispContrast",
+      "numDispContrast",
+      "valDispContrastText",
+      (val) => {
+        this.params.displacement.contrast = val;
+        this.reprocess();
+      },
+    );
 
-    const chkDispInv = document.getElementById('chkDispInvert');
+    const chkDispInv = document.getElementById("chkDispInvert");
     if (chkDispInv) {
       chkDispInv.onchange = (e) => {
         this.params.displacement.invert = e.target.checked;
@@ -1205,27 +1262,27 @@ export class MapGeneratorTabComponent {
     }
 
     // AO Map Controls
-    linkInput('rngAOStrength', 'numAOStrength', 'valAOStrengthText', (val) => {
+    linkInput("rngAOStrength", "numAOStrength", "valAOStrengthText", (val) => {
       this.params.ao.strength = val;
       this.reprocess();
     });
 
-    linkInput('rngAOLevel', 'numAOLevel', 'valAOLevelText', (val) => {
+    linkInput("rngAOLevel", "numAOLevel", "valAOLevelText", (val) => {
       this.params.ao.level = val;
       this.reprocess();
     });
 
-    linkInput('rngAOBlur', 'numAOBlur', 'valAOBlurText', (val) => {
+    linkInput("rngAOBlur", "numAOBlur", "valAOBlurText", (val) => {
       this.params.ao.blur = val;
       this.reprocess();
     });
 
-    linkInput('rngAOSharp', 'numAOSharp', 'valAOSharpText', (val) => {
+    linkInput("rngAOSharp", "numAOSharp", "valAOSharpText", (val) => {
       this.params.ao.sharp = val;
       this.reprocess();
     });
 
-    const chkAOInvert = document.getElementById('chkAOInvert');
+    const chkAOInvert = document.getElementById("chkAOInvert");
     if (chkAOInvert) {
       chkAOInvert.onchange = (e) => {
         this.params.ao.invert = e.target.checked;
@@ -1235,17 +1292,17 @@ export class MapGeneratorTabComponent {
     }
 
     // Specular Map Controls
-    linkInput('rngSpecMean', 'numSpecMean', 'valSpecMeanText', (val) => {
+    linkInput("rngSpecMean", "numSpecMean", "valSpecMeanText", (val) => {
       this.params.specular.mean = val;
       this.reprocess();
     });
 
-    linkInput('rngSpecRange', 'numSpecRange', 'valSpecRangeText', (val) => {
+    linkInput("rngSpecRange", "numSpecRange", "valSpecRangeText", (val) => {
       this.params.specular.range = val;
       this.reprocess();
     });
 
-    const selSpecFalloff = document.getElementById('selSpecFalloff');
+    const selSpecFalloff = document.getElementById("selSpecFalloff");
     if (selSpecFalloff) {
       selSpecFalloff.onchange = (e) => {
         this.params.specular.falloff = e.target.value;
@@ -1255,18 +1312,19 @@ export class MapGeneratorTabComponent {
     }
 
     // Export & Layer Actions
-    const btnResetParams = document.getElementById('btnResetPbrParams');
+    const btnResetParams = document.getElementById("btnResetPbrParams");
     if (btnResetParams) {
       btnResetParams.onclick = () => this.resetToDefaults();
     }
 
-    const btnApply = document.getElementById('btnApplyAsLayer');
+    const btnApply = document.getElementById("btnApplyAsLayer");
     if (btnApply) btnApply.onclick = () => this.applySelectedMapAsLayer();
 
-    const btnDownloadCurr = document.getElementById('btnDownloadCurrentMap');
-    if (btnDownloadCurr) btnDownloadCurr.onclick = () => this.downloadMap(this.selectedMapType);
+    const btnDownloadCurr = document.getElementById("btnDownloadCurrentMap");
+    if (btnDownloadCurr)
+      btnDownloadCurr.onclick = () => this.downloadMap(this.selectedMapType);
 
-    const btnDownloadAll = document.getElementById('btnDownloadAllMaps');
+    const btnDownloadAll = document.getElementById("btnDownloadAllMaps");
     if (btnDownloadAll) btnDownloadAll.onclick = () => this.downloadAllMaps();
   }
 
@@ -1276,7 +1334,7 @@ export class MapGeneratorTabComponent {
   resetToDefaults() {
     this.params = {
       normal: {
-        algorithm: 'sobel',
+        algorithm: "sobel",
         strength: 2.5,
         level: 1.0,
         blur: 0,
@@ -1284,11 +1342,11 @@ export class MapGeneratorTabComponent {
         invert: false,
         invertR: false,
         invertG: false,
-        invertH: false
+        invertH: false,
       },
       displacement: {
         contrast: 1.0,
-        invert: false
+        invert: false,
       },
       ao: {
         strength: 1.8,
@@ -1296,19 +1354,19 @@ export class MapGeneratorTabComponent {
         blur: 1.0,
         sharp: 0,
         range: 8,
-        falloff: 'linear',
-        invert: false
+        falloff: "linear",
+        invert: false,
       },
       specular: {
         mean: 0.5,
         range: 1.0,
-        falloff: 'linear',
+        falloff: "linear",
         strength: 1.2,
         level: 1.0,
         blur: 0,
         sharp: 0,
-        invert: false
-      }
+        invert: false,
+      },
     };
     this.renderRightPanelControls();
     this.reprocess();
@@ -1318,14 +1376,16 @@ export class MapGeneratorTabComponent {
   /**
    * Show animated rotating and pulsing lightning bolt loading overlay on canvas window
    */
-  showExportProgressOverlay(message = 'Формування архіву PBR...') {
-    let container = document.getElementById('mapGenViewportContainer') || document.getElementById('view2DStage');
+  showExportProgressOverlay(message = "Формування архіву PBR...") {
+    let container =
+      document.getElementById("mapGenViewportContainer") ||
+      document.getElementById("view2DStage");
     if (!container) return;
 
-    let overlay = document.getElementById('pbrExportLoadingOverlay');
+    let overlay = document.getElementById("pbrExportLoadingOverlay");
     if (!overlay) {
-      overlay = document.createElement('div');
-      overlay.id = 'pbrExportLoadingOverlay';
+      overlay = document.createElement("div");
+      overlay.id = "pbrExportLoadingOverlay";
       overlay.style.cssText = `
         position: absolute;
         inset: 0;
@@ -1372,20 +1432,20 @@ export class MapGeneratorTabComponent {
       container.appendChild(overlay);
     }
 
-    const titleEl = document.getElementById('pbrExportProgressTitle');
+    const titleEl = document.getElementById("pbrExportProgressTitle");
     if (titleEl) titleEl.textContent = message;
 
-    overlay.style.display = 'flex';
+    overlay.style.display = "flex";
   }
 
   updateExportProgressOverlay(subtext) {
-    const subEl = document.getElementById('pbrExportProgressSubtext');
+    const subEl = document.getElementById("pbrExportProgressSubtext");
     if (subEl) subEl.textContent = subtext;
   }
 
   hideExportProgressOverlay() {
-    const overlay = document.getElementById('pbrExportLoadingOverlay');
-    if (overlay) overlay.style.display = 'none';
+    const overlay = document.getElementById("pbrExportLoadingOverlay");
+    if (overlay) overlay.style.display = "none";
   }
 
   /**
@@ -1396,11 +1456,13 @@ export class MapGeneratorTabComponent {
     this.sourceImageData = imgData;
 
     this.generatedImageDatas.diffuse = imgData;
-    this.generatedMaps.diffuse = CanvasProcessingEngine.imageDataToDataURL(imgData);
+    this.generatedMaps.diffuse =
+      CanvasProcessingEngine.imageDataToDataURL(imgData);
 
-    const badge = document.getElementById('syncStatusBadge');
+    const badge = document.getElementById("syncStatusBadge");
     if (badge) {
-      badge.textContent = meta.source === 'manual' ? 'Файл завантажено' : 'Синхронізовано';
+      badge.textContent =
+        meta.source === "manual" ? "Файл завантажено" : "Синхронізовано";
     }
 
     this.reprocess();
@@ -1413,20 +1475,23 @@ export class MapGeneratorTabComponent {
     if (!this.sourceImageData) return null;
     let targetDim = this.targetResolution || 512;
 
-    if (this.sourceImageData.width === targetDim && this.sourceImageData.height === targetDim) {
+    if (
+      this.sourceImageData.width === targetDim &&
+      this.sourceImageData.height === targetDim
+    ) {
       return this.sourceImageData;
     }
 
     // Scale using temporary offscreen canvas
-    const canvas = document.createElement('canvas');
+    const canvas = document.createElement("canvas");
     canvas.width = targetDim;
     canvas.height = targetDim;
-    const ctx = canvas.getContext('2d');
+    const ctx = canvas.getContext("2d");
 
-    const srcCanvas = document.createElement('canvas');
+    const srcCanvas = document.createElement("canvas");
     srcCanvas.width = this.sourceImageData.width;
     srcCanvas.height = this.sourceImageData.height;
-    srcCanvas.getContext('2d').putImageData(this.sourceImageData, 0, 0);
+    srcCanvas.getContext("2d").putImageData(this.sourceImageData, 0, 0);
 
     ctx.drawImage(srcCanvas, 0, 0, targetDim, targetDim);
     return ctx.getImageData(0, 0, targetDim, targetDim);
@@ -1439,28 +1504,34 @@ export class MapGeneratorTabComponent {
     if (!targetCanvas) return;
     targetCanvas.width = res;
     targetCanvas.height = res;
-    const ctx = targetCanvas.getContext('2d');
+    const ctx = targetCanvas.getContext("2d");
 
     let srcImageData = null;
-    const sourceType = this.syncManager ? this.syncManager.sourceType : 'composite';
+    const sourceType = this.syncManager
+      ? this.syncManager.sourceType
+      : "composite";
 
-    if (sourceType === 'composite' && typeof window.renderProject === 'function' && window.state) {
-      const tempCanvas = document.createElement('canvas');
+    if (
+      sourceType === "composite" &&
+      typeof window.renderProject === "function" &&
+      window.state
+    ) {
+      const tempCanvas = document.createElement("canvas");
       tempCanvas.width = res;
       tempCanvas.height = res;
       window.renderProject(tempCanvas);
-      const tempCtx = tempCanvas.getContext('2d');
+      const tempCtx = tempCanvas.getContext("2d");
       srcImageData = tempCtx.getImageData(0, 0, res, res);
     } else if (this.sourceImageData) {
-      const tempCanvas = document.createElement('canvas');
+      const tempCanvas = document.createElement("canvas");
       tempCanvas.width = res;
       tempCanvas.height = res;
-      const tempCtx = tempCanvas.getContext('2d');
+      const tempCtx = tempCanvas.getContext("2d");
 
-      const srcCanvas = document.createElement('canvas');
+      const srcCanvas = document.createElement("canvas");
       srcCanvas.width = this.sourceImageData.width;
       srcCanvas.height = this.sourceImageData.height;
-      srcCanvas.getContext('2d').putImageData(this.sourceImageData, 0, 0);
+      srcCanvas.getContext("2d").putImageData(this.sourceImageData, 0, 0);
 
       tempCtx.drawImage(srcCanvas, 0, 0, res, res);
       srcImageData = tempCtx.getImageData(0, 0, res, res);
@@ -1469,22 +1540,34 @@ export class MapGeneratorTabComponent {
     if (!srcImageData) return;
 
     let resultMapData = null;
-    const mapType = mapTypeOverride || this.selectedMapType || 'normal';
+    const mapType = mapTypeOverride || this.selectedMapType || "normal";
 
     switch (mapType) {
-      case 'normal':
-        resultMapData = CanvasProcessingEngine.generateNormalMap(srcImageData, this.params.normal);
+      case "normal":
+        resultMapData = CanvasProcessingEngine.generateNormalMap(
+          srcImageData,
+          this.params.normal,
+        );
         break;
-      case 'displacement':
-        resultMapData = CanvasProcessingEngine.generateDisplacementMap(srcImageData, this.params.displacement);
+      case "displacement":
+        resultMapData = CanvasProcessingEngine.generateDisplacementMap(
+          srcImageData,
+          this.params.displacement,
+        );
         break;
-      case 'ao':
-        resultMapData = CanvasProcessingEngine.generateAOMap(srcImageData, this.params.ao);
+      case "ao":
+        resultMapData = CanvasProcessingEngine.generateAOMap(
+          srcImageData,
+          this.params.ao,
+        );
         break;
-      case 'specular':
-        resultMapData = CanvasProcessingEngine.generateSpecularMap(srcImageData, this.params.specular);
+      case "specular":
+        resultMapData = CanvasProcessingEngine.generateSpecularMap(
+          srcImageData,
+          this.params.specular,
+        );
         break;
-      case 'diffuse':
+      case "diffuse":
       default:
         resultMapData = srcImageData;
         break;
@@ -1506,33 +1589,49 @@ export class MapGeneratorTabComponent {
       const srcData = this.getScaledSourceImageData();
 
       // 1. Normal Map
-      const normImgData = CanvasProcessingEngine.generateNormalMap(srcData, this.params.normal);
+      const normImgData = CanvasProcessingEngine.generateNormalMap(
+        srcData,
+        this.params.normal,
+      );
       this.generatedImageDatas.normal = normImgData;
-      this.generatedMaps.normal = CanvasProcessingEngine.imageDataToDataURL(normImgData);
+      this.generatedMaps.normal =
+        CanvasProcessingEngine.imageDataToDataURL(normImgData);
 
       // 2. Displacement Map
-      const dispImgData = CanvasProcessingEngine.generateDisplacementMap(srcData, this.params.displacement);
+      const dispImgData = CanvasProcessingEngine.generateDisplacementMap(
+        srcData,
+        this.params.displacement,
+      );
       this.generatedImageDatas.displacement = dispImgData;
-      this.generatedMaps.displacement = CanvasProcessingEngine.imageDataToDataURL(dispImgData);
+      this.generatedMaps.displacement =
+        CanvasProcessingEngine.imageDataToDataURL(dispImgData);
 
       // 3. AO Map
-      const aoImgData = CanvasProcessingEngine.generateAOMap(srcData, this.params.ao);
+      const aoImgData = CanvasProcessingEngine.generateAOMap(
+        srcData,
+        this.params.ao,
+      );
       this.generatedImageDatas.ao = aoImgData;
-      this.generatedMaps.ao = CanvasProcessingEngine.imageDataToDataURL(aoImgData);
+      this.generatedMaps.ao =
+        CanvasProcessingEngine.imageDataToDataURL(aoImgData);
 
       // 4. Specular Map
-      const specImgData = CanvasProcessingEngine.generateSpecularMap(srcData, this.params.specular);
+      const specImgData = CanvasProcessingEngine.generateSpecularMap(
+        srcData,
+        this.params.specular,
+      );
       this.generatedImageDatas.specular = specImgData;
-      this.generatedMaps.specular = CanvasProcessingEngine.imageDataToDataURL(specImgData);
+      this.generatedMaps.specular =
+        CanvasProcessingEngine.imageDataToDataURL(specImgData);
 
       // Update active view
-      if (this.activeView === '2d') {
+      if (this.activeView === "2d") {
         this.render2DPreview();
-      } else if (this.activeView === '3d' && this.viewport3D) {
+      } else if (this.activeView === "3d" && this.viewport3D) {
         this.update3DTextures();
       }
     } catch (err) {
-      console.error('Error reprocessing PBR maps:', err);
+      console.error("Error reprocessing PBR maps:", err);
     } finally {
       this.isProcessing = false;
     }
@@ -1542,16 +1641,17 @@ export class MapGeneratorTabComponent {
    * Draw selected map onto 2D Preview Canvas
    */
   render2DPreview() {
-    const canvas = document.getElementById('mapPreviewCanvas2D');
-    const label = document.getElementById('map2DLabel');
+    const canvas = document.getElementById("mapPreviewCanvas2D");
+    const label = document.getElementById("map2DLabel");
     if (!canvas) return;
 
-    const imgData = this.generatedImageDatas[this.selectedMapType] || this.sourceImageData;
+    const imgData =
+      this.generatedImageDatas[this.selectedMapType] || this.sourceImageData;
     if (!imgData) return;
 
     canvas.width = imgData.width;
     canvas.height = imgData.height;
-    const ctx = canvas.getContext('2d');
+    const ctx = canvas.getContext("2d");
     ctx.putImageData(imgData, 0, 0);
 
     if (label) {
@@ -1560,7 +1660,7 @@ export class MapGeneratorTabComponent {
         displacement: `Displacement Map (Contrast: ${this.params.displacement.contrast})`,
         ao: `Ambient Occlusion (Strength: ${this.params.ao.strength})`,
         specular: `Specular Map (Strength: ${this.params.specular.strength})`,
-        diffuse: `Diffuse / Source Image (${imgData.width}x${imgData.height})`
+        diffuse: `Diffuse / Source Image (${imgData.width}x${imgData.height})`,
       };
       label.textContent = names[this.selectedMapType] || this.selectedMapType;
     }
@@ -1578,7 +1678,7 @@ export class MapGeneratorTabComponent {
       normal: this.generatedMaps.normal,
       displacement: this.generatedMaps.displacement,
       ao: this.generatedMaps.ao,
-      specular: this.generatedMaps.specular
+      specular: this.generatedMaps.specular,
     });
   }
 
@@ -1588,26 +1688,26 @@ export class MapGeneratorTabComponent {
   applySelectedMapAsLayer() {
     const dataUrl = this.generatedMaps[this.selectedMapType];
     if (!dataUrl || !window.state) {
-      alert('Немає згенерованої карти для експорту!');
+      alert("Немає згенерованої карти для експорту!");
       return;
     }
 
     const layerName = `${this.selectedMapType.toUpperCase()} Map`;
-    const newLayerId = 'l_' + Date.now();
+    const newLayerId = "l_" + Date.now();
 
     const newLayer = {
       id: newLayerId,
       name: layerName,
       visible: true,
       opacity: 100,
-      blendMode: 'normal',
-      generatorType: 'paint',
+      blendMode: "normal",
+      generatorType: "paint",
       isMask: false,
       params: {
         seamless: false,
         scale: 10,
-        paintDataUrl: dataUrl
-      }
+        paintDataUrl: dataUrl,
+      },
     };
 
     window.state.layers.unshift(newLayer);
@@ -1624,11 +1724,12 @@ export class MapGeneratorTabComponent {
    * Prompt modal to select export resolution (256, 512, 1024, 2048, 4096) for PBR map exports
    */
   promptResolutionAndExport(title, defaultRes, callback) {
-    let modal = document.getElementById('pbrResSelectModal');
+    let modal = document.getElementById("pbrResSelectModal");
     if (!modal) {
-      modal = document.createElement('div');
-      modal.id = 'pbrResSelectModal';
-      modal.style.cssText = 'position:fixed; inset:0; z-index:9999; background:rgba(0,0,0,0.8); backdrop-filter:blur(6px); display:flex; justify-content:center; align-items:center; padding:16px; font-family:sans-serif;';
+      modal = document.createElement("div");
+      modal.id = "pbrResSelectModal";
+      modal.style.cssText =
+        "position:fixed; inset:0; z-index:9999; background:rgba(0,0,0,0.8); backdrop-filter:blur(6px); display:flex; justify-content:center; align-items:center; padding:16px; font-family:sans-serif;";
       document.body.appendChild(modal);
     }
 
@@ -1644,11 +1745,11 @@ export class MapGeneratorTabComponent {
         <p style="font-size:12px; color:#a1a1aa; margin-bottom:14px;">Оберіть роздільну здатність для експорту PBR карт:</p>
 
         <div style="display:grid; grid-template-columns:repeat(5, 1fr); gap:6px; margin-bottom:18px;" id="pbrResGrid">
-          <button class="gen-btn pbr-res-opt ${selectedRes===256?'active':''}" data-r="256">256</button>
-          <button class="gen-btn pbr-res-opt ${selectedRes===512?'active':''}" data-r="512">512</button>
-          <button class="gen-btn pbr-res-opt ${selectedRes===1024?'active':''}" data-r="1024">1024</button>
-          <button class="gen-btn pbr-res-opt ${selectedRes===2048?'active':''}" data-r="2048">2048</button>
-          <button class="gen-btn pbr-res-opt ${selectedRes===4096?'active':''}" data-r="4096">4096</button>
+          <button class="gen-btn pbr-res-opt ${selectedRes === 256 ? "active" : ""}" data-r="256">256</button>
+          <button class="gen-btn pbr-res-opt ${selectedRes === 512 ? "active" : ""}" data-r="512">512</button>
+          <button class="gen-btn pbr-res-opt ${selectedRes === 1024 ? "active" : ""}" data-r="1024">1024</button>
+          <button class="gen-btn pbr-res-opt ${selectedRes === 2048 ? "active" : ""}" data-r="2048">2048</button>
+          <button class="gen-btn pbr-res-opt ${selectedRes === 4096 ? "active" : ""}" data-r="4096">4096</button>
         </div>
 
         <div style="display:flex; gap:10px; justify-content:flex-end;">
@@ -1658,71 +1759,83 @@ export class MapGeneratorTabComponent {
       </div>
     `;
 
-    modal.style.display = 'flex';
+    modal.style.display = "flex";
 
     const updateGrid = () => {
-      modal.querySelectorAll('.pbr-res-opt').forEach(b => {
-        b.classList.toggle('active', parseInt(b.dataset.r, 10) === selectedRes);
+      modal.querySelectorAll(".pbr-res-opt").forEach((b) => {
+        b.classList.toggle("active", parseInt(b.dataset.r, 10) === selectedRes);
       });
     };
 
-    modal.querySelectorAll('.pbr-res-opt').forEach(b => {
+    modal.querySelectorAll(".pbr-res-opt").forEach((b) => {
       b.onclick = () => {
         selectedRes = parseInt(b.dataset.r, 10);
         updateGrid();
       };
     });
 
-    const close = () => { modal.style.display = 'none'; };
+    const close = () => {
+      modal.style.display = "none";
+    };
 
-    const btnClose = document.getElementById('btnClosePbrResModal');
-    const btnCancel = document.getElementById('btnCancelPbrRes');
-    const btnConfirm = document.getElementById('btnConfirmPbrRes');
+    const btnClose = document.getElementById("btnClosePbrResModal");
+    const btnCancel = document.getElementById("btnCancelPbrRes");
+    const btnConfirm = document.getElementById("btnConfirmPbrRes");
 
     if (btnClose) btnClose.onclick = close;
     if (btnCancel) btnCancel.onclick = close;
-    if (btnConfirm) btnConfirm.onclick = () => {
-      close();
-      callback(selectedRes);
-    };
+    if (btnConfirm)
+      btnConfirm.onclick = () => {
+        close();
+        callback(selectedRes);
+      };
   }
 
   /**
    * Download single map file with spinner overlay
    */
   downloadMap(mapType) {
-    const mapName = (mapType || this.selectedMapType || 'normal').toUpperCase();
-    this.promptResolutionAndExport(`Експорт ${mapName} Карти`, 1024, async (res) => {
-      this.showExportProgressOverlay(`Формування ${mapName} (${res}×${res})...`);
-      if (window.showProgressLoader) {
-        window.showProgressLoader("Генерація карти...", `${mapName} (${res}×${res})`);
-      }
-
-      await new Promise(r => setTimeout(r, 60));
-
-      try {
-        const canvas = document.createElement('canvas');
-        this.renderMapToCanvasAtRes(canvas, res, mapType);
-
-        const blob = await new Promise(r => canvas.toBlob(r, 'image/png'));
-        if (blob) {
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement('a');
-          a.href = url;
-          a.download = `veil_studio_${mapType}_map_${res}x${res}.png`;
-          document.body.appendChild(a);
-          a.click();
-          document.body.removeChild(a);
-          setTimeout(() => URL.revokeObjectURL(url), 10000);
+    const mapName = (mapType || this.selectedMapType || "normal").toUpperCase();
+    this.promptResolutionAndExport(
+      `Експорт ${mapName} Карти`,
+      1024,
+      async (res) => {
+        this.showExportProgressOverlay(
+          `Формування ${mapName} (${res}×${res})...`,
+        );
+        if (window.showProgressLoader) {
+          window.showProgressLoader(
+            "Генерація карти...",
+            `${mapName} (${res}×${res})`,
+          );
         }
-      } catch (err) {
-        console.error('Error exporting map:', err);
-        alert('Помилка експорту: ' + err.message);
-      } finally {
-        this.hideExportProgressOverlay();
-        if (window.hideProgressLoader) window.hideProgressLoader();
-      }
-    });
+
+        await new Promise((r) => setTimeout(r, 60));
+
+        try {
+          const canvas = document.createElement("canvas");
+          this.renderMapToCanvasAtRes(canvas, res, mapType);
+
+          const blob = await new Promise((r) => canvas.toBlob(r, "image/png"));
+          if (blob) {
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = `veil_studio_${mapType}_map_${res}x${res}.png`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            setTimeout(() => URL.revokeObjectURL(url), 10000);
+          }
+        } catch (err) {
+          console.error("Error exporting map:", err);
+          alert("Помилка експорту: " + err.message);
+        } finally {
+          this.hideExportProgressOverlay();
+          if (window.hideProgressLoader) window.hideProgressLoader();
+        }
+      },
+    );
   }
 
   /**
@@ -1731,144 +1844,168 @@ export class MapGeneratorTabComponent {
    * avoiding massive base64 string allocations, and using lightweight Object URLs.
    */
   downloadAllMaps() {
-    this.promptResolutionAndExport('Експорт Всіх 5 PBR Карт (ZIP)', 1024, async (res) => {
-      const btn = document.getElementById('btnDownloadAllMaps');
-      const originalText = btn ? btn.innerHTML : '';
-
-      if (btn) {
-        btn.disabled = true;
-        btn.innerHTML = '⚡ Формую архів...';
-      }
-
-      this.showExportProgressOverlay(`Формування архіву 5 карт (${res}×${res})...`);
-      if (window.showProgressLoader) {
-        window.showProgressLoader("Формування архіву...", `Обробка 5 PBR карт (${res}×${res})`);
-      }
-
-      try {
-        const mapItems = [
-          { id: 'normal', name: 'Normal Map' },
-          { id: 'displacement', name: 'Displacement Map' },
-          { id: 'ao', name: 'Ambient Occlusion' },
-          { id: 'specular', name: 'Specular Map' },
-          { id: 'diffuse', name: 'Diffuse Map' }
-        ];
-
-        const mapBlobs = {};
-        const mapObjectUrls = {};
-
-        // Reusable single offscreen canvas to prevent multi-canvas RAM duplication at 4096x4096
-        const tempCanvas = document.createElement('canvas');
-
-        for (let i = 0; i < mapItems.length; i++) {
-          const item = mapItems[i];
-          const stepMsg = `Генерація (${i + 1}/${mapItems.length}): ${item.name} ${res}×${res}...`;
-
-          this.updateExportProgressOverlay(stepMsg);
-          if (window.updateProgressLoaderSubtext) {
-            window.updateProgressLoaderSubtext(stepMsg);
-          }
-
-          // Yield execution to allow browser UI thread to update spinner & run GC
-          await new Promise(r => setTimeout(r, 60));
-
-          this.renderMapToCanvasAtRes(tempCanvas, res, item.id);
-
-          // Convert canvas directly to binary Blob
-          const blob = await new Promise(resolve => tempCanvas.toBlob(resolve, 'image/png'));
-
-          // Clear pixels immediately
-          const ctx = tempCanvas.getContext('2d');
-          ctx.clearRect(0, 0, res, res);
-
-          if (blob) {
-            mapBlobs[item.id] = blob;
-            mapObjectUrls[item.id] = URL.createObjectURL(blob);
-          }
-
-          await new Promise(r => setTimeout(r, 40));
-        }
-
-        this.updateExportProgressOverlay(`⚡ Пакування в ZIP-архів (${res}×${res})...`);
-        if (window.updateProgressLoaderSubtext) {
-          window.updateProgressLoaderSubtext(`Пакування в ZIP...`);
-        }
-        await new Promise(r => setTimeout(r, 60));
-
-        // Package single ZIP file using JSZip
-        if (window.JSZip) {
-          const zip = new window.JSZip();
-          const folder = zip.folder(`pbr_maps_${res}x${res}`);
-
-          if (mapBlobs.normal) folder.file(`veil_normal_${res}x${res}.png`, mapBlobs.normal);
-          if (mapBlobs.displacement) folder.file(`veil_displacement_${res}x${res}.png`, mapBlobs.displacement);
-          if (mapBlobs.ao) folder.file(`veil_ao_${res}x${res}.png`, mapBlobs.ao);
-          if (mapBlobs.specular) folder.file(`veil_specular_${res}x${res}.png`, mapBlobs.specular);
-          if (mapBlobs.diffuse) folder.file(`veil_diffuse_${res}x${res}.png`, mapBlobs.diffuse);
-
-          // STORE compression avoids heavy CPU/RAM re-compression of already compressed PNGs
-          const zipBlob = await zip.generateAsync({ type: 'blob', compression: 'STORE' });
-          const zipUrl = URL.createObjectURL(zipBlob);
-
-          const a = document.createElement('a');
-          a.href = zipUrl;
-          a.download = `veil_pbr_maps_${res}x${res}.zip`;
-          document.body.appendChild(a);
-          a.click();
-          document.body.removeChild(a);
-          setTimeout(() => URL.revokeObjectURL(zipUrl), 15000);
-        } else {
-          // Fallback if JSZip is not loaded
-          for (const item of mapItems) {
-            const url = mapObjectUrls[item.id];
-            if (url) {
-              const a = document.createElement('a');
-              a.href = url;
-              a.download = `veil_studio_${item.id}_map_${res}x${res}.png`;
-              document.body.appendChild(a);
-              a.click();
-              document.body.removeChild(a);
-              await new Promise(r => setTimeout(r, 300));
-            }
-          }
-        }
-
-        // Display modal export sheet with all 5 maps
-        this.showPbrExportModal(mapObjectUrls, res);
-
-      } catch (err) {
-        console.error('Error generating PBR zip export:', err);
-        alert('Помилка формування експорту PBR карт: ' + err.message);
-      } finally {
-        this.hideExportProgressOverlay();
-        if (window.hideProgressLoader) window.hideProgressLoader();
+    this.promptResolutionAndExport(
+      "Експорт Всіх 5 PBR Карт (ZIP)",
+      1024,
+      async (res) => {
+        const btn = document.getElementById("btnDownloadAllMaps");
+        const originalText = btn ? btn.innerHTML : "";
 
         if (btn) {
-          btn.disabled = false;
-          btn.innerHTML = originalText;
+          btn.disabled = true;
+          btn.innerHTML = "⚡ Формую архів...";
         }
-      }
-    });
+
+        this.showExportProgressOverlay(
+          `Формування архіву 5 карт (${res}×${res})...`,
+        );
+        if (window.showProgressLoader) {
+          window.showProgressLoader(
+            "Формування архіву...",
+            `Обробка 5 PBR карт (${res}×${res})`,
+          );
+        }
+
+        try {
+          const mapItems = [
+            { id: "normal", name: "Normal Map" },
+            { id: "displacement", name: "Displacement Map" },
+            { id: "ao", name: "Ambient Occlusion" },
+            { id: "specular", name: "Specular Map" },
+            { id: "diffuse", name: "Diffuse Map" },
+          ];
+
+          const mapBlobs = {};
+          const mapObjectUrls = {};
+
+          // Reusable single offscreen canvas to prevent multi-canvas RAM duplication at 4096x4096
+          const tempCanvas = document.createElement("canvas");
+
+          for (let i = 0; i < mapItems.length; i++) {
+            const item = mapItems[i];
+            const stepMsg = `Генерація (${i + 1}/${mapItems.length}): ${item.name} ${res}×${res}...`;
+
+            this.updateExportProgressOverlay(stepMsg);
+            if (window.updateProgressLoaderSubtext) {
+              window.updateProgressLoaderSubtext(stepMsg);
+            }
+
+            // Yield execution to allow browser UI thread to update spinner & run GC
+            await new Promise((r) => setTimeout(r, 60));
+
+            this.renderMapToCanvasAtRes(tempCanvas, res, item.id);
+
+            // Convert canvas directly to binary Blob
+            const blob = await new Promise((resolve) =>
+              tempCanvas.toBlob(resolve, "image/png"),
+            );
+
+            // Clear pixels immediately
+            const ctx = tempCanvas.getContext("2d");
+            ctx.clearRect(0, 0, res, res);
+
+            if (blob) {
+              mapBlobs[item.id] = blob;
+              mapObjectUrls[item.id] = URL.createObjectURL(blob);
+            }
+
+            await new Promise((r) => setTimeout(r, 40));
+          }
+
+          this.updateExportProgressOverlay(
+            `⚡ Пакування в ZIP-архів (${res}×${res})...`,
+          );
+          if (window.updateProgressLoaderSubtext) {
+            window.updateProgressLoaderSubtext(`Пакування в ZIP...`);
+          }
+          await new Promise((r) => setTimeout(r, 60));
+
+          // Package single ZIP file using JSZip
+          if (window.JSZip) {
+            const zip = new window.JSZip();
+            const folder = zip.folder(`pbr_maps_${res}x${res}`);
+
+            if (mapBlobs.normal)
+              folder.file(`veil_normal_${res}x${res}.png`, mapBlobs.normal);
+            if (mapBlobs.displacement)
+              folder.file(
+                `veil_displacement_${res}x${res}.png`,
+                mapBlobs.displacement,
+              );
+            if (mapBlobs.ao)
+              folder.file(`veil_ao_${res}x${res}.png`, mapBlobs.ao);
+            if (mapBlobs.specular)
+              folder.file(`veil_specular_${res}x${res}.png`, mapBlobs.specular);
+            if (mapBlobs.diffuse)
+              folder.file(`veil_diffuse_${res}x${res}.png`, mapBlobs.diffuse);
+
+            // STORE compression avoids heavy CPU/RAM re-compression of already compressed PNGs
+            const zipBlob = await zip.generateAsync({
+              type: "blob",
+              compression: "STORE",
+            });
+            const zipUrl = URL.createObjectURL(zipBlob);
+
+            const a = document.createElement("a");
+            a.href = zipUrl;
+            a.download = `veil_pbr_maps_${res}x${res}.zip`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            setTimeout(() => URL.revokeObjectURL(zipUrl), 15000);
+          } else {
+            // Fallback if JSZip is not loaded
+            for (const item of mapItems) {
+              const url = mapObjectUrls[item.id];
+              if (url) {
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = `veil_studio_${item.id}_map_${res}x${res}.png`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                await new Promise((r) => setTimeout(r, 300));
+              }
+            }
+          }
+
+          // Display modal export sheet with all 5 maps
+          this.showPbrExportModal(mapObjectUrls, res);
+        } catch (err) {
+          console.error("Error generating PBR zip export:", err);
+          alert("Помилка формування експорту PBR карт: " + err.message);
+        } finally {
+          this.hideExportProgressOverlay();
+          if (window.hideProgressLoader) window.hideProgressLoader();
+
+          if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = originalText;
+          }
+        }
+      },
+    );
   }
 
   /**
    * Show iOS / iPad & Desktop compatible Export Sheet Modal for all 5 PBR maps
    */
   showPbrExportModal(objectUrls, res) {
-    let modal = document.getElementById('pbrExportModalSheet');
+    let modal = document.getElementById("pbrExportModalSheet");
     if (!modal) {
-      modal = document.createElement('div');
-      modal.id = 'pbrExportModalSheet';
-      modal.style.cssText = 'position:fixed; inset:0; z-index:9999; background:rgba(0,0,0,0.85); backdrop-filter:blur(8px); display:flex; justify-content:center; align-items:center; padding:16px; font-family:sans-serif; animate:fadeIn 0.2s ease;';
+      modal = document.createElement("div");
+      modal.id = "pbrExportModalSheet";
+      modal.style.cssText =
+        "position:fixed; inset:0; z-index:9999; background:rgba(0,0,0,0.85); backdrop-filter:blur(8px); display:flex; justify-content:center; align-items:center; padding:16px; font-family:sans-serif; animate:fadeIn 0.2s ease;";
       document.body.appendChild(modal);
     }
 
     const maps = [
-      { id: 'normal', name: 'Normal Map', color: '#3b82f6' },
-      { id: 'displacement', name: 'Displacement', color: '#10b981' },
-      { id: 'ao', name: 'Ambient Occlusion', color: '#f59e0b' },
-      { id: 'specular', name: 'Specular', color: '#ec4899' },
-      { id: 'diffuse', name: 'Diffuse', color: '#a855f7' }
+      { id: "normal", name: "Normal Map", color: "#3b82f6" },
+      { id: "displacement", name: "Displacement", color: "#10b981" },
+      { id: "ao", name: "Ambient Occlusion", color: "#f59e0b" },
+      { id: "specular", name: "Specular", color: "#ec4899" },
+      { id: "diffuse", name: "Diffuse", color: "#a855f7" },
     ];
 
     modal.innerHTML = `
@@ -1882,9 +2019,10 @@ export class MapGeneratorTabComponent {
         </div>
 
         <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(120px, 1fr)); gap:10px; margin-bottom:16px;">
-          ${maps.map(m => {
-            const imgUrl = objectUrls[m.id] || '';
-            return `
+          ${maps
+            .map((m) => {
+              const imgUrl = objectUrls[m.id] || "";
+              return `
               <div style="background:#27272a; border:1px solid rgba(255,255,255,0.1); border-radius:8px; padding:8px; text-align:center; display:flex; flex-direction:column; align-items:center;">
                 <span style="font-size:11px; font-weight:700; color:${m.color}; margin-bottom:6px;">${m.name}</span>
                 <img src="${imgUrl}" style="width:100%; aspect-ratio:1; object-fit:cover; border-radius:4px; border:1px solid rgba(255,255,255,0.1); margin-bottom:8px; background:#000;">
@@ -1894,7 +2032,8 @@ export class MapGeneratorTabComponent {
                 </div>
               </div>
             `;
-          }).join('')}
+            })
+            .join("")}
         </div>
 
         <div style="display:flex; justify-content:flex-end;">
@@ -1903,14 +2042,14 @@ export class MapGeneratorTabComponent {
       </div>
     `;
 
-    modal.style.display = 'flex';
+    modal.style.display = "flex";
 
     const closeHandler = () => {
-      modal.style.display = 'none';
+      modal.style.display = "none";
     };
 
-    const btnClose = document.getElementById('btnClosePbrModal');
-    const btnDone = document.getElementById('btnDonePbrModal');
+    const btnClose = document.getElementById("btnClosePbrModal");
+    const btnDone = document.getElementById("btnDonePbrModal");
 
     if (btnClose) btnClose.onclick = closeHandler;
     if (btnDone) btnDone.onclick = closeHandler;

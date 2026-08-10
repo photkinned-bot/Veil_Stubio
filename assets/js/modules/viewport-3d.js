@@ -4,8 +4,8 @@
  * geometry swapping (Cube, Plane, Sphere, Cylinder), displacement, and texture mapping.
  */
 
-import * as THREE from 'three';
-import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import * as THREE from "three";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 
 export class Viewport3D {
   constructor(containerElement, options = {}) {
@@ -22,7 +22,7 @@ export class Viewport3D {
     this.ambientLight = null;
     this.lightGizmo = null;
 
-    this.currentShape = 'cube';
+    this.currentShape = "cube";
     this.repeatX = 1;
     this.repeatY = 1;
     this.displacementScale = 0.05;
@@ -33,7 +33,7 @@ export class Viewport3D {
       normal: null,
       displacement: null,
       ao: null,
-      specular: null
+      specular: null,
     };
 
     this.activeMaps = {
@@ -41,7 +41,7 @@ export class Viewport3D {
       normal: true,
       displacement: true,
       ao: true,
-      specular: true
+      specular: true,
     };
 
     this.textures = {};
@@ -106,7 +106,10 @@ export class Viewport3D {
 
     // Light position marker gizmo
     const gizmoGeo = new THREE.SphereGeometry(0.08, 16, 16);
-    const gizmoMat = new THREE.MeshBasicMaterial({ color: 0xf59e0b, wireframe: true });
+    const gizmoMat = new THREE.MeshBasicMaterial({
+      color: 0xf59e0b,
+      wireframe: true,
+    });
     this.lightGizmo = new THREE.Mesh(gizmoGeo, gizmoMat);
     this.lightGizmo.position.copy(this.dirLight.position);
     this.scene.add(this.lightGizmo);
@@ -140,16 +143,16 @@ export class Viewport3D {
     const segs = 128; // High resolution mesh for smooth displacement mapping
 
     switch (shapeType) {
-      case 'plane':
+      case "plane":
         geometry = new THREE.PlaneGeometry(2, 2, segs, segs);
         break;
-      case 'sphere':
+      case "sphere":
         geometry = new THREE.SphereGeometry(1, segs, segs);
         break;
-      case 'cylinder':
+      case "cylinder":
         geometry = new THREE.CylinderGeometry(0.8, 0.8, 2, segs, segs);
         break;
-      case 'cube':
+      case "cube":
       default:
         geometry = new THREE.BoxGeometry(1.6, 1.6, 1.6, segs, segs, segs);
         break;
@@ -160,7 +163,7 @@ export class Viewport3D {
     this.mesh.castShadow = true;
     this.mesh.receiveShadow = true;
 
-    if (shapeType === 'plane') {
+    if (shapeType === "plane") {
       this.mesh.rotation.x = -Math.PI / 2;
       this.mesh.position.y = 0;
     } else {
@@ -175,7 +178,7 @@ export class Viewport3D {
       color: 0x94a3b8, // Elegant slate-400 base color when diffuse map is off
       roughness: 0.55,
       metalness: 0.05,
-      side: THREE.DoubleSide
+      side: THREE.DoubleSide,
     });
 
     this.applyTexturesToMaterial(mat);
@@ -222,11 +225,11 @@ export class Viewport3D {
       }
     };
 
-    applyTexture('diffuse', 'map');
-    applyTexture('normal', 'normalMap', true);
-    applyTexture('displacement', 'displacementMap');
-    applyTexture('ao', 'aoMap');
-    applyTexture('specular', 'roughnessMap');
+    applyTexture("diffuse", "map");
+    applyTexture("normal", "normalMap", true);
+    applyTexture("displacement", "displacementMap");
+    applyTexture("ao", "aoMap");
+    applyTexture("specular", "roughnessMap");
 
     // Color handling
     if (this.maps.diffuse && this.activeMaps.diffuse) {
@@ -241,7 +244,9 @@ export class Viewport3D {
       mat.roughness = 0.55;
     }
 
-    mat.displacementScale = this.activeMaps.displacement ? this.displacementScale : 0;
+    mat.displacementScale = this.activeMaps.displacement
+      ? this.displacementScale
+      : 0;
     mat.displacementBias = -this.displacementScale * 0.5;
     mat.needsUpdate = true;
   }
@@ -250,7 +255,7 @@ export class Viewport3D {
     if (!maps) return;
     let changed = false;
 
-    for (const key of ['diffuse', 'normal', 'displacement', 'ao', 'specular']) {
+    for (const key of ["diffuse", "normal", "displacement", "ao", "specular"]) {
       if (maps[key] !== undefined && maps[key] !== this.maps[key]) {
         this.maps[key] = maps[key];
         changed = true;
@@ -284,7 +289,14 @@ export class Viewport3D {
     }
   }
 
-  setMaterialParams({ displacementScale, roughness, metalness, repeatX, repeatY, wireframe }) {
+  setMaterialParams({
+    displacementScale,
+    roughness,
+    metalness,
+    repeatX,
+    repeatY,
+    wireframe,
+  }) {
     if (repeatX !== undefined || repeatY !== undefined) {
       this.repeatX = repeatX !== undefined ? repeatX : this.repeatX;
       this.repeatY = repeatY !== undefined ? repeatY : this.repeatY;
@@ -303,7 +315,9 @@ export class Viewport3D {
       if (roughness !== undefined) mat.roughness = roughness;
       if (metalness !== undefined) mat.metalness = metalness;
       if (wireframe !== undefined) mat.wireframe = wireframe;
-      mat.displacementScale = this.activeMaps.displacement ? this.displacementScale : 0;
+      mat.displacementScale = this.activeMaps.displacement
+        ? this.displacementScale
+        : 0;
       mat.displacementBias = -this.displacementScale * 0.5;
       mat.needsUpdate = true;
     }
@@ -353,7 +367,9 @@ export class Viewport3D {
     if (this.renderer) {
       this.renderer.dispose();
       if (this.renderer.domElement?.parentNode) {
-        this.renderer.domElement.parentNode.removeChild(this.renderer.domElement);
+        this.renderer.domElement.parentNode.removeChild(
+          this.renderer.domElement,
+        );
       }
     }
   }
