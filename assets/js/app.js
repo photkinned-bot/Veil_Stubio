@@ -7372,40 +7372,41 @@
                     }
                 }
 
-                if (!usePreTransformBlur) {
-                    if (p.useFindEdges) {
-                        applyEdgeDetection(layerBufferR, blurTempR, w, h);
-                        applyEdgeDetection(layerBufferG, blurTempG, w, h);
-                        applyEdgeDetection(layerBufferB, blurTempB, w, h);
-                    }
-                    if (p.blur > 0) {
-                        let isTiled = (state.global.tileMode && state.global.tileMode !== 'off') || !!p.seamless;
-                        let blurMode = isTiled ? 'wrap' : (p.blurClampEdge ? 'clamp' : 'wrap');
-                        let bType = p.blurType || 'gaussian';
-                        if (bType === 'directional') {
-                            applyDirectionalBlur(layerBufferR, blurTempR, w, h, parseInt(p.blur), p.blurAngle || 0, blurMode, p);
-                            applyDirectionalBlur(layerBufferG, blurTempG, w, h, parseInt(p.blur), p.blurAngle || 0, blurMode, p);
-                            applyDirectionalBlur(layerBufferB, blurTempB, w, h, parseInt(p.blur), p.blurAngle || 0, blurMode, p);
-                        } else if (bType === 'zoom') {
-                            let zcx = p.zoomBlurCenterX !== undefined ? parseFloat(p.zoomBlurCenterX) : 0.5;
-                            let zcy = p.zoomBlurCenterY !== undefined ? parseFloat(p.zoomBlurCenterY) : 0.5;
-                            let zstr = p.zoomBlurStrength !== undefined ? parseFloat(p.zoomBlurStrength) : 100;
-                            applyZoomBlur(layerBufferR, blurTempR, w, h, parseInt(p.blur), zcx, zcy, zstr, blurMode);
-                            applyZoomBlur(layerBufferG, blurTempG, w, h, parseInt(p.blur), zcx, zcy, zstr, blurMode);
-                            applyZoomBlur(layerBufferB, blurTempB, w, h, parseInt(p.blur), zcx, zcy, zstr, blurMode);
-                        } else if (bType === 'radial') {
-                            applyRadialBlur(layerBufferR, blurTempR, w, h, parseInt(p.blur), p, blurMode);
-                            applyRadialBlur(layerBufferG, blurTempG, w, h, parseInt(p.blur), p, blurMode);
-                            applyRadialBlur(layerBufferB, blurTempB, w, h, parseInt(p.blur), p, blurMode);
-                        } else if (bType === 'box') {
-                            applyBoxBlur(layerBufferR, blurTempR, w, h, parseInt(p.blur), blurMode);
-                            applyBoxBlur(layerBufferG, blurTempG, w, h, parseInt(p.blur), blurMode);
-                            applyBoxBlur(layerBufferB, blurTempB, w, h, parseInt(p.blur), blurMode);
-                        } else {
-                            applyGaussianBlur(layerBufferR, blurTempR, w, h, parseInt(p.blur), blurMode);
-                            applyGaussianBlur(layerBufferG, blurTempG, w, h, parseInt(p.blur), blurMode);
-                            applyGaussianBlur(layerBufferB, blurTempB, w, h, parseInt(p.blur), blurMode);
-                        }
+            } // End of if (needComputeLayer)
+
+            if (!usePreTransformBlur) {
+                if (p.useFindEdges) {
+                    applyEdgeDetection(layerBufferR, blurTempR, w, h);
+                    applyEdgeDetection(layerBufferG, blurTempG, w, h);
+                    applyEdgeDetection(layerBufferB, blurTempB, w, h);
+                }
+                if (p.blur > 0) {
+                    let isTiled = (state.global.tileMode && state.global.tileMode !== 'off') || !!p.seamless;
+                    let blurMode = isTiled ? 'wrap' : (p.blurClampEdge ? 'clamp' : 'wrap');
+                    let bType = p.blurType || 'gaussian';
+                    if (bType === 'directional') {
+                        applyDirectionalBlur(layerBufferR, blurTempR, w, h, parseInt(p.blur), p.blurAngle || 0, blurMode, p);
+                        applyDirectionalBlur(layerBufferG, blurTempG, w, h, parseInt(p.blur), p.blurAngle || 0, blurMode, p);
+                        applyDirectionalBlur(layerBufferB, blurTempB, w, h, parseInt(p.blur), p.blurAngle || 0, blurMode, p);
+                    } else if (bType === 'zoom') {
+                        let zcx = p.zoomBlurCenterX !== undefined ? parseFloat(p.zoomBlurCenterX) : 0.5;
+                        let zcy = p.zoomBlurCenterY !== undefined ? parseFloat(p.zoomBlurCenterY) : 0.5;
+                        let zstr = p.zoomBlurStrength !== undefined ? parseFloat(p.zoomBlurStrength) : 100;
+                        applyZoomBlur(layerBufferR, blurTempR, w, h, parseInt(p.blur), zcx, zcy, zstr, blurMode);
+                        applyZoomBlur(layerBufferG, blurTempG, w, h, parseInt(p.blur), zcx, zcy, zstr, blurMode);
+                        applyZoomBlur(layerBufferB, blurTempB, w, h, parseInt(p.blur), zcx, zcy, zstr, blurMode);
+                    } else if (bType === 'radial') {
+                        applyRadialBlur(layerBufferR, blurTempR, w, h, parseInt(p.blur), p, blurMode);
+                        applyRadialBlur(layerBufferG, blurTempG, w, h, parseInt(p.blur), p, blurMode);
+                        applyRadialBlur(layerBufferB, blurTempB, w, h, parseInt(p.blur), p, blurMode);
+                    } else if (bType === 'box') {
+                        applyBoxBlur(layerBufferR, blurTempR, w, h, parseInt(p.blur), blurMode);
+                        applyBoxBlur(layerBufferG, blurTempG, w, h, parseInt(p.blur), blurMode);
+                        applyBoxBlur(layerBufferB, blurTempB, w, h, parseInt(p.blur), blurMode);
+                    } else {
+                        applyGaussianBlur(layerBufferR, blurTempR, w, h, parseInt(p.blur), blurMode);
+                        applyGaussianBlur(layerBufferG, blurTempG, w, h, parseInt(p.blur), blurMode);
+                        applyGaussianBlur(layerBufferB, blurTempB, w, h, parseInt(p.blur), blurMode);
                     }
                 }
             }
