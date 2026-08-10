@@ -5218,7 +5218,7 @@
                 prepareStateForSerialization();
             }
             return JSON.stringify(s, (key, value) => {
-                if (key === 'paintCanvas' || key === 'paintBuffer' || key.startsWith('_')) {
+                if (key === 'paintCanvas' || key.startsWith('paintBuffer') || key === 'paintDataUrl' || key.startsWith('cachedBuffer') || key.startsWith('draftBuffer') || key.startsWith('fullBuffer') || key.startsWith('_')) {
                     return undefined;
                 }
                 return value;
@@ -5560,7 +5560,7 @@
             lastPaintX = pos.x;
             lastPaintY = pos.y;
 
-            let rawPressure = (e.pointerType === 'pen' && e.pressure > 0) ? e.pressure : 1;
+            let rawPressure = (e.pointerType === 'pen') ? e.pressure : 1;
             smoothedPressure = rawPressure;
 
             // Completely reset point history for clean new stroke start
@@ -5667,7 +5667,7 @@
             let events = (typeof e.getCoalescedEvents === 'function') ? e.getCoalescedEvents() : [e];
             for (let evt of events) {
                 let pos = getPaintCanvasCoordinates(evt.clientX, evt.clientY);
-                let rawPressure = (evt.pointerType === 'pen' && evt.pressure > 0) ? evt.pressure : 1;
+                let rawPressure = (evt.pointerType === 'pen') ? evt.pressure : 1;
                 smoothedPressure = smoothedPressure * 0.85 + rawPressure * 0.15;
                 paintQueue.push({ x: pos.x, y: pos.y, pressure: smoothedPressure });
             }
@@ -5820,7 +5820,7 @@
             let v = 0.5;
             switch(type){
                 case 'paint': {
-                    if (lay && lay.paintBuffer) {
+                    if (lay && lay.paintBufferR) {
                         let scaleFactorX = (sx || 10) / 10;
                         let scaleFactorY = (sy || 10) / 10;
                         let stx = (tx - 0.5) * scaleFactorX + 0.5;
@@ -5837,10 +5837,10 @@
                         let y1 = Math.min(ph - 1, y0 + 1);
                         let fx = x - x0;
                         let fy = y - y0;
-                        let v00 = lay.paintBuffer[y0 * pw + x0];
-                        let v10 = lay.paintBuffer[y0 * pw + x1];
-                        let v01 = lay.paintBuffer[y1 * pw + x0];
-                        let v11 = lay.paintBuffer[y1 * pw + x1];
+                        let v00 = lay.paintBufferR[y0 * pw + x0];
+                        let v10 = lay.paintBufferR[y0 * pw + x1];
+                        let v01 = lay.paintBufferR[y1 * pw + x0];
+                        let v11 = lay.paintBufferR[y1 * pw + x1];
                         v = (1 - fy) * ((1 - fx) * v00 + fx * v10) + fy * ((1 - fx) * v01 + fx * v11);
                     } else {
                         v = 0;
@@ -6468,7 +6468,7 @@
             for(let lIdx=state.layers.length-1; lIdx>=0; lIdx--){
                 let lay = state.layers[lIdx]; if(!lay.visible) continue;
                 let op = lay.opacity/100, bFn = Blend[lay.blendMode] || Blend.normal, p = lay.params;
-                let usePreTransformBlur = !!(p.blur > 0 && p.blurWithTransform && lay.generatorType === 'paint');
+                let usePreTransformBlur = !!(p.blur > 0 && p.blurWithTransform);
                 let lScale = p.layerScale || 1;
 
                 if (lay.generatorType === 'paint') {
@@ -6533,25 +6533,7 @@
                     let activeLayerWarps = (p.warps || []).filter(w => w && w.type !== 'none' && w.visible !== false);
                     let hasLayerWarps = activeLayerWarps.length > 0;
 
-                    let isSimplePaintLayer = (lay.generatorType === 'paint') &&
-                                             (!usePreTransformBlur) &&
-                                             (!hasGlobalTransform) &&
-                                             (!hasGlobalWarps) &&
-                                             (!hasLayerTransform) &&
-                                             (!hasLayerWarps) &&
-                                             (w === 1024 && h === 1024) &&
-                                             (!p.seed) &&
-                                             ((p.scaleX || 10) === 10) &&
-                                             ((p.scaleY || 10) === 10) &&
-                                             (!p.brightness || p.brightness === 1) &&
-                                             (!p.contrast || p.contrast === 1) &&
-                                             (!p.invert) &&
-                                             (!p.useLevels) &&
-                                             (!p.useThreshold) &&
-                                             (!p.usePosterize) &&
-                                             (!p.useFindEdges) &&
-                                             (!p.blur || p.blur === 0) &&
-                                             (!p.colorMode || p.colorMode === 'normal' || p.colorMode === 'default');
+                    let isSimplePaintLayer = false;
 
                     if (isSimplePaintLayer && lay.paintBufferR) {
                         targetBufR.set(lay.paintBufferR);
@@ -13722,7 +13704,7 @@
                 }
 
                 const stateClean = JSON.parse(JSON.stringify(state, (key, value) => {
-                    if (key === 'paintCanvas' || key === 'paintBuffer' || key === 'paintDataUrl') {
+                    if (key === 'paintCanvas' || key.startsWith('paintBuffer') || key === 'paintDataUrl' || key.startsWith('cachedBuffer') || key.startsWith('draftBuffer') || key.startsWith('fullBuffer') || key.startsWith('_')) {
                         return undefined;
                     }
                     return value;
@@ -13829,7 +13811,7 @@
                 }
 
                 const stateClean = JSON.parse(JSON.stringify(state, (key, value) => {
-                    if (key === 'paintCanvas' || key === 'paintBuffer' || key === 'paintDataUrl' || key.startsWith('_')) {
+                    if (key === 'paintCanvas' || key.startsWith('paintBuffer') || key === 'paintDataUrl' || key.startsWith('cachedBuffer') || key.startsWith('draftBuffer') || key.startsWith('fullBuffer') || key.startsWith('_')) {
                         return undefined;
                     }
                     return value;
@@ -14528,7 +14510,7 @@
             let y = e.clientY;
 
             let brushSize = lp.brushSize || 20;
-            let rawPressure = (e.pointerType === 'pen' && e.pressure > 0) ? e.pressure : 1;
+            let rawPressure = (e.pointerType === 'pen') ? e.pressure : 1;
             let dynamicPressure = Math.pow(rawPressure, 0.5);
             let finalSize = brushSize * (0.1 + 0.9 * dynamicPressure);
 
