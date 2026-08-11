@@ -2796,6 +2796,9 @@ const TextGenerator = {
   getTextBuffer(p, lay) {
     const text = p.textContent !== undefined ? String(p.textContent) : "VEIL STUDIO\nSEAMLESS\nTEXTURES";
     const shape = p.textShape || "standard";
+    const shapeSize = p.textShapeSize !== undefined ? p.textShapeSize : 100;
+    const ellipseRatio = p.textEllipseRatio !== undefined ? p.textEllipseRatio : 1.5;
+    const pathOffset = p.textPathOffset !== undefined ? p.textPathOffset : 0;
     const size = p.textCharSize || 48;
     const font = p.textFontFamily || "sans-serif";
     const weight = p.textWeight || "bold";
@@ -2822,15 +2825,24 @@ const TextGenerator = {
 
     const cacheKey = [
       lay ? lay.id : "nolay",
-      text, shape, size, font, weight, align,
+      text, shape, shapeSize, ellipseRatio, pathOffset, size, font, weight, align,
       wordJitterX, wordJitterY, charJitterX, charJitterY,
       charSizeRandom, charRot, charRotRandom, seed,
       tracking, leading, cornerR, polySides, starPoints,
       starInner, fillStyle, strokeWidth, repeat, waveFreq, waveAmp
     ].join("|");
 
+    if (lay && lay._cachedTextKey === cacheKey && lay._cachedTextBuf) {
+      return lay._cachedTextBuf;
+    }
+
     if (this.LAYER_CANVAS_CACHE.has(cacheKey)) {
-      return this.LAYER_CANVAS_CACHE.get(cacheKey);
+      let res = this.LAYER_CANVAS_CACHE.get(cacheKey);
+      if (lay) {
+        lay._cachedTextKey = cacheKey;
+        lay._cachedTextBuf = res;
+      }
+      return res;
     }
 
     if (this.LAYER_CANVAS_CACHE.size > 20) {
@@ -2849,7 +2861,7 @@ const TextGenerator = {
     ctx.fillRect(0, 0, W, H);
 
     this.drawTextLayout(ctx, W, H, {
-      text, shape, size, font, weight, align,
+      text, shape, shapeSize, ellipseRatio, pathOffset, size, font, weight, align,
       wordJitterX, wordJitterY, charJitterX, charJitterY,
       charSizeRandom, charRot, charRotRandom, seed,
       tracking, leading, cornerR, polySides, starPoints,
@@ -2865,6 +2877,10 @@ const TextGenerator = {
 
     const res = { width: W, height: H, buffer };
     this.LAYER_CANVAS_CACHE.set(cacheKey, res);
+    if (lay) {
+      lay._cachedTextKey = cacheKey;
+      lay._cachedTextBuf = res;
+    }
     return res;
   },
 
@@ -2881,6 +2897,9 @@ const TextGenerator = {
     ctx.font = `${p.weight} ${baseFontSize}px ${fontStack}`;
     ctx.textBaseline = "middle";
     ctx.textAlign = "center";
+
+    const sScale = (p.shapeSize !== undefined ? p.shapeSize : 100) / 100.0;
+    const pathOffsetVal = p.pathOffset || 0;
 
     const drawChar = (char, x, y, angle, scaleFactor, fillMode) => {
       ctx.save();
@@ -2920,9 +2939,9 @@ const TextGenerator = {
         let charWidths = chars.map(c => ctx.measureText(c).width + p.tracking);
         let lineWidth = charWidths.reduce((a, b) => a + b, 0);
 
-        let startX = W / 2 - lineWidth / 2;
-        if (p.align === "left") startX = W * 0.1;
-        else if (p.align === "right") startX = W * 0.9 - lineWidth;
+        let startX = W / 2 - lineWidth / 2 + pathOffsetVal;
+        if (p.align === "left") startX = W * 0.1 + pathOffsetVal;
+        else if (p.align === "right") startX = W * 0.9 - lineWidth + pathOffsetVal;
 
         let currentX = startX;
         let words = lineStr.split(" ");
@@ -2953,41 +2972,123 @@ const TextGenerator = {
           }
         });
       });
+    } else if (p.shape === "circle_fill") {
+      let R = W * 0.35 * sScale;
+      let cx = W / 2, cy = H / 2;
+
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(cx, cy, R, 0, Math.PI * 2);
+      ctx.clip();
+
+      const lines = p.text.split("\n");
+      const lineHeight = baseFontSize * p.leading;
+      const totalHeight = lines.length * lineHeight;
+      let startY = cy - totalHeight / 2 + lineHeight / 2;
+
+      let globalCharIndex = 0;
+      let globalWordIndex = 0;
+
+      lines.forEach((lineStr, lineIdx) => {
+        let currentY = startY + lineIdx * lineHeight;
+        let dy = currentY - cy;
+        let chordWidth = (Math.abs(dy) < R) ? 2 * Math.sqrt(R * R - dy * dy) : 0;
+        if (chordWidth <= 0) return;
+
+        let chars = lineStr.split("");
+        let charWidths = chars.map(c => ctx.measureText(c).width + p.tracking);
+        let lineWidth = charWidths.reduce((a, b) => a + b, 0);
+
+        let startX = cx - lineWidth / 2 + pathOffsetVal;
+        if (p.align === "left") startX = cx - chordWidth / 2 + 10 + pathOffsetVal;
+        else if (p.align === "right") startX = cx + chordWidth / 2 - lineWidth - 10 + pathOffsetVal;
+
+        let currentX = startX;
+        let words = lineStr.split(" ");
+
+        words.forEach((wordStr, wordIdx) => {
+          let wjX = (this.seededRandom(p.seed + globalWordIndex * 17) - 0.5) * p.wordJitterX * 2;
+          let wjY = (this.seededRandom(p.seed + globalWordIndex * 23) - 0.5) * p.wordJitterY * 2;
+          globalWordIndex++;
+
+          let wordChars = wordStr.split("");
+          wordChars.forEach((ch) => {
+            let chWidth = ctx.measureText(ch).width + p.tracking;
+            let charCenterX = currentX + chWidth / 2;
+
+            let cjX = (this.seededRandom(p.seed + globalCharIndex * 31) - 0.5) * p.charJitterX * 2;
+            let cjY = (this.seededRandom(p.seed + globalCharIndex * 37) - 0.5) * p.charJitterY * 2;
+            let cScale = 1 + (this.seededRandom(p.seed + globalCharIndex * 41) - 0.5) * (p.charSizeRandom / 100) * 2;
+            let cRot = (p.charRot * Math.PI / 180) + (this.seededRandom(p.seed + globalCharIndex * 43) - 0.5) * (p.charRotRandom * Math.PI / 180) * 2;
+            globalCharIndex++;
+
+            drawChar(ch, charCenterX + wjX + cjX, currentY + wjY + cjY, cRot, Math.max(0.1, cScale), p.fillStyle);
+            currentX += chWidth;
+          });
+
+          if (wordIdx < words.length - 1) {
+            let spaceWidth = ctx.measureText(" ").width + p.tracking;
+            currentX += spaceWidth;
+          }
+        });
+      });
+
+      ctx.restore();
     } else {
-      let rawText = p.text.replace(/\n/g, " ");
-      let fullText = "";
+      let rawLines = p.text.split("\n");
+      let repeatedText = "";
       for (let r = 0; r < p.repeat; r++) {
-        fullText += (r > 0 ? "  •  " : "") + rawText;
+        repeatedText += (r > 0 ? "   •   " : "") + rawLines.join("   •   ");
       }
-      let chars = fullText.split("");
+
+      let chars = repeatedText.split("");
       if (chars.length === 0) {
         ctx.restore();
         return;
       }
 
-      let getPathPoint = (t) => {
-        let normT = ((t % 1) + 1) % 1;
-        let cx = W / 2, cy = H / 2;
-        let r = W * 0.35;
+      let cx = W / 2, cy = H / 2;
+      let rBase = W * 0.35 * sScale;
+      let elRatio = p.ellipseRatio !== undefined ? p.ellipseRatio : 1.5;
 
-        if (p.shape === "circle_path" || p.shape === "circle_fill") {
-          let angle = normT * Math.PI * 2 - Math.PI / 2;
+      let totalPerimeter = Math.PI * 2 * rBase;
+      if (p.shape === "ellipse") {
+        let rx = W * 0.35 * sScale * elRatio;
+        let ry = (H * 0.35 * sScale) / elRatio;
+        totalPerimeter = Math.PI * (3 * (rx + ry) - Math.sqrt((3 * rx + ry) * (rx + 3 * ry)));
+      } else if (p.shape === "square" || p.shape === "rect_rounded") {
+        let hw = W * 0.35 * sScale;
+        totalPerimeter = 8 * hw;
+      } else if (p.shape === "star") {
+        totalPerimeter = Math.PI * 2 * rBase * 1.5;
+      } else if (p.shape === "wave") {
+        totalPerimeter = W * 0.8;
+      } else if (p.shape === "spiral") {
+        totalPerimeter = Math.PI * 2 * rBase * 2.5;
+      }
+
+      let getPathPoint = (normT) => {
+        let t = ((normT % 1) + 1) % 1;
+
+        if (p.shape === "circle_path") {
+          let angle = t * Math.PI * 2 - Math.PI / 2;
           return {
-            x: cx + r * Math.cos(angle),
-            y: cy + r * Math.sin(angle),
+            x: cx + rBase * Math.cos(angle),
+            y: cy + rBase * Math.sin(angle),
             tangentAngle: angle + Math.PI / 2
           };
         } else if (p.shape === "ellipse") {
-          let rx = W * 0.4, ry = H * 0.25;
-          let angle = normT * Math.PI * 2 - Math.PI / 2;
+          let rx = W * 0.35 * sScale * elRatio;
+          let ry = (H * 0.35 * sScale) / elRatio;
+          let angle = t * Math.PI * 2 - Math.PI / 2;
           let x = cx + rx * Math.cos(angle);
           let y = cy + ry * Math.sin(angle);
           let tangentAngle = Math.atan2(ry * Math.cos(angle), -rx * Math.sin(angle));
           return { x, y, tangentAngle };
         } else if (p.shape === "square" || p.shape === "rect_rounded") {
-          let hw = W * 0.35, hh = H * 0.35;
-          let side = Math.floor(normT * 4);
-          let subT = (normT * 4) % 1;
+          let hw = W * 0.35 * sScale, hh = H * 0.35 * sScale;
+          let side = Math.floor(t * 4);
+          let subT = (t * 4) % 1;
           let x = cx, y = cy, tangentAngle = 0;
 
           if (side === 0) {
@@ -3010,11 +3111,11 @@ const TextGenerator = {
           return { x, y, tangentAngle };
         } else if (p.shape === "star") {
           let points = Math.max(3, p.starPoints || 5);
-          let rOuter = W * 0.38;
+          let rOuter = W * 0.38 * sScale;
           let rInner = rOuter * (p.starInner !== undefined ? p.starInner : 0.5);
           let totalVerts = points * 2;
-          let vIdx = Math.floor(normT * totalVerts);
-          let subT = (normT * totalVerts) % 1;
+          let vIdx = Math.floor(t * totalVerts);
+          let subT = (t * totalVerts) % 1;
 
           let getStarVert = (i) => {
             let a = (i / totalVerts) * Math.PI * 2 - Math.PI / 2;
@@ -3029,14 +3130,14 @@ const TextGenerator = {
           let tangentAngle = Math.atan2(p2.y - p1.y, p2.x - p1.x);
           return { x, y, tangentAngle };
         } else if (p.shape === "heart") {
-          let a = normT * Math.PI * 2;
-          let scale = W * 0.022;
+          let a = t * Math.PI * 2;
+          let scale = W * 0.022 * sScale;
           let sinA = Math.sin(a);
           let hx = cx + scale * 16 * sinA * sinA * sinA;
           let hy = cy - scale * (13 * Math.cos(a) - 5 * Math.cos(2 * a) - 2 * Math.cos(3 * a) - Math.cos(4 * a));
           
           let delta = 0.001;
-          let aNext = (normT + delta) * Math.PI * 2;
+          let aNext = (t + delta) * Math.PI * 2;
           let sinANext = Math.sin(aNext);
           let hxNext = cx + scale * 16 * sinANext * sinANext * sinANext;
           let hyNext = cy - scale * (13 * Math.cos(aNext) - 5 * Math.cos(2 * aNext) - 2 * Math.cos(3 * aNext) - Math.cos(4 * aNext));
@@ -3045,12 +3146,12 @@ const TextGenerator = {
           return { x: hx, y: hy, tangentAngle };
         } else if (p.shape === "polygon") {
           let sides = Math.max(3, p.polySides || 5);
-          let vIdx = Math.floor(normT * sides);
-          let subT = (normT * sides) % 1;
+          let vIdx = Math.floor(t * sides);
+          let subT = (t * sides) % 1;
 
           let getPolyVert = (i) => {
             let a = (i / sides) * Math.PI * 2 - Math.PI / 2;
-            return { x: cx + r * Math.cos(a), y: cy + r * Math.sin(a) };
+            return { x: cx + rBase * Math.cos(a), y: cy + rBase * Math.sin(a) };
           };
 
           let p1 = getPolyVert(vIdx);
@@ -3061,16 +3162,16 @@ const TextGenerator = {
           return { x, y, tangentAngle };
         } else if (p.shape === "wave") {
           let freq = p.waveFreq || 3;
-          let amp = p.waveAmp || 40;
-          let x = W * 0.1 + normT * (W * 0.8);
-          let y = H / 2 + Math.sin(normT * freq * Math.PI * 2) * amp;
-          let dy = Math.cos(normT * freq * Math.PI * 2) * freq * Math.PI * 2 * (amp / (W * 0.8));
+          let amp = (p.waveAmp || 40) * sScale;
+          let x = W * 0.1 + t * (W * 0.8);
+          let y = H / 2 + Math.sin(t * freq * Math.PI * 2) * amp;
+          let dy = Math.cos(t * freq * Math.PI * 2) * freq * Math.PI * 2 * (amp / (W * 0.8));
           let tangentAngle = Math.atan2(dy, 1);
           return { x, y, tangentAngle };
         } else if (p.shape === "spiral") {
-          let turns = 3;
-          let a = normT * Math.PI * 2 * turns;
-          let spiralR = normT * (W * 0.42);
+          let turns = 3 * p.leading;
+          let a = t * Math.PI * 2 * turns;
+          let spiralR = t * (W * 0.42 * sScale);
           let x = cx + spiralR * Math.cos(a);
           let y = cy + spiralR * Math.sin(a);
           let tangentAngle = a + Math.PI / 2;
@@ -3083,10 +3184,9 @@ const TextGenerator = {
       let globalCharIndex = 0;
       let globalWordIndex = 0;
 
-      let currentT = 0;
-      let stepT = 1.0 / Math.max(1, chars.length);
+      let currentNormT = (pathOffsetVal / 500.0);
 
-      let words = fullText.split(" ");
+      let words = repeatedText.split(" ");
 
       words.forEach((wordStr, wordIdx) => {
         let wjX = (this.seededRandom(p.seed + globalWordIndex * 17) - 0.5) * p.wordJitterX * 2;
@@ -3095,7 +3195,7 @@ const TextGenerator = {
 
         let wordChars = wordStr.split("");
         wordChars.forEach((ch) => {
-          let pt = getPathPoint(currentT);
+          let pt = getPathPoint(currentNormT);
 
           let cjX = (this.seededRandom(p.seed + globalCharIndex * 31) - 0.5) * p.charJitterX * 2;
           let cjY = (this.seededRandom(p.seed + globalCharIndex * 37) - 0.5) * p.charJitterY * 2;
@@ -3104,10 +3204,14 @@ const TextGenerator = {
           globalCharIndex++;
 
           drawChar(ch, pt.x + wjX + cjX, pt.y + wjY + cjY, cRot, Math.max(0.1, cScale), p.fillStyle);
-          currentT += stepT;
+
+          let charW = ctx.measureText(ch).width + p.tracking;
+          let normAdvance = charW / Math.max(1, totalPerimeter);
+          currentNormT += normAdvance;
         });
 
-        currentT += stepT * 0.5;
+        let spaceW = ctx.measureText(" ").width + p.tracking;
+        currentNormT += spaceW / Math.max(1, totalPerimeter);
       });
     }
 
@@ -15024,6 +15128,10 @@ function renderProps() {
         </div>
       </div>
 
+      ${createSlider("Розмір фігури / форми (Shape Size)", "textShapeSize", 10, 300, 5, lp.textShapeSize !== undefined ? lp.textShapeSize : 100, false, 100)}
+      ${(lp.textShape === "ellipse") ? createSlider("Пропорції овала (Ellipse Aspect Ratio)", "textEllipseRatio", 0.2, 3.0, 0.1, lp.textEllipseRatio !== undefined ? lp.textEllipseRatio : 1.5, false, 1.5) : ""}
+      ${createSlider("Зсув / Переміщення вздовж форми (Path Shift)", "textPathOffset", -500, 500, 5, lp.textPathOffset || 0, false, 0)}
+
       ${(lp.textShape === "rect_rounded") ? createSlider("Закруглення кутів (Corner Radius)", "textCornerRadius", 0, 100, 1, lp.textCornerRadius !== undefined ? lp.textCornerRadius : 20, false, 20) : ""}
       ${(lp.textShape === "polygon") ? createSlider("Кількість граней багатокутника", "textPolySides", 3, 12, 1, lp.textPolySides || 5, false, 5) : ""}
       ${(lp.textShape === "star") ? createSlider("Кількість променів зірки", "textStarPoints", 3, 12, 1, lp.textStarPoints || 5, false, 5) + createSlider("Внутрішній радіус зірки", "textStarInner", 0.1, 0.9, 0.05, lp.textStarInner !== undefined ? lp.textStarInner : 0.5, false, 0.5) : ""}
@@ -18205,6 +18313,11 @@ function invalidateCaches() {
     state.layers[i].isDirty = true;
     state.layers[i].isDraftDirty = true;
     state.layers[i].isFullDirty = true;
+    state.layers[i]._cachedTextBuf = null;
+    state.layers[i]._cachedTextKey = null;
+  }
+  if (typeof TextGenerator !== "undefined" && TextGenerator.LAYER_CANVAS_CACHE) {
+    TextGenerator.LAYER_CANVAS_CACHE.clear();
   }
 }
 
