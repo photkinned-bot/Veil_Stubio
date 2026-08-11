@@ -2822,6 +2822,7 @@ const TextGenerator = {
     const repeat = p.textRepeat || 1;
     const waveFreq = p.textWaveFreq || 3;
     const waveAmp = p.textWaveAmp || 40;
+    const overlapGuard = p.textOverlapGuard !== undefined ? p.textOverlapGuard : 100;
 
     const cacheKey = [
       lay ? lay.id : "nolay",
@@ -2829,7 +2830,7 @@ const TextGenerator = {
       wordJitterX, wordJitterY, charJitterX, charJitterY,
       charSizeRandom, charRot, charRotRandom, seed,
       tracking, leading, cornerR, polySides, starPoints,
-      starInner, fillStyle, strokeWidth, repeat, waveFreq, waveAmp
+      starInner, fillStyle, strokeWidth, repeat, waveFreq, waveAmp, overlapGuard
     ].join("|");
 
     if (lay && lay._cachedTextKey === cacheKey && lay._cachedTextBuf) {
@@ -2865,7 +2866,7 @@ const TextGenerator = {
       wordJitterX, wordJitterY, charJitterX, charJitterY,
       charSizeRandom, charRot, charRotRandom, seed,
       tracking, leading, cornerR, polySides, starPoints,
-      starInner, fillStyle, strokeWidth, repeat, waveFreq, waveAmp
+      starInner, fillStyle, strokeWidth, repeat, waveFreq, waveAmp, textOverlapGuard: overlapGuard
     });
 
     const imgData = ctx.getImageData(0, 0, W, H);
@@ -3181,12 +3182,42 @@ const TextGenerator = {
         return { x: cx, y: cy, tangentAngle: 0 };
       };
 
+      const overlapGuard = p.textOverlapGuard !== undefined ? p.textOverlapGuard : 100;
+
+      const advanceNormT = (startT, distPx) => {
+        if (distPx <= 0) return startT;
+        let accumulatedDist = 0;
+        let t = startT;
+        const dt = 0.00025;
+        let prevPt = getPathPoint(t);
+        while (accumulatedDist < distPx && t < startT + 2.0) {
+          t += dt;
+          let nextPt = getPathPoint(t);
+          let stepDist = Math.hypot(nextPt.x - prevPt.x, nextPt.y - prevPt.y);
+          accumulatedDist += stepDist;
+          prevPt = nextPt;
+        }
+        return t;
+      };
+
+      const getCorners = (ptX, ptY, angle, charW, charH) => {
+        const cosA = Math.cos(angle);
+        const sinA = Math.sin(angle);
+        const hw = charW / 2;
+        const hh = charH / 2;
+        return {
+          TR: { x: ptX + hw * cosA - (-hh) * sinA, y: ptY + hw * sinA + (-hh) * cosA },
+          BR: { x: ptX + hw * cosA - (+hh) * sinA, y: ptY + hw * sinA + (+hh) * cosA },
+          TL: { x: ptX + (-hw) * cosA - (-hh) * sinA, y: ptY + (-hw) * sinA + (-hh) * cosA },
+          BL: { x: ptX + (-hw) * cosA - (+hh) * sinA, y: ptY + (-hw) * sinA + (+hh) * cosA }
+        };
+      };
+
       let globalCharIndex = 0;
       let globalWordIndex = 0;
-
       let currentNormT = (pathOffsetVal / 500.0);
-
       let words = repeatedText.split(" ");
+      let lastCharState = null;
 
       words.forEach((wordStr, wordIdx) => {
         let wjX = (this.seededRandom(p.seed + globalWordIndex * 17) - 0.5) * p.wordJitterX * 2;
@@ -3195,7 +3226,16 @@ const TextGenerator = {
 
         let wordChars = wordStr.split("");
         wordChars.forEach((ch) => {
-          let pt = getPathPoint(currentNormT);
+          let charW = ctx.measureText(ch).width;
+          let charH = baseFontSize;
+
+          let targetDist = 0;
+          if (lastCharState) {
+            targetDist = (lastCharState.charW / 2) + (charW / 2) + p.tracking;
+          }
+
+          let candT = lastCharState ? advanceNormT(lastCharState.normT, targetDist) : currentNormT;
+          let pt = getPathPoint(candT);
 
           let cjX = (this.seededRandom(p.seed + globalCharIndex * 31) - 0.5) * p.charJitterX * 2;
           let cjY = (this.seededRandom(p.seed + globalCharIndex * 37) - 0.5) * p.charJitterY * 2;
@@ -3203,15 +3243,62 @@ const TextGenerator = {
           let cRot = pt.tangentAngle + (p.charRot * Math.PI / 180) + (this.seededRandom(p.seed + globalCharIndex * 43) - 0.5) * (p.charRotRandom * Math.PI / 180) * 2;
           globalCharIndex++;
 
-          drawChar(ch, pt.x + wjX + cjX, pt.y + wjY + cjY, cRot, Math.max(0.1, cScale), p.fillStyle);
+          if (lastCharState && overlapGuard > 0) {
+            let minGap = p.tracking + (overlapGuard / 100.0) * 3.0;
+            let maxGuardSteps = 120;
+            let stepDt = 0.0003;
 
-          let charW = ctx.measureText(ch).width + p.tracking;
-          let normAdvance = charW / Math.max(1, totalPerimeter);
-          currentNormT += normAdvance;
+            for (let s = 0; s < maxGuardSteps; s++) {
+              let candCorners = getCorners(pt.x + wjX + cjX, pt.y + wjY + cjY, cRot, charW * cScale, charH * cScale);
+              let lastCorners = lastCharState.corners;
+
+              let distTop = Math.hypot(lastCorners.TR.x - candCorners.TL.x, lastCorners.TR.y - candCorners.TL.y);
+              let distBot = Math.hypot(lastCorners.BR.x - candCorners.BL.x, lastCorners.BR.y - candCorners.BL.y);
+              let distTopBot = Math.hypot(lastCorners.TR.x - candCorners.BL.x, lastCorners.TR.y - candCorners.BL.y);
+              let distBotTop = Math.hypot(lastCorners.BR.x - candCorners.TL.x, lastCorners.BR.y - candCorners.TL.y);
+
+              let minDist = Math.min(distTop, distBot, distTopBot, distBotTop);
+
+              if (minDist < minGap) {
+                candT += stepDt;
+                pt = getPathPoint(candT);
+                cRot = pt.tangentAngle + (p.charRot * Math.PI / 180) + (this.seededRandom(p.seed + (globalCharIndex - 1) * 43) - 0.5) * (p.charRotRandom * Math.PI / 180) * 2;
+              } else {
+                break;
+              }
+            }
+          }
+
+          let drawX = pt.x + wjX + cjX;
+          let drawY = pt.y + wjY + cjY;
+          drawChar(ch, drawX, drawY, cRot, Math.max(0.1, cScale), p.fillStyle);
+
+          let finalCorners = getCorners(drawX, drawY, cRot, charW * cScale, charH * cScale);
+          lastCharState = {
+            normT: candT,
+            pt: pt,
+            corners: finalCorners,
+            charW: charW * cScale,
+            charH: charH * cScale
+          };
+          currentNormT = candT;
         });
 
         let spaceW = ctx.measureText(" ").width + p.tracking;
-        currentNormT += spaceW / Math.max(1, totalPerimeter);
+        if (lastCharState) {
+          currentNormT = advanceNormT(lastCharState.normT, spaceW);
+          let spacePt = getPathPoint(currentNormT);
+          let dummyCorners = getCorners(spacePt.x, spacePt.y, spacePt.tangentAngle, spaceW, baseFontSize);
+          lastCharState = {
+            normT: currentNormT,
+            pt: spacePt,
+            corners: dummyCorners,
+            charW: spaceW,
+            charH: baseFontSize
+          };
+        } else {
+          currentNormT = advanceNormT(currentNormT, spaceW);
+        }
       });
     }
 
@@ -15159,6 +15246,7 @@ function renderProps() {
       ${createSlider("Базовий розмір букв (Font Size)", "textCharSize", 8, 200, 2, lp.textCharSize || 48, false, 48)}
       ${createSlider("Рандомний розмір букв (Size Randomness)", "textCharSizeRandom", 0, 100, 5, lp.textCharSizeRandom || 0, false, 0)}
       ${createSlider("Міжлітерний інтервал (Tracking)", "textTracking", -20, 100, 1, lp.textTracking || 0, false, 0)}
+      ${createSlider("Захист від перекриття букв / Кордони (Overlap Guard)", "textOverlapGuard", 0, 300, 10, lp.textOverlapGuard !== undefined ? lp.textOverlapGuard : 100, false, 100)}
       ${createSlider("Міжрядковий інтервал (Leading)", "textLeading", 0.5, 3.0, 0.1, lp.textLeading || 1.2, false, 1.2)}
 
       <div class="section-title" style="margin-top:10px;">🎲 Розкидання слів (Word Jitter)</div>
