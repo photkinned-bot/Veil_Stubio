@@ -6075,6 +6075,11 @@ window.clearPaintCanvas = function () {
   pCtx.fillRect(0, 0, 1024, 1024);
 
   updatePaintBuffer(lay);
+  if (lay.params) {
+    let comp = compressPaintCanvas(lay.paintCanvas);
+    lay.params.paintDataUrl = comp.dataUrl;
+    lay.params.paintCrop = comp.crop;
+  }
   lay.paintRevision = (lay.paintRevision || 0) + 1;
   lay.isDirty = true;
   requestRender();
@@ -6483,6 +6488,14 @@ function finalizePaintingStroke() {
       updatePaintBuffer(lay, activeStrokeBoundingBox);
     } else {
       updatePaintBuffer(lay);
+    }
+
+    if (lay.paintCanvas) {
+      let comp = compressPaintCanvas(lay.paintCanvas);
+      if (lay.params) {
+        lay.params.paintDataUrl = comp.dataUrl;
+        lay.params.paintCrop = comp.crop;
+      }
     }
   }
 
@@ -18173,6 +18186,7 @@ async function saveCurrentProjectToIDB() {
   await new Promise((res) => setTimeout(res, 20));
 
   try {
+    prepareStateForSerialization();
     const db = await openVeilIDB();
     const paintBlobs = {};
     const paintCrops = {};
@@ -18300,19 +18314,23 @@ function requestAutoSaveIdle() {
   }
 }
 
-async function performAutoSave() {
+async function performAutoSave(isForce = false) {
   let now = Date.now();
-  if (
-    isAutoSaving ||
-    isPainting ||
-    strokeBackupActive ||
-    isRestoringHistory ||
-    isInteracting ||
-    now - lastUserInteractionTime < 500
-  )
-    return;
+  if (!isForce) {
+    if (
+      isAutoSaving ||
+      isPainting ||
+      strokeBackupActive ||
+      isRestoringHistory ||
+      isInteracting ||
+      now - lastUserInteractionTime < 500
+    )
+      return;
+  } else {
+    if (isAutoSaving) return;
+  }
   isAutoSaving = true;
-  console.log("performAutoSave started!");
+  console.log("performAutoSave started! force:", isForce);
   updateAutosaveUI(
     "Збереження...",
     "#3b82f6",
@@ -18320,6 +18338,7 @@ async function performAutoSave() {
   );
 
   try {
+    prepareStateForSerialization();
     const db = await openVeilIDB();
     const paintBlobs = {};
 
@@ -18436,66 +18455,313 @@ async function restoreAutoSaveDraftOnBoot() {
       state.selectedLayerId = state.layers.length ? state.layers[0].id : null;
     }
 
-    if (record.paintBlobs) {
-      const paintPromises = state.layers
-        .filter((l) => l.generatorType === "paint")
-        .map(async (lay) => {
-          ensureLayerPaintCanvas(lay, false);
-          const pCtx = lay.paintCanvas.getContext("2d");
-          pCtx.fillStyle = "#000000";
-          pCtx.fillRect(0, 0, 1024, 1024);
+    const paintPromises = state.layers
+      .filter((l) => l.generatorType === "paint")
+      .map(async (lay) => {
+        ensureLayerPaintCanvas(lay, false);
+        const pCtx = lay.paintCanvas.getContext("2d");
+        pCtx.fillStyle = "#000000";
+        pCtx.fillRect(0, 0, 1024, 1024);
 
-          const blob = record.paintBlobs[lay.id];
-          if (blob) {
-            let bitmap = null;
-            if (typeof createImageBitmap === "function") {
-              try {
-                bitmap = await createImageBitmap(blob);
-              } catch (e) {}
-            }
-            if (bitmap) {
-              const crop = record.paintCrops ? record.paintCrops[lay.id] : null;
-              if (crop && typeof crop.x === "number") {
-                pCtx.drawImage(bitmap, crop.x, crop.y, crop.w, crop.h);
-              } else {
-                pCtx.drawImage(bitmap, 0, 0, 1024, 1024);
-              }
-              if (typeof bitmap.close === "function") bitmap.close();
-            } else {
-              const url = URL.createObjectURL(blob);
-              await new Promise((res) => {
-                const img = new Image();
-                img.onload = () => {
-                  pCtx.drawImage(img, 0, 0, 1024, 1024);
-                  URL.revokeObjectURL(url);
-                  res();
-                };
-                img.onerror = () => {
-                  URL.revokeObjectURL(url);
-                  res();
-                };
-                img.src = url;
-              });
-            }
-          } else if (lay.params && lay.params.paintDataUrl) {
-            let bitmap = await loadImageBitmapFromDataUrl(
-              lay.params.paintDataUrl,
-            );
-            if (bitmap) {
-              const crop = lay.params.paintCrop;
-              if (crop && typeof crop.x === "number") {
-                pCtx.drawImage(bitmap, crop.x, crop.y, crop.w, crop.h);
-              } else {
-                pCtx.drawImage(bitmap, 0, 0, 1024, 1024);
-              }
-              if (typeof bitmap.close === "function") bitmap.close();
-            }
+        let restored = false;
+        const blob = record.paintBlobs ? record.paintBlobs[lay.id] : null;
+        if (blob) {
+          let bitmap = null;
+          if (typeof createImageBitmap === "function") {
+            try {
+              bitmap = await createImageBitmap(blob);
+            } catch (e) {}
           }
-          updatePaintBuffer(lay);
-          lay.isDirty = true;
-        });
-      await Promise.all(paintPromises);
+          if (bitmap) {
+            const crop = record.paintCrops ? record.paintCrops[lay.id] : null;
+            if (crop && typeof crop.x === "number") {
+              pCtx.drawImage(bitmap, crop.x, crop.y, crop.w, crop.h);
+            } else {
+              pCtx.drawImage(bitmap, 0, 0, 1024, 1024);
+            }
+            if (typeof bitmap.close === "function") bitmap.close();
+            restored = true;
+          } else {
+            const url = URL.createObjectURL(blob);
+            restored = await new Promise((res) => {
+              const img = new Image();
+              img.onload = () => {
+                pCtx.drawImage(img, 0, 0, 1024, 1024);
+                URL.revokeObjectURL(url);
+                res(true);
+              };
+              img.onerror = () => {
+                URL.revokeObjectURL(url);
+                res(false);
+              };
+              img.src = url;
+            });
+          }
+        }
+
+        if (!restored && lay.params && lay.params.paintDataUrl) {
+          let bitmap = await loadImageBitmapFromDataUrl(
+            lay.params.paintDataUrl,
+          );
+          if (bitmap) {
+            const crop = lay.params.paintCrop;
+            if (crop && typeof crop.x === "number") {
+              pCtx.drawImage(bitmap, crop.x, crop.y, crop.w, crop.h);
+            } else {
+              pCtx.drawImage(bitmap, 0, 0, 1024, 1024);
+            }
+            if (typeof bitmap.close === "function") bitmap.close();
+            restored = true;
+          } else {
+            await new Promise((res) => {
+              const img = new Image();
+              img.onload = () => {
+                pCtx.drawImage(img, 0, 0, 1024, 1024);
+                res();
+              };
+              img.onerror = () => res();
+              img.src = lay.params.paintDataUrl;
+            });
+          }
+        }
+        updatePaintBuffer(lay);
+        lay.isDirty = true;
+      });
+
+    await Promise.all(paintPromises);
+
+    invalidateCaches();
+    renderLayers();
+
+    if (record.tilingState || (record.state && record.state.tilingState)) {
+      tilingState = JSON.parse(
+        JSON.stringify(record.tilingState || record.state.tilingState),
+      );
     }
+    if (record.state && record.state.tilingCustomImageDataUrl) {
+      let img = new Image();
+      img.onload = () => {
+        if (!tilingOriginalCanvas)
+          tilingOriginalCanvas = document.createElement("canvas");
+        tilingOriginalCanvas.width = img.width;
+        tilingOriginalCanvas.height = img.height;
+        let octx = tilingOriginalCanvas.getContext("2d");
+        octx.drawImage(img, 0, 0);
+        tilingState.hasImage = true;
+        tilingState.customImageLoaded = true;
+        runTilingPipeline();
+        if (currentTab === "tiling") {
+          renderTilingPanel();
+          renderTilingView();
+        }
+      };
+      img.src = record.state.tilingCustomImageDataUrl;
+    } else if (tilingState && tilingState.hasImage) {
+      runTilingPipeline();
+    }
+
+    if (
+      record.state &&
+      record.state.pbrState &&
+      window.mapGeneratorTab &&
+      typeof window.mapGeneratorTab.loadPbrState === "function"
+    ) {
+      window.mapGeneratorTab.loadPbrState(record.state.pbrState);
+    }
+
+    if (typeof currentTab !== "undefined" && currentTab === "global") {
+      renderGlobal();
+    } else if (typeof currentTab !== "undefined" && currentTab === "tiling") {
+      renderTilingPanel();
+      renderTilingView();
+    } else if (
+      typeof currentTab !== "undefined" &&
+      currentTab === "maps" &&
+      window.mapGeneratorTab
+    ) {
+      window.mapGeneratorTab.renderRightPanelControls();
+    } else {
+      renderProps();
+    }
+    requestRender();
+    initHistory();
+
+    const timeStr =
+      localStorage.getItem("veil_autosave_time") || record.dateStr;
+    updateAutosaveUI(
+      `Відновлено (${timeStr})`,
+      "#10b981",
+      `Відновлено автозбережену чернетку: ${record.dateStr}`,
+    );
+    return true;
+  } catch (e) {
+    console.warn("Не вдалося відновити автозбережену чернетку:", e);
+    return false;
+  }
+}
+
+async function getIDBSlotsList() {
+  try {
+    const db = await openVeilIDB();
+    const tx = db.transaction(IDB_STORE, "readonly");
+    const store = tx.objectStore(IDB_STORE);
+    return new Promise((resolve, reject) => {
+      const req = store.getAll();
+      req.onsuccess = () => {
+        const list = req.result || [];
+        list.sort((a, b) => b.updatedAt - a.updatedAt);
+        resolve(list);
+      };
+      req.onerror = reject;
+    });
+  } catch (e) {
+    return [];
+  }
+}
+
+async function renderIDBSlotsList() {
+  let container = $("idbSlotsContainer");
+  let badge = $("idbSlotCountBadge");
+  if (!container) return;
+
+  let slots = await getIDBSlotsList();
+  if (badge)
+    badge.textContent = slots.length ? `(всього: ${slots.length})` : "";
+
+  if (slots.length === 0) {
+    container.innerHTML = `<div style="text-align:center; padding:16px; color:var(--text-muted); font-size:12px;">Немає збережених слотів у цьому браузері.</div>`;
+    return;
+  }
+
+  container.innerHTML = slots
+    .map((slot) => {
+      let layersText = `${slot.layerCount || 0} ${slot.layerCount === 1 ? "шар" : slot.layerCount >= 2 && slot.layerCount <= 4 ? "шари" : "шарів"}`;
+      let isAuto = slot.isAutoSave || slot.id === IDB_AUTOSAVE_KEY;
+      let badgeHtml = isAuto
+        ? `<span style="background:rgba(245, 158, 11, 0.2); color:#f59e0b; border:1px solid rgba(245, 158, 11, 0.4); padding:1px 6px; border-radius:4px; font-size:10px; margin-left:6px; font-weight:600;">Чернетка</span>`
+        : "";
+      return `
+                <div class="idb-slot-card" style="${isAuto ? "border: 1px solid rgba(245, 158, 11, 0.35); background: rgba(245, 158, 11, 0.04);" : ""}">
+                    <div class="idb-slot-info">
+                        <div class="idb-slot-title" style="display:flex; align-items:center;">${slot.name} ${badgeHtml}</div>
+                        <div class="idb-slot-meta">${slot.dateStr} | ${layersText}</div>
+                    </div>
+                    <div style="display:flex; gap:4px; flex-shrink:0;">
+                        <button class="btn btn-primary" style="padding:4px 8px; font-size:11px;" onclick="loadProjectFromIDB('${slot.id}')">Завантажити</button>
+                        <button class="btn btn-secondary" style="padding:4px 8px; font-size:11px; color:#ef4444;" onclick="deleteIDBSlot('${slot.id}')">🗑️</button>
+                    </div>
+                </div>`;
+    })
+    .join("");
+}
+
+async function loadProjectFromIDB(id) {
+  showProgressLoader("Завантаження з IDB...", "Читання слоту...");
+  await new Promise((res) => setTimeout(res, 20));
+
+  try {
+    const db = await openVeilIDB();
+    const tx = db.transaction(IDB_STORE, "readonly");
+    const store = tx.objectStore(IDB_STORE);
+    const record = await new Promise((resolve, reject) => {
+      const req = store.get(id);
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = reject;
+    });
+
+    if (!record) throw new Error("Слот не знайдено");
+
+    setState(record.state);
+    state.global = Object.assign(freshGlobalSettings(), state.global || {});
+    if (!state.global.warps) state.global.warps = [];
+
+    if (state.layers) {
+      state.layers.forEach((l) => {
+        l.isDirty = true;
+        l.params = Object.assign(freshLayerParams(), l.params || {});
+        if (!l.params.warps) l.params.warps = [];
+      });
+    }
+
+    if (!state.layers.find((l) => l.id === state.selectedLayerId)) {
+      state.selectedLayerId = state.layers.length ? state.layers[0].id : null;
+    }
+
+    updateProgressLoaderSubtext("Декодування растрових шарів...");
+    const paintPromises = state.layers
+      .filter((l) => l.generatorType === "paint")
+      .map(async (lay) => {
+        ensureLayerPaintCanvas(lay, false);
+        const pCtx = lay.paintCanvas.getContext("2d");
+        pCtx.fillStyle = "#000000";
+        pCtx.fillRect(0, 0, 1024, 1024);
+
+        let restored = false;
+        const blob = record.paintBlobs ? record.paintBlobs[lay.id] : null;
+        if (blob) {
+          let bitmap = null;
+          if (typeof createImageBitmap === "function") {
+            try {
+              bitmap = await createImageBitmap(blob);
+            } catch (e) {}
+          }
+          if (bitmap) {
+            const crop = record.paintCrops ? record.paintCrops[lay.id] : null;
+            if (crop && typeof crop.x === "number") {
+              pCtx.drawImage(bitmap, crop.x, crop.y, crop.w, crop.h);
+            } else {
+              pCtx.drawImage(bitmap, 0, 0, 1024, 1024);
+            }
+            if (typeof bitmap.close === "function") bitmap.close();
+            restored = true;
+          } else {
+            const url = URL.createObjectURL(blob);
+            restored = await new Promise((res) => {
+              const img = new Image();
+              img.onload = () => {
+                pCtx.drawImage(img, 0, 0, 1024, 1024);
+                URL.revokeObjectURL(url);
+                res(true);
+              };
+              img.onerror = () => {
+                URL.revokeObjectURL(url);
+                res(false);
+              };
+              img.src = url;
+            });
+          }
+        }
+
+        if (!restored && lay.params && lay.params.paintDataUrl) {
+          let bitmap = await loadImageBitmapFromDataUrl(
+            lay.params.paintDataUrl,
+          );
+          if (bitmap) {
+            const crop = lay.params.paintCrop;
+            if (crop && typeof crop.x === "number") {
+              pCtx.drawImage(bitmap, crop.x, crop.y, crop.w, crop.h);
+            } else {
+              pCtx.drawImage(bitmap, 0, 0, 1024, 1024);
+            }
+            if (typeof bitmap.close === "function") bitmap.close();
+            restored = true;
+          } else {
+            await new Promise((res) => {
+              const img = new Image();
+              img.onload = () => {
+                pCtx.drawImage(img, 0, 0, 1024, 1024);
+                res();
+              };
+              img.onerror = () => res();
+              img.src = lay.params.paintDataUrl;
+            });
+          }
+        }
+        updatePaintBuffer(lay);
+        lay.isDirty = true;
+      });
+
+    await Promise.all(paintPromises);
 
     invalidateCaches();
     renderLayers();
