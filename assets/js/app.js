@@ -6608,6 +6608,7 @@ function handleCanvasPointerDown(e) {
 
   if (isPainting) {
     finalizePaintingStroke();
+    commitHistorySnapshot(true);
   }
 
   if (paintAnimationFrameId) {
@@ -6936,7 +6937,7 @@ function handleCanvasPointerUp(e) {
   }
 
   finalizePaintingStroke();
-  scheduleHistorySnapshot();
+  commitHistorySnapshot(true);
 }
 
 function evalGenerator(
@@ -17360,7 +17361,7 @@ let historyIndex = -1;
 let historyTimer = null;
 let historyReady = false;
 let isRestoringHistory = false;
-const MAX_HISTORY = 20;
+const MAX_HISTORY = 40;
 const HISTORY_DEBOUNCE_MS = 450;
 
 function capturePaintCanvasesForHistory() {
