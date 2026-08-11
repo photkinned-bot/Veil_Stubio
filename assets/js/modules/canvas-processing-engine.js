@@ -871,11 +871,6 @@ export class CanvasProcessingEngine {
       }
     }
 
-    if (window.globalBufferPool) {
-      window.globalBufferPool.releaseFloat32(outBuffer);
-      if (finalBuffer !== outBuffer)
-        window.globalBufferPool.releaseFloat32(finalBuffer);
-    }
     return outImageData;
   }
 
@@ -917,11 +912,6 @@ export class CanvasProcessingEngine {
       out[idx + 3] = 255;
     }
 
-    if (window.globalBufferPool) {
-      window.globalBufferPool.releaseFloat32(outBuffer);
-      if (finalBuffer !== outBuffer)
-        window.globalBufferPool.releaseFloat32(finalBuffer);
-    }
     return outImageData;
   }
 
@@ -1094,11 +1084,6 @@ export class CanvasProcessingEngine {
       }
     }
 
-    if (window.globalBufferPool) {
-      window.globalBufferPool.releaseFloat32(outBuffer);
-      if (finalBuffer !== outBuffer)
-        window.globalBufferPool.releaseFloat32(finalBuffer);
-    }
     return outImageData;
   }
 
