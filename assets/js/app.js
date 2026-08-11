@@ -6110,6 +6110,7 @@ window.clearPaintCanvas = function () {
   pCtx.fillRect(0, 0, 1024, 1024);
 
   updatePaintBuffer(lay);
+  lay.paintRevision = (lay.paintRevision || 0) + 1;
   lay.isDirty = true;
   requestRender();
   commitHistorySnapshot();
@@ -6465,6 +6466,7 @@ function cancelPainting() {
     activePaintPointerId = null;
   }
   isPainting = false;
+  isInteracting = false;
   paintPoints = [];
   paintQueue = [];
   if (paintAnimationFrameId) {
@@ -6505,6 +6507,7 @@ function finalizePaintingStroke() {
 
   let lay = state.layers.find((l) => l.id === state.selectedLayerId);
   if (lay && lay.generatorType === "paint") {
+    lay.paintRevision = (lay.paintRevision || 0) + 1;
     let lp = lay.params;
     let opacity = (lp.brushOpacity !== undefined ? lp.brushOpacity : 100) / 100;
     combineStrokeAndBackup(lay, opacity);
@@ -18343,6 +18346,7 @@ async function performAutoSave() {
   )
     return;
   isAutoSaving = true;
+  console.log("performAutoSave started!");
   updateAutosaveUI(
     "Збереження...",
     "#3b82f6",

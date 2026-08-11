@@ -533,7 +533,6 @@ export class CanvasProcessingEngine {
         out[rowOffset + x] = sum * invSteps;
       }
     }
-    if (window.globalBufferPool) window.globalBufferPool.releaseFloat32(tmp);
     return out;
   }
 
@@ -716,7 +715,6 @@ export class CanvasProcessingEngine {
           buffer[rowOffset + x] * (1 - mask) + blurredVal * mask;
       }
     }
-    if (window.globalBufferPool) window.globalBufferPool.releaseFloat32(tmp);
     return out;
   }
 
@@ -724,9 +722,7 @@ export class CanvasProcessingEngine {
    * Helper: Sharpen kernel filter on Float32Array
    */
   static sharpenFloatBuffer(buffer, width, height, amount) {
-    if (!amount || amount <= 0)
-      if (window.globalBufferPool) window.globalBufferPool.releaseFloat32(tmp);
-    return buffer;
+    if (!amount || amount <= 0) return buffer;
     const size = width * height;
     const out = new Float32Array(size);
 
@@ -748,7 +744,6 @@ export class CanvasProcessingEngine {
         out[y * width + x] = Math.max(0, Math.min(1, val));
       }
     }
-    if (window.globalBufferPool) window.globalBufferPool.releaseFloat32(tmp);
     return out;
   }
 
