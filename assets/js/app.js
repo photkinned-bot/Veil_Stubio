@@ -2785,6 +2785,370 @@ const HeartbeatGenerator = {
   },
 };
 
+const TextGenerator = {
+  LAYER_CANVAS_CACHE: new Map(),
+
+  seededRandom(seed) {
+    let s = Math.sin(seed) * 10000;
+    return s - Math.floor(s);
+  },
+
+  getTextBuffer(p, lay) {
+    const text = p.textContent !== undefined ? String(p.textContent) : "VEIL STUDIO\nSEAMLESS\nTEXTURES";
+    const shape = p.textShape || "standard";
+    const size = p.textCharSize || 48;
+    const font = p.textFontFamily || "sans-serif";
+    const weight = p.textWeight || "bold";
+    const align = p.textAlign || "center";
+    const wordJitterX = p.textWordJitterX || 0;
+    const wordJitterY = p.textWordJitterY || 0;
+    const charJitterX = p.textCharJitterX || 0;
+    const charJitterY = p.textCharJitterY || 0;
+    const charSizeRandom = p.textCharSizeRandom || 0;
+    const charRot = p.textCharRotation || 0;
+    const charRotRandom = p.textCharRotateRandom || 0;
+    const seed = p.textSeed || 0;
+    const tracking = p.textTracking || 0;
+    const leading = p.textLeading || 1.2;
+    const cornerR = p.textCornerRadius !== undefined ? p.textCornerRadius : 20;
+    const polySides = p.textPolySides || 5;
+    const starPoints = p.textStarPoints || 5;
+    const starInner = p.textStarInner !== undefined ? p.textStarInner : 0.5;
+    const fillStyle = p.textFillStyle || "solid";
+    const strokeWidth = p.textStrokeWidth || 2;
+    const repeat = p.textRepeat || 1;
+    const waveFreq = p.textWaveFreq || 3;
+    const waveAmp = p.textWaveAmp || 40;
+
+    const cacheKey = [
+      lay ? lay.id : "nolay",
+      text, shape, size, font, weight, align,
+      wordJitterX, wordJitterY, charJitterX, charJitterY,
+      charSizeRandom, charRot, charRotRandom, seed,
+      tracking, leading, cornerR, polySides, starPoints,
+      starInner, fillStyle, strokeWidth, repeat, waveFreq, waveAmp
+    ].join("|");
+
+    if (this.LAYER_CANVAS_CACHE.has(cacheKey)) {
+      return this.LAYER_CANVAS_CACHE.get(cacheKey);
+    }
+
+    if (this.LAYER_CANVAS_CACHE.size > 20) {
+      let firstKey = this.LAYER_CANVAS_CACHE.keys().next().value;
+      this.LAYER_CANVAS_CACHE.delete(firstKey);
+    }
+
+    const W = 1024;
+    const H = 1024;
+    const canvas = document.createElement("canvas");
+    canvas.width = W;
+    canvas.height = H;
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+
+    ctx.fillStyle = "#000000";
+    ctx.fillRect(0, 0, W, H);
+
+    this.drawTextLayout(ctx, W, H, {
+      text, shape, size, font, weight, align,
+      wordJitterX, wordJitterY, charJitterX, charJitterY,
+      charSizeRandom, charRot, charRotRandom, seed,
+      tracking, leading, cornerR, polySides, starPoints,
+      starInner, fillStyle, strokeWidth, repeat, waveFreq, waveAmp
+    });
+
+    const imgData = ctx.getImageData(0, 0, W, H);
+    const pixels = imgData.data;
+    const buffer = new Float32Array(W * H);
+    for (let i = 0; i < W * H; i++) {
+      buffer[i] = pixels[i * 4] / 255.0;
+    }
+
+    const res = { width: W, height: H, buffer };
+    this.LAYER_CANVAS_CACHE.set(cacheKey, res);
+    return res;
+  },
+
+  drawTextLayout(ctx, W, H, p) {
+    ctx.save();
+    let fontStack = "sans-serif";
+    if (p.font === "serif") fontStack = 'Georgia, "Times New Roman", serif';
+    else if (p.font === "monospace") fontStack = 'Consolas, Monaco, "Courier New", monospace';
+    else if (p.font === "system-ui") fontStack = 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+    else if (p.font === "impact") fontStack = 'Impact, "Arial Black", sans-serif';
+    else fontStack = '"Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif';
+
+    const baseFontSize = p.size;
+    ctx.font = `${p.weight} ${baseFontSize}px ${fontStack}`;
+    ctx.textBaseline = "middle";
+    ctx.textAlign = "center";
+
+    const drawChar = (char, x, y, angle, scaleFactor, fillMode) => {
+      ctx.save();
+      ctx.translate(x, y);
+      if (angle !== 0) ctx.rotate(angle);
+      if (scaleFactor !== 1) ctx.scale(scaleFactor, scaleFactor);
+
+      ctx.fillStyle = "#ffffff";
+      ctx.strokeStyle = "#ffffff";
+      ctx.lineWidth = p.strokeWidth || 2;
+
+      if (fillMode === "outline") {
+        ctx.strokeText(char, 0, 0);
+      } else if (fillMode === "glow") {
+        ctx.shadowColor = "#ffffff";
+        ctx.shadowBlur = baseFontSize * 0.3;
+        ctx.fillText(char, 0, 0);
+        ctx.shadowBlur = 0;
+      } else {
+        ctx.fillText(char, 0, 0);
+      }
+      ctx.restore();
+    };
+
+    if (p.shape === "standard") {
+      const lines = p.text.split("\n");
+      const lineHeight = baseFontSize * p.leading;
+      const totalHeight = lines.length * lineHeight;
+      let startY = (H - totalHeight) / 2 + lineHeight / 2;
+
+      let globalCharIndex = 0;
+      let globalWordIndex = 0;
+
+      lines.forEach((lineStr, lineIdx) => {
+        let currentY = startY + lineIdx * lineHeight;
+        let chars = lineStr.split("");
+        let charWidths = chars.map(c => ctx.measureText(c).width + p.tracking);
+        let lineWidth = charWidths.reduce((a, b) => a + b, 0);
+
+        let startX = W / 2 - lineWidth / 2;
+        if (p.align === "left") startX = W * 0.1;
+        else if (p.align === "right") startX = W * 0.9 - lineWidth;
+
+        let currentX = startX;
+        let words = lineStr.split(" ");
+
+        words.forEach((wordStr, wordIdx) => {
+          let wjX = (this.seededRandom(p.seed + globalWordIndex * 17) - 0.5) * p.wordJitterX * 2;
+          let wjY = (this.seededRandom(p.seed + globalWordIndex * 23) - 0.5) * p.wordJitterY * 2;
+          globalWordIndex++;
+
+          let wordChars = wordStr.split("");
+          wordChars.forEach((ch) => {
+            let chWidth = ctx.measureText(ch).width + p.tracking;
+            let charCenterX = currentX + chWidth / 2;
+
+            let cjX = (this.seededRandom(p.seed + globalCharIndex * 31) - 0.5) * p.charJitterX * 2;
+            let cjY = (this.seededRandom(p.seed + globalCharIndex * 37) - 0.5) * p.charJitterY * 2;
+            let cScale = 1 + (this.seededRandom(p.seed + globalCharIndex * 41) - 0.5) * (p.charSizeRandom / 100) * 2;
+            let cRot = (p.charRot * Math.PI / 180) + (this.seededRandom(p.seed + globalCharIndex * 43) - 0.5) * (p.charRotRandom * Math.PI / 180) * 2;
+            globalCharIndex++;
+
+            drawChar(ch, charCenterX + wjX + cjX, currentY + wjY + cjY, cRot, Math.max(0.1, cScale), p.fillStyle);
+            currentX += chWidth;
+          });
+
+          if (wordIdx < words.length - 1) {
+            let spaceWidth = ctx.measureText(" ").width + p.tracking;
+            currentX += spaceWidth;
+          }
+        });
+      });
+    } else {
+      let rawText = p.text.replace(/\n/g, " ");
+      let fullText = "";
+      for (let r = 0; r < p.repeat; r++) {
+        fullText += (r > 0 ? "  •  " : "") + rawText;
+      }
+      let chars = fullText.split("");
+      if (chars.length === 0) {
+        ctx.restore();
+        return;
+      }
+
+      let getPathPoint = (t) => {
+        let normT = ((t % 1) + 1) % 1;
+        let cx = W / 2, cy = H / 2;
+        let r = W * 0.35;
+
+        if (p.shape === "circle_path" || p.shape === "circle_fill") {
+          let angle = normT * Math.PI * 2 - Math.PI / 2;
+          return {
+            x: cx + r * Math.cos(angle),
+            y: cy + r * Math.sin(angle),
+            tangentAngle: angle + Math.PI / 2
+          };
+        } else if (p.shape === "ellipse") {
+          let rx = W * 0.4, ry = H * 0.25;
+          let angle = normT * Math.PI * 2 - Math.PI / 2;
+          let x = cx + rx * Math.cos(angle);
+          let y = cy + ry * Math.sin(angle);
+          let tangentAngle = Math.atan2(ry * Math.cos(angle), -rx * Math.sin(angle));
+          return { x, y, tangentAngle };
+        } else if (p.shape === "square" || p.shape === "rect_rounded") {
+          let hw = W * 0.35, hh = H * 0.35;
+          let side = Math.floor(normT * 4);
+          let subT = (normT * 4) % 1;
+          let x = cx, y = cy, tangentAngle = 0;
+
+          if (side === 0) {
+            x = (cx - hw) + subT * (2 * hw);
+            y = cy - hh;
+            tangentAngle = 0;
+          } else if (side === 1) {
+            x = cx + hw;
+            y = (cy - hh) + subT * (2 * hh);
+            tangentAngle = Math.PI / 2;
+          } else if (side === 2) {
+            x = (cx + hw) - subT * (2 * hw);
+            y = cy + hh;
+            tangentAngle = Math.PI;
+          } else {
+            x = cx - hw;
+            y = (cy + hh) - subT * (2 * hh);
+            tangentAngle = -Math.PI / 2;
+          }
+          return { x, y, tangentAngle };
+        } else if (p.shape === "star") {
+          let points = Math.max(3, p.starPoints || 5);
+          let rOuter = W * 0.38;
+          let rInner = rOuter * (p.starInner !== undefined ? p.starInner : 0.5);
+          let totalVerts = points * 2;
+          let vIdx = Math.floor(normT * totalVerts);
+          let subT = (normT * totalVerts) % 1;
+
+          let getStarVert = (i) => {
+            let a = (i / totalVerts) * Math.PI * 2 - Math.PI / 2;
+            let radius = (i % 2 === 0) ? rOuter : rInner;
+            return { x: cx + radius * Math.cos(a), y: cy + radius * Math.sin(a) };
+          };
+
+          let p1 = getStarVert(vIdx);
+          let p2 = getStarVert((vIdx + 1) % totalVerts);
+          let x = p1.x + subT * (p2.x - p1.x);
+          let y = p1.y + subT * (p2.y - p1.y);
+          let tangentAngle = Math.atan2(p2.y - p1.y, p2.x - p1.x);
+          return { x, y, tangentAngle };
+        } else if (p.shape === "heart") {
+          let a = normT * Math.PI * 2;
+          let scale = W * 0.022;
+          let sinA = Math.sin(a);
+          let hx = cx + scale * 16 * sinA * sinA * sinA;
+          let hy = cy - scale * (13 * Math.cos(a) - 5 * Math.cos(2 * a) - 2 * Math.cos(3 * a) - Math.cos(4 * a));
+          
+          let delta = 0.001;
+          let aNext = (normT + delta) * Math.PI * 2;
+          let sinANext = Math.sin(aNext);
+          let hxNext = cx + scale * 16 * sinANext * sinANext * sinANext;
+          let hyNext = cy - scale * (13 * Math.cos(aNext) - 5 * Math.cos(2 * aNext) - 2 * Math.cos(3 * aNext) - Math.cos(4 * aNext));
+
+          let tangentAngle = Math.atan2(hyNext - hy, hxNext - hx);
+          return { x: hx, y: hy, tangentAngle };
+        } else if (p.shape === "polygon") {
+          let sides = Math.max(3, p.polySides || 5);
+          let vIdx = Math.floor(normT * sides);
+          let subT = (normT * sides) % 1;
+
+          let getPolyVert = (i) => {
+            let a = (i / sides) * Math.PI * 2 - Math.PI / 2;
+            return { x: cx + r * Math.cos(a), y: cy + r * Math.sin(a) };
+          };
+
+          let p1 = getPolyVert(vIdx);
+          let p2 = getPolyVert((vIdx + 1) % sides);
+          let x = p1.x + subT * (p2.x - p1.x);
+          let y = p1.y + subT * (p2.y - p1.y);
+          let tangentAngle = Math.atan2(p2.y - p1.y, p2.x - p1.x);
+          return { x, y, tangentAngle };
+        } else if (p.shape === "wave") {
+          let freq = p.waveFreq || 3;
+          let amp = p.waveAmp || 40;
+          let x = W * 0.1 + normT * (W * 0.8);
+          let y = H / 2 + Math.sin(normT * freq * Math.PI * 2) * amp;
+          let dy = Math.cos(normT * freq * Math.PI * 2) * freq * Math.PI * 2 * (amp / (W * 0.8));
+          let tangentAngle = Math.atan2(dy, 1);
+          return { x, y, tangentAngle };
+        } else if (p.shape === "spiral") {
+          let turns = 3;
+          let a = normT * Math.PI * 2 * turns;
+          let spiralR = normT * (W * 0.42);
+          let x = cx + spiralR * Math.cos(a);
+          let y = cy + spiralR * Math.sin(a);
+          let tangentAngle = a + Math.PI / 2;
+          return { x, y, tangentAngle };
+        }
+
+        return { x: cx, y: cy, tangentAngle: 0 };
+      };
+
+      let globalCharIndex = 0;
+      let globalWordIndex = 0;
+
+      let currentT = 0;
+      let stepT = 1.0 / Math.max(1, chars.length);
+
+      let words = fullText.split(" ");
+
+      words.forEach((wordStr, wordIdx) => {
+        let wjX = (this.seededRandom(p.seed + globalWordIndex * 17) - 0.5) * p.wordJitterX * 2;
+        let wjY = (this.seededRandom(p.seed + globalWordIndex * 23) - 0.5) * p.wordJitterY * 2;
+        globalWordIndex++;
+
+        let wordChars = wordStr.split("");
+        wordChars.forEach((ch) => {
+          let pt = getPathPoint(currentT);
+
+          let cjX = (this.seededRandom(p.seed + globalCharIndex * 31) - 0.5) * p.charJitterX * 2;
+          let cjY = (this.seededRandom(p.seed + globalCharIndex * 37) - 0.5) * p.charJitterY * 2;
+          let cScale = 1 + (this.seededRandom(p.seed + globalCharIndex * 41) - 0.5) * (p.charSizeRandom / 100) * 2;
+          let cRot = pt.tangentAngle + (p.charRot * Math.PI / 180) + (this.seededRandom(p.seed + globalCharIndex * 43) - 0.5) * (p.charRotRandom * Math.PI / 180) * 2;
+          globalCharIndex++;
+
+          drawChar(ch, pt.x + wjX + cjX, pt.y + wjY + cjY, cRot, Math.max(0.1, cScale), p.fillStyle);
+          currentT += stepT;
+        });
+
+        currentT += stepT * 0.5;
+      });
+    }
+
+    ctx.restore();
+  },
+
+  eval(tx, ty, sx, sy, p, lay) {
+    let bufObj = this.getTextBuffer(p, lay);
+    let pw = bufObj.width;
+    let ph = bufObj.height;
+
+    let scaleFactorX = (sx || 10) / 10;
+    let scaleFactorY = (sy || 10) / 10;
+    let stx = (tx - 0.5) * scaleFactorX + 0.5;
+    let sty = (ty - 0.5) * scaleFactorY + 0.5;
+
+    let px = ((stx % 1) + 1) % 1;
+    let py = ((sty % 1) + 1) % 1;
+
+    let x = px * (pw - 1);
+    let y = py * (ph - 1);
+
+    let x0 = Math.floor(x);
+    let y0 = Math.floor(y);
+    let x1 = Math.min(pw - 1, x0 + 1);
+    let y1 = Math.min(ph - 1, y0 + 1);
+
+    let fx = x - x0;
+    let fy = y - y0;
+
+    let buf = bufObj.buffer;
+    let v00 = buf[y0 * pw + x0];
+    let v10 = buf[y0 * pw + x1];
+    let v01 = buf[y1 * pw + x0];
+    let v11 = buf[y1 * pw + x1];
+
+    return (1 - fy) * ((1 - fx) * v00 + fx * v10) + fy * ((1 - fx) * v01 + fx * v11);
+  }
+};
+window.TextGenerator = TextGenerator;
+
 const MatrixDigitGenerator = {
   BITMAPS: {
     0: [14, 17, 19, 21, 25, 17, 14],
@@ -7039,6 +7403,9 @@ function evalGenerator(
     case "matrix_digits":
       v = MatrixDigitGenerator.eval(tx, ty, sx, sy, p);
       break;
+    case "text":
+      v = TextGenerator.eval(tx, ty, sx, sy, p, lay);
+      break;
     case "radial": {
       let cx = p.centerX ?? 0.5,
         cy = p.centerY ?? 0.5;
@@ -11193,6 +11560,7 @@ const GENERATOR_TYPES = [
   "cymatics",
   "heartbeat",
   "matrix_digits",
+  "text",
   "paint",
 ];
 
@@ -11374,6 +11742,19 @@ function randomizeAlgorithm(idx) {
     p.matrixDigitScaleJitter =
       Math.random() > 0.5 ? parseFloat((Math.random() * 0.5).toFixed(2)) : 0;
     p.matrixSeed = Math.floor(Math.random() * 9999);
+  }
+  if (lay.generatorType === "text") {
+    let shapes = ["standard", "circle_path", "circle_fill", "ellipse", "square", "rect_rounded", "star", "heart", "polygon", "wave", "spiral"];
+    p.textShape = shapes[Math.floor(Math.random() * shapes.length)];
+    p.textCharSize = Math.floor(28 + Math.random() * 50);
+    p.textCharSizeRandom = Math.floor(Math.random() * 50);
+    p.textWordJitterX = Math.floor(Math.random() * 30);
+    p.textWordJitterY = Math.floor(Math.random() * 30);
+    p.textCharJitterX = Math.floor(Math.random() * 20);
+    p.textCharJitterY = Math.floor(Math.random() * 20);
+    p.textCharRotation = Math.floor((Math.random() - 0.5) * 60);
+    p.textCharRotateRandom = Math.floor(Math.random() * 60);
+    p.textSeed = Math.floor(Math.random() * 10000);
   }
   if (lay.generatorType === "gradient") {
     let gradTypes = [
@@ -14603,9 +14984,105 @@ function renderProps() {
     );
   }
 
+  if (lay.generatorType === "text") {
+    algoSpecificHTML += `
+      <div class="section-title">🔤 Генератор Тексту та Фігур (Typography & Shape Text)</div>
+      
+      <div class="property-group">
+        <label class="property-label">Текст (підтримується перенос слів/Enter)</label>
+        <textarea class="form-control" rows="3" style="width:100%; font-size:12px; font-weight:600; padding:6px; resize:vertical; background:var(--bg-input, #1e1e28); color:#fff; border:1px solid rgba(255,255,255,0.15); border-radius:4px;"
+          oninput="upd('textContent', this.value); requestRender();"
+          placeholder="Введіть текст...\nПідтримується Enter">${lp.textContent !== undefined ? lp.textContent : "VEIL STUDIO\nSEAMLESS\nTEXTURES"}</textarea>
+      </div>
+
+      <div class="property-group grid-2">
+        <div>
+          <label class="property-label">Фігура / Форма розташування</label>
+          <select class="form-control" onchange="upd('textShape', this.value); renderProps();">
+            <option value="standard" ${(lp.textShape || "standard") === "standard" ? "selected" : ""}>📄 Блок тексту (Стандартний/Мультилайн)</option>
+            <option value="circle_path" ${lp.textShape === "circle_path" ? "selected" : ""}>⭕ По колу (Circle Path)</option>
+            <option value="circle_fill" ${lp.textShape === "circle_fill" ? "selected" : ""}>🔴 Заповнення кола (Circle Infill)</option>
+            <option value="ellipse" ${lp.textShape === "ellipse" ? "selected" : ""}>🥚 Овал / Еліпс (Ellipse Path)</option>
+            <option value="square" ${lp.textShape === "square" ? "selected" : ""}>⬛ Квадрат (Square Perimeter)</option>
+            <option value="rect_rounded" ${lp.textShape === "rect_rounded" ? "selected" : ""}>🔲 Прямокутник із закругленням (Rounded Rect)</option>
+            <option value="star" ${lp.textShape === "star" ? "selected" : ""}>⭐ Зірка (Star Contour)</option>
+            <option value="heart" ${lp.textShape === "heart" ? "selected" : ""}>💖 Серце (Heart Shape)</option>
+            <option value="polygon" ${lp.textShape === "polygon" ? "selected" : ""}>🔷 Багатокутник (Polygon)</option>
+            <option value="wave" ${lp.textShape === "wave" ? "selected" : ""}>🌊 Хвиля (Sinusoidal Wave)</option>
+            <option value="spiral" ${lp.textShape === "spiral" ? "selected" : ""}>🌀 Спіраль (Archimedean Spiral)</option>
+          </select>
+        </div>
+        <div>
+          <label class="property-label">Гарнітура / Шрифт</label>
+          <select class="form-control" onchange="upd('textFontFamily', this.value); requestRender();">
+            <option value="sans-serif" ${(lp.textFontFamily || "sans-serif") === "sans-serif" ? "selected" : ""}>Sans-Serif (Plus Jakarta)</option>
+            <option value="serif" ${lp.textFontFamily === "serif" ? "selected" : ""}>Serif (Georgia / Класичний)</option>
+            <option value="monospace" ${lp.textFontFamily === "monospace" ? "selected" : ""}>Monospace (Код / Моно)</option>
+            <option value="system-ui" ${lp.textFontFamily === "system-ui" ? "selected" : ""}>System UI (Системний)</option>
+            <option value="impact" ${lp.textFontFamily === "impact" ? "selected" : ""}>Impact / Display (Жирний заголовок)</option>
+          </select>
+        </div>
+      </div>
+
+      ${(lp.textShape === "rect_rounded") ? createSlider("Закруглення кутів (Corner Radius)", "textCornerRadius", 0, 100, 1, lp.textCornerRadius !== undefined ? lp.textCornerRadius : 20, false, 20) : ""}
+      ${(lp.textShape === "polygon") ? createSlider("Кількість граней багатокутника", "textPolySides", 3, 12, 1, lp.textPolySides || 5, false, 5) : ""}
+      ${(lp.textShape === "star") ? createSlider("Кількість променів зірки", "textStarPoints", 3, 12, 1, lp.textStarPoints || 5, false, 5) + createSlider("Внутрішній радіус зірки", "textStarInner", 0.1, 0.9, 0.05, lp.textStarInner !== undefined ? lp.textStarInner : 0.5, false, 0.5) : ""}
+      ${(lp.textShape === "wave") ? createSlider("Частота хвилі", "textWaveFreq", 1, 10, 0.5, lp.textWaveFreq || 3, false, 3) + createSlider("Амплітуда хвилі", "textWaveAmp", 5, 150, 5, lp.textWaveAmp || 40, false, 40) : ""}
+
+      <div class="property-group grid-2">
+        <div>
+          <label class="property-label">Вирівнювання тексту</label>
+          <select class="form-control" onchange="upd('textAlign', this.value); requestRender();">
+            <option value="center" ${(lp.textAlign || "center") === "center" ? "selected" : ""}>↔️ По центру (Center)</option>
+            <option value="left" ${lp.textAlign === "left" ? "selected" : ""}>⬅️ Лівий край (Left)</option>
+            <option value="right" ${lp.textAlign === "right" ? "selected" : ""}>➡️ Правий край (Right)</option>
+          </select>
+        </div>
+        <div>
+          <label class="property-label">Стиль заповнення букв</label>
+          <select class="form-control" onchange="upd('textFillStyle', this.value); requestRender();">
+            <option value="solid" ${(lp.textFillStyle || "solid") === "solid" ? "selected" : ""}>░ Суцільний (Solid)</option>
+            <option value="outline" ${lp.textFillStyle === "outline" ? "selected" : ""}>🔲 Контур (Outline)</option>
+            <option value="glow" ${lp.textFillStyle === "glow" ? "selected" : ""}>✨ Світіння / М'який (Glow)</option>
+          </select>
+        </div>
+      </div>
+
+      ${createSlider("Базовий розмір букв (Font Size)", "textCharSize", 8, 200, 2, lp.textCharSize || 48, false, 48)}
+      ${createSlider("Рандомний розмір букв (Size Randomness)", "textCharSizeRandom", 0, 100, 5, lp.textCharSizeRandom || 0, false, 0)}
+      ${createSlider("Міжлітерний інтервал (Tracking)", "textTracking", -20, 100, 1, lp.textTracking || 0, false, 0)}
+      ${createSlider("Міжрядковий інтервал (Leading)", "textLeading", 0.5, 3.0, 0.1, lp.textLeading || 1.2, false, 1.2)}
+
+      <div class="section-title" style="margin-top:10px;">🎲 Розкидання слів (Word Jitter)</div>
+      ${createSlider("Зміщення слів по X (Word Jitter X)", "textWordJitterX", 0, 150, 1, lp.textWordJitterX || 0, false, 0)}
+      ${createSlider("Зміщення слів по Y (Word Jitter Y)", "textWordJitterY", 0, 150, 1, lp.textWordJitterY || 0, false, 0)}
+
+      <div class="section-title" style="margin-top:10px;">🔤 Розкидання та Поворот букв (Letter Jitter & Rotation)</div>
+      ${createSlider("Зміщення букв по X (Letter Jitter X)", "textCharJitterX", 0, 100, 1, lp.textCharJitterX || 0, false, 0)}
+      ${createSlider("Зміщення букв по Y (Letter Jitter Y)", "textCharJitterY", 0, 100, 1, lp.textCharJitterY || 0, false, 0)}
+      ${createSlider("Базовий поворот букв (Letter Rotation)", "textCharRotation", -180, 180, 5, lp.textCharRotation || 0, false, 0)}
+      ${createSlider("Рандомний поворот букв (Rotation Randomness)", "textCharRotateRandom", 0, 180, 5, lp.textCharRotateRandom || 0, false, 0)}
+
+      <div class="property-group grid-2" style="margin-top:8px;">
+        <div>
+          <label class="property-label">Псевдовипадковий Seed</label>
+          <div style="display:flex; gap:4px;">
+            <input type="number" class="form-control" min="0" max="9999" value="${lp.textSeed || 0}" onchange="upd('textSeed', parseInt(this.value)||0)" style="font-size:11px;">
+            <button type="button" class="btn btn-secondary" style="padding:2px 8px; font-size:11px;" onclick="upd('textSeed', Math.floor(Math.random()*9999)); renderProps();" title="Випадковий seed">🎲</button>
+          </div>
+        </div>
+        <div>
+          <label class="property-label">Повторень вздовж форми</label>
+          <input type="number" class="form-control" min="1" max="20" value="${lp.textRepeat || 1}" onchange="upd('textRepeat', Math.max(1, parseInt(this.value)||1)); requestRender();" style="font-size:11px;">
+        </div>
+      </div>
+    `;
+  }
+
   const algoLabels = {
     gradient: "Градієнт (Gradient)",
     paint: "Малювання (Paint Canvas)",
+    text: "🔤 Текст та Дизайн Фігур (Typography & Shapes)",
     simplex: "Simplex Noise",
     perlin: "Perlin Noise",
     voronoi: "Вороной (Voronoi)",
