@@ -213,6 +213,28 @@ export class CanvasProcessingEngine {
   }
 
   /**
+   * Helper: Gaussian Blur on Float32Array (3-pass Box Blur approximation)
+   */
+  static gaussianBlurFloatBuffer(buffer, width, height, radius) {
+    if (!radius || radius < 1) return buffer;
+    const sigma = radius / 2;
+    const wIdeal = Math.sqrt((12 * sigma * sigma) / 3 + 1);
+    let wl = Math.floor(wIdeal);
+    if (wl % 2 === 0) wl--;
+    let wu = wl + 2;
+    let mIdeal = (12 * sigma * sigma - 3 * wl * wl - 12 * wl - 9) / (-4 * wl - 4);
+    let m = Math.round(mIdeal);
+
+    let res = buffer;
+    for (let i = 0; i < 3; i++) {
+      let w = i < m ? wl : wu;
+      let r = Math.max(1, Math.floor((w - 1) / 2));
+      res = this.boxBlurFloatBuffer(res, width, height, r);
+    }
+    return res;
+  }
+
+  /**
    * Helper: Directional Blur on Float32Array
    */
   static directionalBlurFloatBuffer(

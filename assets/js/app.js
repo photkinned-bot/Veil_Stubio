@@ -5067,65 +5067,30 @@ function applyBoxBlur(buf, tmp, w, h, rad, mode = "wrap") {
   }
 }
 
-const gaussianKernelCache = new Map();
-function getGaussianWeights(kSize) {
-  if (gaussianKernelCache.has(kSize)) {
-    return gaussianKernelCache.get(kSize);
+function boxesForGauss(sigma, n = 3) {
+  if (sigma <= 0) return [1, 1, 1];
+  let wIdeal = Math.sqrt((12 * sigma * sigma) / n + 1);
+  let wl = Math.floor(wIdeal);
+  if (wl % 2 === 0) wl--;
+  let wu = wl + 2;
+  let mIdeal = (12 * sigma * sigma - n * wl * wl - 4 * n * wl - 3 * n) / (-4 * wl - 4);
+  let m = Math.round(mIdeal);
+  let sizes = [];
+  for (let i = 0; i < n; i++) {
+    sizes.push(i < m ? wl : wu);
   }
-  let sigma = Math.max(kSize / 2, 0.5);
-  let weights = new Float32Array(2 * kSize + 1);
-  let weightSum = 0;
-  for (let i = -kSize; i <= kSize; i++) {
-    let wVal = Math.exp(-(i * i) / (2 * sigma * sigma));
-    weights[i + kSize] = wVal;
-    weightSum += wVal;
-  }
-  for (let i = 0; i < weights.length; i++) {
-    weights[i] /= weightSum;
-  }
-  gaussianKernelCache.set(kSize, weights);
-  return weights;
+  return sizes;
 }
 
 function applyGaussianBlur(buf, tmp, w, h, rad, mode = "wrap") {
   if (!rad || rad <= 0) return;
   let scaledRad = Math.max(1, Math.round(rad * (w / 512)));
-  let r = scaledRad;
-  let invWindow = 1 / (2 * r + 1);
+  let sigma = scaledRad / 2;
+  let boxSizes = boxesForGauss(sigma, 3);
 
-  // Horizontal pass
-  for (let y = 0; y < h; y++) {
-    let rowOffset = y * w;
-    let sum = 0;
-    for (let dx = -r; dx <= r; dx++) {
-      let nx = ((dx % w) + w) % w;
-      sum += buf[rowOffset + nx];
-    }
-    tmp[rowOffset] = sum * invWindow;
-
-    for (let x = 1; x < w; x++) {
-      let left = (x - r - 1 + w) % w;
-      let right = (x + r) % w;
-      sum += buf[rowOffset + right] - buf[rowOffset + left];
-      tmp[rowOffset + x] = sum * invWindow;
-    }
-  }
-
-  // Vertical pass
-  for (let x = 0; x < w; x++) {
-    let sum = 0;
-    for (let dy = -r; dy <= r; dy++) {
-      let ny = ((dy % h) + h) % h;
-      sum += tmp[ny * w + x];
-    }
-    buf[x] = sum * invWindow;
-
-    for (let y = 1; y < h; y++) {
-      let top = (y - r - 1 + h) % h;
-      let bottom = (y + r) % h;
-      sum += tmp[bottom * w + x] - tmp[top * w + x];
-      buf[y * w + x] = sum * invWindow;
-    }
+  for (let i = 0; i < 3; i++) {
+    let r = Math.max(1, Math.floor((boxSizes[i] - 1) / 2));
+    applyBoxBlur(buf, tmp, w, h, r, mode);
   }
 }
 
