@@ -34,20 +34,28 @@ export class CanvasProcessingEngine {
     }
 
     const n = cleanPts.length;
-    const x = new Float32Array(n);
-    const y = new Float32Array(n);
+    const x = window.globalBufferPool
+      ? window.globalBufferPool.acquireFloat32(n)
+      : new Float32Array(n);
+    const y = window.globalBufferPool
+      ? window.globalBufferPool.acquireFloat32(n)
+      : new Float32Array(n);
     for (let i = 0; i < n; i++) {
       x[i] = Math.max(0, Math.min(1, cleanPts[i].x));
       y[i] = Math.max(0, Math.min(1, cleanPts[i].y));
     }
 
-    const m = new Float32Array(n - 1);
+    const m = window.globalBufferPool
+      ? window.globalBufferPool.acquireFloat32(n - 1)
+      : new Float32Array(n - 1);
     for (let i = 0; i < n - 1; i++) {
       let dx = x[i + 1] - x[i];
       m[i] = dx > 0 ? (y[i + 1] - y[i]) / dx : 0;
     }
 
-    const d = new Float32Array(n);
+    const d = window.globalBufferPool
+      ? window.globalBufferPool.acquireFloat32(n)
+      : new Float32Array(n);
     d[0] = m[0];
     d[n - 1] = m[n - 2];
     for (let i = 1; i < n - 1; i++) {
@@ -110,6 +118,13 @@ export class CanvasProcessingEngine {
       lut[k] = Math.max(0, Math.min(1, val));
     }
 
+    if (window.globalBufferPool) {
+      window.globalBufferPool.releaseFloat32(x);
+      window.globalBufferPool.releaseFloat32(y);
+      window.globalBufferPool.releaseFloat32(m);
+      window.globalBufferPool.releaseFloat32(d);
+    }
+
     return lut;
   }
 
@@ -145,7 +160,9 @@ export class CanvasProcessingEngine {
     const height = imageData.height;
     const data = imageData.data;
     const length = width * height;
-    const gray = new Float32Array(length);
+    const gray = window.globalBufferPool
+      ? window.globalBufferPool.acquireFloat32(length)
+      : new Float32Array(length);
 
     for (let i = 0; i < length; i++) {
       const idx = i * 4;
@@ -169,7 +186,9 @@ export class CanvasProcessingEngine {
     const tmp = window.globalBufferPool
       ? window.globalBufferPool.acquireFloat32(size)
       : new Float32Array(size);
-    const out = new Float32Array(size);
+    const out = window.globalBufferPool
+      ? window.globalBufferPool.acquireFloat32(size)
+      : new Float32Array(size);
 
     const r = radius;
     const rInt = Math.floor(r);
@@ -258,7 +277,11 @@ export class CanvasProcessingEngine {
 
     let res = buffer;
     for (let i = 0; i < 3; i++) {
-      res = this.boxBlurFloatBuffer(res, width, height, rBox);
+      const prev = res;
+      res = this.boxBlurFloatBuffer(prev, width, height, rBox);
+      if (prev !== buffer && prev !== res && window.globalBufferPool) {
+        window.globalBufferPool.releaseFloat32(prev);
+      }
     }
     return res;
   }
@@ -438,10 +461,18 @@ export class CanvasProcessingEngine {
 
     const intOx = new Int32Array(kLen);
     const intOy = new Int32Array(kLen);
-    const w00 = new Float32Array(kLen);
-    const w10 = new Float32Array(kLen);
-    const w01 = new Float32Array(kLen);
-    const w11 = new Float32Array(kLen);
+    const w00 = window.globalBufferPool
+      ? window.globalBufferPool.acquireFloat32(kLen)
+      : new Float32Array(kLen);
+    const w10 = window.globalBufferPool
+      ? window.globalBufferPool.acquireFloat32(kLen)
+      : new Float32Array(kLen);
+    const w01 = window.globalBufferPool
+      ? window.globalBufferPool.acquireFloat32(kLen)
+      : new Float32Array(kLen);
+    const w11 = window.globalBufferPool
+      ? window.globalBufferPool.acquireFloat32(kLen)
+      : new Float32Array(kLen);
 
     let maxOffX = 0, maxOffY = 0;
     for (let k = 0; k < kLen; k++) {
@@ -502,6 +533,13 @@ export class CanvasProcessingEngine {
         dstBuf[rowOffset + x] = sum;
       }
     }
+
+    if (window.globalBufferPool) {
+      window.globalBufferPool.releaseFloat32(w00);
+      window.globalBufferPool.releaseFloat32(w10);
+      window.globalBufferPool.releaseFloat32(w01);
+      window.globalBufferPool.releaseFloat32(w11);
+    }
   }
 
   /**
@@ -518,7 +556,9 @@ export class CanvasProcessingEngine {
   ) {
     if (!radius || radius < 1) return buffer;
     const size = width * height;
-    const out = new Float32Array(size);
+    const out = window.globalBufferPool
+      ? window.globalBufferPool.acquireFloat32(size)
+      : new Float32Array(size);
     const centerX = cx * width;
     const centerY = cy * height;
     const str = strength !== undefined ? strength : 1.0;
@@ -531,7 +571,9 @@ export class CanvasProcessingEngine {
     if (steps % 2 === 0) steps += 1;
     const halfSteps = (steps - 1) / 2;
 
-    const weights = new Float32Array(steps);
+    const weights = window.globalBufferPool
+      ? window.globalBufferPool.acquireFloat32(steps)
+      : new Float32Array(steps);
     let totalW = 0;
     for (let k = -halfSteps; k <= halfSteps; k++) {
       const idx = k + halfSteps;
@@ -582,6 +624,7 @@ export class CanvasProcessingEngine {
         out[rowOffset + x] = sum * invTotalW;
       }
     }
+    if (window.globalBufferPool) window.globalBufferPool.releaseFloat32(weights);
     return out;
   }
 
@@ -640,8 +683,12 @@ export class CanvasProcessingEngine {
     const halfSteps = (numSteps - 1) / 2;
     const isClamp = mode === "clamp";
 
-    const stepsT = new Float32Array(numSteps);
-    const stepsW = new Float32Array(numSteps);
+    const stepsT = window.globalBufferPool
+      ? window.globalBufferPool.acquireFloat32(numSteps)
+      : new Float32Array(numSteps);
+    const stepsW = window.globalBufferPool
+      ? window.globalBufferPool.acquireFloat32(numSteps)
+      : new Float32Array(numSteps);
     let totalWeightSum = 0;
     for (let k = -halfSteps; k <= halfSteps; k++) {
       const idx = k + halfSteps;
@@ -772,7 +819,9 @@ export class CanvasProcessingEngine {
   static sharpenFloatBuffer(buffer, width, height, amount) {
     if (!amount || amount <= 0) return buffer;
     const size = width * height;
-    const out = new Float32Array(size);
+    const out = window.globalBufferPool
+      ? window.globalBufferPool.acquireFloat32(size)
+      : new Float32Array(size);
 
     for (let y = 0; y < height; y++) {
       const prevY = (y - 1 + height) % height;
@@ -824,10 +873,18 @@ export class CanvasProcessingEngine {
     let gray = this.getGrayscaleBuffer(srcImageData);
 
     if (blur > 0) {
-      gray = this.boxBlurFloatBuffer(gray, width, height, blur * 2);
+      const blurred = this.boxBlurFloatBuffer(gray, width, height, blur * 2);
+      if (blurred !== gray && window.globalBufferPool) {
+        window.globalBufferPool.releaseFloat32(gray);
+      }
+      gray = blurred;
     }
     if (sharp > 0) {
-      gray = this.sharpenFloatBuffer(gray, width, height, sharp * 0.5);
+      const sharpened = this.sharpenFloatBuffer(gray, width, height, sharp * 0.5);
+      if (sharpened !== gray && window.globalBufferPool) {
+        window.globalBufferPool.releaseFloat32(gray);
+      }
+      gray = sharpened;
     }
 
     const outImageData = new ImageData(width, height);
@@ -919,6 +976,9 @@ export class CanvasProcessingEngine {
       }
     }
 
+    if (window.globalBufferPool) {
+      window.globalBufferPool.releaseFloat32(gray);
+    }
     return outImageData;
   }
 
@@ -960,6 +1020,9 @@ export class CanvasProcessingEngine {
       out[idx + 3] = 255;
     }
 
+    if (window.globalBufferPool) {
+      window.globalBufferPool.releaseFloat32(gray);
+    }
     return outImageData;
   }
 
@@ -981,7 +1044,11 @@ export class CanvasProcessingEngine {
     let gray = this.getGrayscaleBuffer(srcImageData);
 
     if (sharp > 0) {
-      gray = this.sharpenFloatBuffer(gray, width, height, sharp * 0.5);
+      const sharpened = this.sharpenFloatBuffer(gray, width, height, sharp * 0.5);
+      if (sharpened !== gray && window.globalBufferPool) {
+        window.globalBufferPool.releaseFloat32(gray);
+      }
+      gray = sharpened;
     }
 
     const outImageData = new ImageData(width, height);
@@ -1056,6 +1123,7 @@ export class CanvasProcessingEngine {
     }
 
     if (window.globalBufferPool) {
+      window.globalBufferPool.releaseFloat32(gray);
       window.globalBufferPool.releaseFloat32(outBuffer);
       if (finalBuffer !== outBuffer)
         window.globalBufferPool.releaseFloat32(finalBuffer);
@@ -1081,10 +1149,18 @@ export class CanvasProcessingEngine {
     let gray = this.getGrayscaleBuffer(srcImageData);
 
     if (blur > 0) {
-      gray = this.boxBlurFloatBuffer(gray, width, height, blur * 2);
+      const blurred = this.boxBlurFloatBuffer(gray, width, height, blur * 2);
+      if (blurred !== gray && window.globalBufferPool) {
+        window.globalBufferPool.releaseFloat32(gray);
+      }
+      gray = blurred;
     }
     if (sharp > 0) {
-      gray = this.sharpenFloatBuffer(gray, width, height, sharp * 0.5);
+      const sharpened = this.sharpenFloatBuffer(gray, width, height, sharp * 0.5);
+      if (sharpened !== gray && window.globalBufferPool) {
+        window.globalBufferPool.releaseFloat32(gray);
+      }
+      gray = sharpened;
     }
 
     const outImageData = new ImageData(width, height);
@@ -1132,6 +1208,9 @@ export class CanvasProcessingEngine {
       }
     }
 
+    if (window.globalBufferPool) {
+      window.globalBufferPool.releaseFloat32(gray);
+    }
     return outImageData;
   }
 
