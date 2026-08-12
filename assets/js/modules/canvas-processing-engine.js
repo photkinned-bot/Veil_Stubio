@@ -1120,6 +1120,37 @@ export class CanvasProcessingEngine {
     ctx.putImageData(imageData, 0, 0);
     return canvas.toDataURL(format, quality);
   }
+
+  /**
+   * Helper: Generate GPU-Accelerated Procedural Noise Float32Array
+   */
+  static generateProceduralNoise(type, width, height, options = {}) {
+    if (typeof window !== "undefined" && window.globalWebGLRenderer && window.globalWebGLRenderer.isSupported) {
+      const gpuBuf = window.globalWebGLRenderer.renderNoiseFloatBuffer(type, width, height, options);
+      if (gpuBuf) return gpuBuf;
+    }
+
+    // CPU Fallback Grayscale Buffer [0..1]
+    const size = width * height;
+    const out = window.globalBufferPool
+      ? window.globalBufferPool.acquireFloat32(size)
+      : new Float32Array(size);
+
+    const scaleX = options.scaleX !== undefined ? options.scaleX : options.scale || 10;
+    const scaleY = options.scaleY !== undefined ? options.scaleY : options.scale || 10;
+    const invW = 1 / width;
+    const invH = 1 / height;
+
+    for (let y = 0; y < height; y++) {
+      const row = y * width;
+      const ny = y * invH;
+      for (let x = 0; x < width; x++) {
+        const nx = x * invW;
+        out[row + x] = Math.max(0, Math.min(1, Math.sin(nx * scaleX) * Math.cos(ny * scaleY) * 0.5 + 0.5));
+      }
+    }
+    return out;
+  }
 }
 
 window.CanvasProcessingEngine = CanvasProcessingEngine;
