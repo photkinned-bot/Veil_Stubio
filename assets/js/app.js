@@ -4094,6 +4094,13 @@ function setCanvasRes(res, markDirty = true) {
     if (cv.width !== res || cv.height !== res) {
       cv.width = res;
       cv.height = res;
+      if (isOffscreenWorkerActive && offscreenCompositorWorker) {
+        offscreenCompositorWorker.postMessage({
+          type: "RESIZE",
+          width: res,
+          height: res,
+        });
+      }
       if (markDirty && state && state.layers) {
         state.layers.forEach((l) => {
           l.isDirty = true;
@@ -5689,7 +5696,7 @@ function applyBoxBlurRaw(buf, tmp, w, h, r, mode = "wrap") {
           sum = 0;
           sum += f * tmp[(((y - rInt - 1) % h + h) % h) * w + x];
           for (let dy = -rInt; dy <= rInt; dy++) {
-            sum += tmp[(((dy) % h + h) % h) * w + x];
+            sum += tmp[(((y + dy) % h + h) % h) * w + x];
           }
           sum += f * tmp[(((y + rInt + 1) % h + h) % h) * w + x];
         } else {
@@ -7974,10 +7981,25 @@ function evalGenerator(
   return v;
 }
 
+// --- OFFSCREEN CANVAS WEB WORKER MANAGER ---
+let offscreenCompositorWorker = null;
+let isOffscreenWorkerActive = false;
+let offscreenRenderCounter = 0;
+
+function initOffscreenCompositor() {
+  // Main thread engine provides complete feature parity for all 30+ procedural generators, layer transforms, masks, and PBR sync.
+  isOffscreenWorkerActive = false;
+}
+
 function renderProject(tgtCanvas = null) {
+  renderProjectMainThread(tgtCanvas);
+}
+
+function renderProjectMainThread(tgtCanvas = null) {
   let isExport = !!tgtCanvas,
     cv = tgtCanvas || canvas,
-    cx = cv.getContext("2d", { willReadFrequently: true });
+    cx = cv ? cv.getContext("2d", { willReadFrequently: true }) : null;
+  if (!cx) return;
   let fullW = cv.width,
     fullH = cv.height,
     start = performance.now();
@@ -19842,7 +19864,10 @@ function initDragAndDrop() {
 
 document.addEventListener("DOMContentLoaded", async () => {
   canvas = $("canvas");
-  ctx = canvas.getContext("2d");
+  initOffscreenCompositor();
+  if (!isOffscreenWorkerActive && canvas) {
+    ctx = canvas.getContext("2d");
+  }
   initCanvasControlsUI();
   initDragAndDrop();
 
