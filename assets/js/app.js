@@ -5550,102 +5550,174 @@ const Blend = {
 };
 
 function applyBoxBlur(buf, tmp, w, h, rad, mode = "wrap") {
-  let scaledRad = Math.max(0, Math.round(rad * (w / 512)));
-  if (scaledRad <= 0) return;
-  let r = scaledRad;
+  if (!rad || rad <= 0) return;
+  let scaledRad = rad * (w / 512.0);
+  if (scaledRad <= 0.001) return;
+  applyBoxBlurRaw(buf, tmp, w, h, scaledRad, mode);
+}
+
+function applyBoxBlurRaw(buf, tmp, w, h, r, mode = "wrap") {
+  if (r <= 0.001) return;
   let effectiveMode = mode;
   if (typeof mode === "boolean") {
     effectiveMode = mode ? "clamp" : "wrap";
   }
 
-  let invWindow = 1 / (2 * r + 1);
+  let rInt = Math.floor(r);
+  let f = r - rInt;
+  let invWindow = 1.0 / (2.0 * r + 1.0);
 
-  // Horizontal Pass O(1) Moving Sum
+  // Horizontal Pass O(1) moving sum with exact fractional weights
   for (let y = 0; y < h; y++) {
     let rowOffset = y * w;
     let sum = 0;
-    for (let dx = -r; dx <= r; dx++) {
-      let nx = dx;
-      if (effectiveMode === "clamp") nx = nx < 0 ? 0 : nx >= w ? w - 1 : nx;
-      else if (effectiveMode === "wrap") nx = ((nx % w) + w) % w;
-      else nx = nx < 0 ? 0 : nx >= w ? w - 1 : nx;
-      sum += buf[rowOffset + nx];
-    }
-    tmp[rowOffset] = sum * invWindow;
 
-    for (let x = 1; x < w; x++) {
-      let leftX = x - r - 1;
-      let rightX = x + r;
-      if (effectiveMode === "clamp") {
-        leftX = leftX < 0 ? 0 : leftX;
-        rightX = rightX >= w ? w - 1 : rightX;
-      } else if (effectiveMode === "wrap") {
-        leftX = ((leftX % w) + w) % w;
-        rightX = ((rightX % w) + w) % w;
-      } else {
-        leftX = leftX < 0 ? 0 : leftX;
-        rightX = rightX >= w ? w - 1 : rightX;
+    if (effectiveMode === "clamp") {
+      let idxL = Math.max(0, Math.min(w - 1, -rInt - 1));
+      sum += f * buf[rowOffset + idxL];
+      for (let dx = -rInt; dx <= rInt; dx++) {
+        let idx = Math.max(0, Math.min(w - 1, dx));
+        sum += buf[rowOffset + idx];
       }
-      sum += buf[rowOffset + rightX] - buf[rowOffset + leftX];
-      tmp[rowOffset + x] = sum * invWindow;
+      let idxR = Math.max(0, Math.min(w - 1, rInt + 1));
+      sum += f * buf[rowOffset + idxR];
+
+      tmp[rowOffset] = sum * invWindow;
+
+      for (let x = 1; x < w; x++) {
+        if (x % 32 === 0) {
+          sum = 0;
+          let iL = Math.max(0, Math.min(w - 1, x - rInt - 1));
+          sum += f * buf[rowOffset + iL];
+          for (let dx = -rInt; dx <= rInt; dx++) {
+            let iM = Math.max(0, Math.min(w - 1, x + dx));
+            sum += buf[rowOffset + iM];
+          }
+          let iR = Math.max(0, Math.min(w - 1, x + rInt + 1));
+          sum += f * buf[rowOffset + iR];
+        } else {
+          let o1 = Math.max(0, Math.min(w - 1, x - 1 - rInt - 1));
+          let o2 = Math.max(0, Math.min(w - 1, x - 1 - rInt));
+          let i1 = Math.max(0, Math.min(w - 1, x - 1 + rInt + 1));
+          let i2 = Math.max(0, Math.min(w - 1, x - 1 + rInt + 2));
+
+          sum += f * buf[rowOffset + i2] + (1.0 - f) * buf[rowOffset + i1]
+               - (1.0 - f) * buf[rowOffset + o2] - f * buf[rowOffset + o1];
+        }
+        tmp[rowOffset + x] = sum * invWindow;
+      }
+    } else {
+      sum += f * buf[rowOffset + (((-rInt - 1) % w + w) % w)];
+      for (let dx = -rInt; dx <= rInt; dx++) {
+        sum += buf[rowOffset + (((dx) % w + w) % w)];
+      }
+      sum += f * buf[rowOffset + (((rInt + 1) % w + w) % w)];
+
+      tmp[rowOffset] = sum * invWindow;
+
+      for (let x = 1; x < w; x++) {
+        if (x % 32 === 0) {
+          sum = 0;
+          sum += f * buf[rowOffset + (((x - rInt - 1) % w + w) % w)];
+          for (let dx = -rInt; dx <= rInt; dx++) {
+            sum += buf[rowOffset + (((x + dx) % w + w) % w)];
+          }
+          sum += f * buf[rowOffset + (((x + rInt + 1) % w + w) % w)];
+        } else {
+          let o1 = ((x - 1 - rInt - 1) % w + w) % w;
+          let o2 = ((x - 1 - rInt) % w + w) % w;
+          let i1 = ((x - 1 + rInt + 1) % w + w) % w;
+          let i2 = ((x - 1 + rInt + 2) % w + w) % w;
+
+          sum += f * buf[rowOffset + i2] + (1.0 - f) * buf[rowOffset + i1]
+               - (1.0 - f) * buf[rowOffset + o2] - f * buf[rowOffset + o1];
+        }
+        tmp[rowOffset + x] = sum * invWindow;
+      }
     }
   }
 
-  // Vertical Pass O(1) Moving Sum
+  // Vertical Pass O(1) moving sum with exact fractional weights
   for (let x = 0; x < w; x++) {
     let sum = 0;
-    for (let dy = -r; dy <= r; dy++) {
-      let ny = dy;
-      if (effectiveMode === "clamp") ny = ny < 0 ? 0 : ny >= h ? h - 1 : ny;
-      else if (effectiveMode === "wrap") ny = ((ny % h) + h) % h;
-      else ny = ny < 0 ? 0 : ny >= h ? h - 1 : ny;
-      sum += tmp[ny * w + x];
-    }
-    buf[x] = sum * invWindow;
 
-    for (let y = 1; y < h; y++) {
-      let topY = y - r - 1;
-      let bottomY = y + r;
-      if (effectiveMode === "clamp") {
-        topY = topY < 0 ? 0 : topY;
-        bottomY = bottomY >= h ? h - 1 : bottomY;
-      } else if (effectiveMode === "wrap") {
-        topY = ((topY % h) + h) % h;
-        bottomY = ((bottomY % h) + h) % h;
-      } else {
-        topY = topY < 0 ? 0 : topY;
-        bottomY = bottomY >= h ? h - 1 : bottomY;
+    if (effectiveMode === "clamp") {
+      let idxL = Math.max(0, Math.min(h - 1, -rInt - 1));
+      sum += f * tmp[idxL * w + x];
+      for (let dy = -rInt; dy <= rInt; dy++) {
+        let idx = Math.max(0, Math.min(h - 1, dy));
+        sum += tmp[idx * w + x];
       }
-      sum += tmp[bottomY * w + x] - tmp[topY * w + x];
-      buf[y * w + x] = sum * invWindow;
+      let idxR = Math.max(0, Math.min(h - 1, rInt + 1));
+      sum += f * tmp[idxR * w + x];
+
+      buf[x] = sum * invWindow;
+
+      for (let y = 1; y < h; y++) {
+        if (y % 32 === 0) {
+          sum = 0;
+          let iL = Math.max(0, Math.min(h - 1, y - rInt - 1));
+          sum += f * tmp[iL * w + x];
+          for (let dy = -rInt; dy <= rInt; dy++) {
+            let iM = Math.max(0, Math.min(h - 1, y + dy));
+            sum += tmp[iM * w + x];
+          }
+          let iR = Math.max(0, Math.min(h - 1, y + rInt + 1));
+          sum += f * tmp[iR * w + x];
+        } else {
+          let o1 = Math.max(0, Math.min(h - 1, y - 1 - rInt - 1));
+          let o2 = Math.max(0, Math.min(h - 1, y - 1 - rInt));
+          let i1 = Math.max(0, Math.min(h - 1, y - 1 + rInt + 1));
+          let i2 = Math.max(0, Math.min(h - 1, y - 1 + rInt + 2));
+
+          sum += f * tmp[i2 * w + x] + (1.0 - f) * tmp[i1 * w + x]
+               - (1.0 - f) * tmp[o2 * w + x] - f * tmp[o1 * w + x];
+        }
+        buf[y * w + x] = sum * invWindow;
+      }
+    } else {
+      sum += f * tmp[(((-rInt - 1) % h + h) % h) * w + x];
+      for (let dy = -rInt; dy <= rInt; dy++) {
+        sum += tmp[(((dy) % h + h) % h) * w + x];
+      }
+      sum += f * tmp[(((rInt + 1) % h + h) % h) * w + x];
+
+      buf[x] = sum * invWindow;
+
+      for (let y = 1; y < h; y++) {
+        if (y % 32 === 0) {
+          sum = 0;
+          sum += f * tmp[(((y - rInt - 1) % h + h) % h) * w + x];
+          for (let dy = -rInt; dy <= rInt; dy++) {
+            sum += tmp[(((dy) % h + h) % h) * w + x];
+          }
+          sum += f * tmp[(((y + rInt + 1) % h + h) % h) * w + x];
+        } else {
+          let o1 = ((y - 1 - rInt - 1) % h + h) % h;
+          let o2 = ((y - 1 - rInt) % h + h) % h;
+          let i1 = ((y - 1 + rInt + 1) % h + h) % h;
+          let i2 = ((y - 1 + rInt + 2) % h + h) % h;
+
+          sum += f * tmp[i2 * w + x] + (1.0 - f) * tmp[i1 * w + x]
+               - (1.0 - f) * tmp[o2 * w + x] - f * tmp[o1 * w + x];
+        }
+        buf[y * w + x] = sum * invWindow;
+      }
     }
   }
-}
-
-function boxesForGauss(sigma, n = 3) {
-  if (sigma <= 0) return [1, 1, 1];
-  let wIdeal = Math.sqrt((12 * sigma * sigma) / n + 1);
-  let wl = Math.floor(wIdeal);
-  if (wl % 2 === 0) wl--;
-  let wu = wl + 2;
-  let mIdeal = (12 * sigma * sigma - n * wl * wl - 4 * n * wl - 3 * n) / (-4 * wl - 4);
-  let m = Math.round(mIdeal);
-  let sizes = [];
-  for (let i = 0; i < n; i++) {
-    sizes.push(i < m ? wl : wu);
-  }
-  return sizes;
 }
 
 function applyGaussianBlur(buf, tmp, w, h, rad, mode = "wrap") {
   if (!rad || rad <= 0) return;
-  let scaledRad = Math.max(1, Math.round(rad * (w / 512)));
-  let sigma = scaledRad / 2;
-  let boxSizes = boxesForGauss(sigma, 3);
+  let scaledRad = rad * (w / 512.0);
+  if (scaledRad <= 0.001) return;
+
+  let sigma = scaledRad / 2.0;
+  let wBox = Math.sqrt(4.0 * sigma * sigma + 1.0);
+  let rBox = (wBox - 1.0) / 2.0;
 
   for (let i = 0; i < 3; i++) {
-    let r = Math.max(1, Math.floor((boxSizes[i] - 1) / 2));
-    applyBoxBlur(buf, tmp, w, h, r, mode);
+    applyBoxBlurRaw(buf, tmp, w, h, rBox, mode);
   }
 }
 
@@ -5692,6 +5764,28 @@ function applyZoomBlur(
   mode = "wrap",
 ) {
   if (!rad || rad <= 0) return;
+  let scaledRad = rad * (w / 512.0);
+  if (scaledRad <= 0.001) return;
+
+  if (
+    window.CanvasProcessingEngine &&
+    window.CanvasProcessingEngine.zoomBlurFloatBuffer
+  ) {
+    let res = window.CanvasProcessingEngine.zoomBlurFloatBuffer(
+      buf,
+      w,
+      h,
+      scaledRad,
+      cx,
+      cy,
+      strength / 100.0,
+    );
+    for (let i = 0; i < w * h; i++) {
+      buf[i] = res[i];
+    }
+    return;
+  }
+
   let effectiveMode = mode;
   if (typeof mode === "boolean") {
     effectiveMode = mode ? "clamp" : "wrap";
@@ -8105,41 +8199,35 @@ function renderProject(tgtCanvas = null) {
       );
     }
     let bType = p.blurType || "gaussian";
-    let rad = bVal / w;
+    let rad = bVal / 512.0;
 
     let rSum = 0,
       gSum = 0,
       bSum = 0,
       wSum = 0;
 
-    if (bType === "box") {
-      let steps = Math.max(3, Math.min(9, Math.round(bVal / 3) | 1));
-      if (steps % 2 === 0) steps += 1;
-      let half = (steps - 1) / 2;
-      let stepSize = rad / half;
-      for (let dy = -half; dy <= half; dy++) {
-        let offsetY = dy * stepSize;
-        for (let dx = -half; dx <= half; dx++) {
-          let offsetX = dx * stepSize;
-          let pix = evalRawGeneratorPixel(
-            type,
-            tx + offsetX,
-            ty + offsetY,
-            sx,
-            sy,
-            p,
-            activeCymaticsSources,
-            lay,
-            lutR,
-            lutG,
-            lutB,
-          );
-          rSum += pix[0];
-          gSum += pix[1];
-          bSum += pix[2];
-          wSum += 1.0;
-        }
-      }
+    if (bType === "box" || bType === "gaussian") {
+      let pixC = evalRawGeneratorPixel(
+        type, tx, ty, sx, sy, p, activeCymaticsSources, lay, lutR, lutG, lutB
+      );
+      let pixL = evalRawGeneratorPixel(
+        type, tx - rad, ty, sx, sy, p, activeCymaticsSources, lay, lutR, lutG, lutB
+      );
+      let pixR = evalRawGeneratorPixel(
+        type, tx + rad, ty, sx, sy, p, activeCymaticsSources, lay, lutR, lutG, lutB
+      );
+      let pixT = evalRawGeneratorPixel(
+        type, tx, ty - rad, sx, sy, p, activeCymaticsSources, lay, lutR, lutG, lutB
+      );
+      let pixB = evalRawGeneratorPixel(
+        type, tx, ty + rad, sx, sy, p, activeCymaticsSources, lay, lutR, lutG, lutB
+      );
+
+      return [
+        pixC[0] * 0.36 + (pixL[0] + pixR[0] + pixT[0] + pixB[0]) * 0.16,
+        pixC[1] * 0.36 + (pixL[1] + pixR[1] + pixT[1] + pixB[1]) * 0.16,
+        pixC[2] * 0.36 + (pixL[2] + pixR[2] + pixT[2] + pixB[2]) * 0.16,
+      ];
     } else if (bType === "directional") {
       let angRad = ((p.blurAngle || 0) * Math.PI) / 180;
       let dirX = Math.cos(angRad) * rad;

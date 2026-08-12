@@ -164,46 +164,81 @@ export class CanvasProcessingEngine {
    * Helper: Fast Box Blur on Float32Array
    */
   static boxBlurFloatBuffer(buffer, width, height, radius) {
-    if (!radius || radius < 1) return buffer;
-    const r = Math.floor(radius);
+    if (!radius || radius <= 0.001) return buffer;
     const size = width * height;
     const tmp = window.globalBufferPool
       ? window.globalBufferPool.acquireFloat32(size)
       : new Float32Array(size);
     const out = new Float32Array(size);
-    const invWindow = 1 / (2 * r + 1);
 
-    // Horizontal pass
+    const r = radius;
+    const rInt = Math.floor(r);
+    const f = r - rInt;
+    const invWindow = 1.0 / (2.0 * r + 1.0);
+
+    // Horizontal pass O(1) moving sum with exact fractional weights
     for (let y = 0; y < height; y++) {
       const row = y * width;
       let sum = 0;
-      for (let dx = -r; dx <= r; dx++) {
-        const nx = ((dx % width) + width) % width;
-        sum += buffer[row + nx];
+
+      sum += f * buffer[row + (((-rInt - 1) % width + width) % width)];
+      for (let dx = -rInt; dx <= rInt; dx++) {
+        sum += buffer[row + (((dx) % width + width) % width)];
       }
+      sum += f * buffer[row + (((rInt + 1) % width + width) % width)];
+
       tmp[row] = sum * invWindow;
 
       for (let x = 1; x < width; x++) {
-        const left = (x - r - 1 + width) % width;
-        const right = (x + r) % width;
-        sum += buffer[row + right] - buffer[row + left];
+        if (x % 32 === 0) {
+          sum = 0;
+          sum += f * buffer[row + (((x - rInt - 1) % width + width) % width)];
+          for (let dx = -rInt; dx <= rInt; dx++) {
+            sum += buffer[row + (((x + dx) % width + width) % width)];
+          }
+          sum += f * buffer[row + (((x + rInt + 1) % width + width) % width)];
+        } else {
+          let o1 = ((x - 1 - rInt - 1) % width + width) % width;
+          let o2 = ((x - 1 - rInt) % width + width) % width;
+          let i1 = ((x - 1 + rInt + 1) % width + width) % width;
+          let i2 = ((x - 1 + rInt + 2) % width + width) % width;
+
+          sum += f * buffer[row + i2] + (1.0 - f) * buffer[row + i1]
+               - (1.0 - f) * buffer[row + o2] - f * buffer[row + o1];
+        }
         tmp[row + x] = sum * invWindow;
       }
     }
 
-    // Vertical pass
+    // Vertical pass O(1) moving sum with exact fractional weights
     for (let x = 0; x < width; x++) {
       let sum = 0;
-      for (let dy = -r; dy <= r; dy++) {
-        const ny = ((dy % height) + height) % height;
-        sum += tmp[ny * width + x];
+
+      sum += f * tmp[(((-rInt - 1) % height + height) % height) * width + x];
+      for (let dy = -rInt; dy <= rInt; dy++) {
+        sum += tmp[(((dy) % height + height) % height) * width + x];
       }
+      sum += f * tmp[(((rInt + 1) % height + height) % height) * width + x];
+
       out[x] = sum * invWindow;
 
       for (let y = 1; y < height; y++) {
-        const top = (y - r - 1 + height) % height;
-        const bottom = (y + r) % height;
-        sum += tmp[bottom * width + x] - tmp[top * width + x];
+        if (y % 32 === 0) {
+          sum = 0;
+          sum += f * tmp[(((y - rInt - 1) % height + height) % height) * width + x];
+          for (let dy = -rInt; dy <= rInt; dy++) {
+            sum += tmp[(((y + dy) % height + height) % height) * width + x];
+          }
+          sum += f * tmp[(((y + rInt + 1) % height + height) % height) * width + x];
+        } else {
+          let o1 = ((y - 1 - rInt - 1) % height + height) % height;
+          let o2 = ((y - 1 - rInt) % height + height) % height;
+          let i1 = ((y - 1 + rInt + 1) % height + height) % height;
+          let i2 = ((y - 1 + rInt + 2) % height + height) % height;
+
+          sum += f * tmp[i2 * width + x] + (1.0 - f) * tmp[i1 * width + x]
+               - (1.0 - f) * tmp[o2 * width + x] - f * tmp[o1 * width + x];
+        }
         out[y * width + x] = sum * invWindow;
       }
     }
@@ -216,20 +251,14 @@ export class CanvasProcessingEngine {
    * Helper: Gaussian Blur on Float32Array (3-pass Box Blur approximation)
    */
   static gaussianBlurFloatBuffer(buffer, width, height, radius) {
-    if (!radius || radius < 1) return buffer;
-    const sigma = radius / 2;
-    const wIdeal = Math.sqrt((12 * sigma * sigma) / 3 + 1);
-    let wl = Math.floor(wIdeal);
-    if (wl % 2 === 0) wl--;
-    let wu = wl + 2;
-    let mIdeal = (12 * sigma * sigma - 3 * wl * wl - 12 * wl - 9) / (-4 * wl - 4);
-    let m = Math.round(mIdeal);
+    if (!radius || radius <= 0.001) return buffer;
+    const sigma = radius / 2.0;
+    const wBox = Math.sqrt(4.0 * sigma * sigma + 1.0);
+    const rBox = (wBox - 1.0) / 2.0;
 
     let res = buffer;
     for (let i = 0; i < 3; i++) {
-      let w = i < m ? wl : wu;
-      let r = Math.max(1, Math.floor((w - 1) / 2));
-      res = this.boxBlurFloatBuffer(res, width, height, r);
+      res = this.boxBlurFloatBuffer(res, width, height, rBox);
     }
     return res;
   }
@@ -247,36 +276,10 @@ export class CanvasProcessingEngine {
   ) {
     if (!radius || radius < 1) return buffer;
     const r = Math.floor(radius);
-    const cStr = Math.max(0, Math.min(100, cometOptions.blurComet || 0)) / 100;
 
     const tmp = window.globalBufferPool
       ? window.globalBufferPool.acquireFloat32(width * height)
       : new Float32Array(width * height);
-    if (cStr <= 0 && r > 16) {
-      const halfR = r * 0.5;
-      CanvasProcessingEngine._singleDirectionalPass(
-        buffer,
-        tmp,
-        width,
-        height,
-        halfR,
-        angle,
-        17,
-        {},
-      );
-      CanvasProcessingEngine._singleDirectionalPass(
-        tmp,
-        buffer,
-        width,
-        height,
-        halfR,
-        angle,
-        17,
-        {},
-      );
-      if (window.globalBufferPool) window.globalBufferPool.releaseFloat32(tmp);
-      return buffer;
-    }
 
     CanvasProcessingEngine._singleDirectionalPass(
       buffer,
@@ -285,7 +288,7 @@ export class CanvasProcessingEngine {
       height,
       r,
       angle,
-      21,
+      31,
       cometOptions,
     );
     buffer.set(tmp);
@@ -300,7 +303,7 @@ export class CanvasProcessingEngine {
     height,
     radius,
     angle,
-    maxSteps = 21,
+    maxSteps = 31,
     cometOptions = {},
   ) {
     const radAngle = ((angle || 0) * Math.PI) / 180;
@@ -312,7 +315,7 @@ export class CanvasProcessingEngine {
     let totalWeight = 0;
 
     if (cStr <= 0) {
-      let steps = maxSteps;
+      let steps = Math.max(31, Math.min(181, Math.ceil(radius * 2.0) | 1));
       if (steps % 2 === 0) steps += 1;
       const half = (steps - 1) / 2;
       const stepLen = radius / half;
@@ -346,10 +349,10 @@ export class CanvasProcessingEngine {
       const perpX = -dirY;
       const perpY = dirX;
 
-      const tailSteps = Math.max(8, Math.min(21, Math.round(radius * 0.4) | 1));
+      const tailSteps = Math.max(12, Math.min(41, Math.round(radius * 0.8) | 1));
       const headSteps = Math.max(
-        3,
-        Math.min(7, Math.round(radius * 0.15 * headSize * cStr) | 1),
+        4,
+        Math.min(15, Math.round(radius * 0.3 * headSize * cStr) | 1),
       );
 
       for (let i = 0; i <= tailSteps; i++) {
@@ -373,7 +376,7 @@ export class CanvasProcessingEngine {
         if (bulbRadius > 0.5) {
           const crossSubSteps = Math.max(
             1,
-            Math.min(2, Math.round(bulbRadius * 0.3)),
+            Math.min(4, Math.round(bulbRadius * 0.5)),
           );
           const wtCross = (wtLong * 0.5) / crossSubSteps;
           for (let b = 1; b <= crossSubSteps; b++) {
@@ -409,7 +412,7 @@ export class CanvasProcessingEngine {
         if (bulbRadius > 0.5) {
           const crossSubSteps = Math.max(
             1,
-            Math.min(2, Math.round(bulbRadius * 0.3)),
+            Math.min(4, Math.round(bulbRadius * 0.5)),
           );
           const wtCross = (wtLong * 0.5) / crossSubSteps;
           for (let b = 1; b <= crossSubSteps; b++) {
@@ -432,60 +435,72 @@ export class CanvasProcessingEngine {
 
     const invTotalWeight = totalWeight > 0 ? 1 / totalWeight : 1;
     const kLen = kernelSamples.length;
-    const smpOx = window.globalBufferPool
-      ? window.globalBufferPool.acquireFloat32(kLen)
-      : new Float32Array(kLen);
-    const smpOy = window.globalBufferPool
-      ? window.globalBufferPool.acquireFloat32(kLen)
-      : new Float32Array(kLen);
-    const smpW = window.globalBufferPool
-      ? window.globalBufferPool.acquireFloat32(kLen)
-      : new Float32Array(kLen);
+
+    const intOx = new Int32Array(kLen);
+    const intOy = new Int32Array(kLen);
+    const w00 = new Float32Array(kLen);
+    const w10 = new Float32Array(kLen);
+    const w01 = new Float32Array(kLen);
+    const w11 = new Float32Array(kLen);
+
+    let maxOffX = 0, maxOffY = 0;
     for (let k = 0; k < kLen; k++) {
-      smpOx[k] = kernelSamples[k].ox;
-      smpOy[k] = kernelSamples[k].oy;
-      smpW[k] = kernelSamples[k].w * invTotalWeight;
+      const ox = kernelSamples[k].ox;
+      const oy = kernelSamples[k].oy;
+      const w = kernelSamples[k].w * invTotalWeight;
+
+      const x0 = Math.floor(ox);
+      const y0 = Math.floor(oy);
+      const fx = ox - x0;
+      const fy = oy - y0;
+
+      intOx[k] = x0;
+      intOy[k] = y0;
+      w00[k] = (1 - fx) * (1 - fy) * w;
+      w10[k] = fx * (1 - fy) * w;
+      w01[k] = (1 - fx) * fy * w;
+      w11[k] = fx * fy * w;
+
+      if (Math.abs(x0) + 2 > maxOffX) maxOffX = Math.abs(x0) + 2;
+      if (Math.abs(y0) + 2 > maxOffY) maxOffY = Math.abs(y0) + 2;
     }
+
+    const padX = maxOffX;
+    const padY = maxOffY;
 
     for (let y = 0; y < height; y++) {
       const rowOffset = y * width;
+      const isInteriorY = y >= padY && y < height - padY;
+
       for (let x = 0; x < width; x++) {
+        const isInterior = isInteriorY && x >= padX && x < width - padX;
         let sum = 0;
-        for (let k = 0; k < kLen; k++) {
-          const sx = x + smpOx[k];
-          const sy = y + smpOy[k];
 
-          let x0 = Math.floor(sx);
-          let y0 = Math.floor(sy);
-          const fx = sx - x0;
-          const fy = sy - y0;
-          let x1 = x0 + 1;
-          let y1 = y0 + 1;
+        if (isInterior) {
+          for (let k = 0; k < kLen; k++) {
+            const baseIdx = (y + intOy[k]) * width + (x + intOx[k]);
+            sum +=
+              srcBuf[baseIdx] * w00[k] +
+              srcBuf[baseIdx + 1] * w10[k] +
+              srcBuf[baseIdx + width] * w01[k] +
+              srcBuf[baseIdx + width + 1] * w11[k];
+          }
+        } else {
+          for (let k = 0; k < kLen; k++) {
+            let x0 = ((x + intOx[k]) % width + width) % width;
+            let x1 = (x0 + 1) % width;
+            let y0 = ((y + intOy[k]) % height + height) % height;
+            let y1 = (y0 + 1) % height;
 
-          x0 = ((x0 % width) + width) % width;
-          x1 = ((x1 % width) + width) % width;
-          y0 = ((y0 % height) + height) % height;
-          y1 = ((y1 % height) + height) % height;
-
-          const v00 = srcBuf[y0 * width + x0];
-          const v10 = srcBuf[y0 * width + x1];
-          const v01 = srcBuf[y1 * width + x0];
-          const v11 = srcBuf[y1 * width + x1];
-
-          sum +=
-            ((1 - fx) * (1 - fy) * v00 +
-              fx * (1 - fy) * v10 +
-              (1 - fx) * fy * v01 +
-              fx * fy * v11) *
-            smpW[k];
+            sum +=
+              srcBuf[y0 * width + x0] * w00[k] +
+              srcBuf[y0 * width + x1] * w10[k] +
+              srcBuf[y1 * width + x0] * w01[k] +
+              srcBuf[y1 * width + x1] * w11[k];
+          }
         }
         dstBuf[rowOffset + x] = sum;
       }
-    }
-    if (window.globalBufferPool) {
-      window.globalBufferPool.releaseFloat32(smpOx);
-      window.globalBufferPool.releaseFloat32(smpOy);
-      window.globalBufferPool.releaseFloat32(smpW);
     }
   }
 
@@ -510,12 +525,22 @@ export class CanvasProcessingEngine {
     const factor = (radius / 100) * str * 0.5;
 
     let steps = Math.max(
-      9,
-      Math.min(121, Math.round(radius * str * (width / 512) * 1.5) | 1),
+      21,
+      Math.min(121, Math.round(radius * str * 1.5) | 1),
     );
     if (steps % 2 === 0) steps += 1;
     const halfSteps = (steps - 1) / 2;
-    const invSteps = 1 / steps;
+
+    const weights = new Float32Array(steps);
+    let totalW = 0;
+    for (let k = -halfSteps; k <= halfSteps; k++) {
+      const idx = k + halfSteps;
+      const s = k / halfSteps;
+      const wt = Math.exp(-2.0 * s * s);
+      weights[idx] = wt;
+      totalW += wt;
+    }
+    const invTotalW = 1 / totalW;
 
     for (let y = 0; y < height; y++) {
       const rowOffset = y * width;
@@ -525,6 +550,8 @@ export class CanvasProcessingEngine {
         let sum = 0;
 
         for (let k = -halfSteps; k <= halfSteps; k++) {
+          const idx = k + halfSteps;
+          const wt = weights[idx];
           const s = k / halfSteps;
           const sx = x + dx * s * factor;
           const sy = y + dy * s * factor;
@@ -547,12 +574,12 @@ export class CanvasProcessingEngine {
           const v11 = buffer[y1 * width + x1];
 
           sum +=
-            (1 - fx) * (1 - fy) * v00 +
-            fx * (1 - fy) * v10 +
-            (1 - fx) * fy * v01 +
-            fx * fy * v11;
+            ((1 - fx) * (1 - fy) * v00 +
+              fx * (1 - fy) * v10 +
+              (1 - fx) * fy * v01 +
+              fx * fy * v11) * wt;
         }
-        out[rowOffset + x] = sum * invSteps;
+        out[rowOffset + x] = sum * invTotalW;
       }
     }
     return out;
@@ -608,8 +635,7 @@ export class CanvasProcessingEngine {
     const rOut = rIn + widthR * maxRadius;
     const soft = Math.max(1, softness * maxRadius * 0.5);
 
-    const scaledRad = radius * (width / 512);
-    let numSteps = Math.max(5, Math.min(19, Math.round(scaledRad * 0.3) | 1));
+    let numSteps = Math.max(17, Math.min(65, Math.ceil(radius * 0.8) | 1));
     if (numSteps % 2 === 0) numSteps += 1;
     const halfSteps = (numSteps - 1) / 2;
     const isClamp = mode === "clamp";
@@ -670,7 +696,7 @@ export class CanvasProcessingEngine {
         }
 
         const effAngle = spinAngle * mask;
-        const effZoom = (scaledRad / 100) * 0.25 * mask;
+        const effZoom = (radius / 100) * 0.25 * mask;
 
         let sum = 0;
         let wSum = 0;
